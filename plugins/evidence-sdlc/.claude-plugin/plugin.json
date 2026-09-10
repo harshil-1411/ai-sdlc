@@ -1,0 +1,9 @@
+{
+  "name": "evidence-sdlc",
+  "version": "0.1.0",
+  "description": "The Evidence Chain control plane: skills that encode our standards, subagents that verify work, and hooks that make the non-negotiable gates deterministic.",
+  "author": {
+    "name": "Evidence Chain maintainers",
+    "email": "platform@example.com"
+  }
+}

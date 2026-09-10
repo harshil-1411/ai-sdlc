@@ -1,0 +1,17 @@
+{
+  "description": "Makes every session aware of the repository profile, and refuses to let a session invent stack facts.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/require-repo-profile.sh",
+            "args": [],
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

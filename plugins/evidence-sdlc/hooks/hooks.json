@@ -1,0 +1,79 @@
+{
+  "description": "the organisation SDLC gates. Skills make the standards likely; these make the non-negotiable ones deterministic.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/gate-plan-exists.sh",
+            "args": [],
+            "statusMessage": "Checking for an approved plan.md",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/protect-validated-paths.sh",
+            "args": [],
+            "statusMessage": "Checking validated / protected paths",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/block-test-weakening.sh",
+            "args": [],
+            "statusMessage": "Protecting the test suite",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git push *)",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/block-protected-branch-push.sh",
+            "args": [],
+            "statusMessage": "Checking branch protection",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "if": "Bash(*deploy*)",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/production-gate.sh",
+            "args": [],
+            "statusMessage": "Checking release authorization",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/audit-log.sh",
+            "args": [],
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh",
+            "args": [],
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,61 @@
+---
+name: test-automation
+description: Write, structure and maintain automated tests using whatever framework the repository actually uses, tagged so that a run maps back to tracker issues and manual test cases. Use this whenever automated tests are being written or repaired, whenever a manual case is being automated, whenever a test is flaky, and whenever someone asks how test results reach the test management system. Read the framework from the repository profile — never assume one.
+---
+
+# Test automation
+
+Read `.evidence/context/stack.md` for the actual frameworks, commands and test
+locations. This skill is about discipline, not about a particular tool.
+
+## Tag for traceability
+
+Every automated test carries, in whatever tagging mechanism the framework provides:
+- the **tracker key** of the change that introduced or last modified it
+- the **manual test case ID** it automates, where it automates one
+
+Without both, a green pipeline proves nothing about which requirements were covered,
+and the traceability matrix has to be maintained by hand — which means it will not be.
+
+## Structure
+
+- **One behaviour per test.** A test asserting five things tells you nothing useful when
+  it fails.
+- **Deterministic data.** Tests that depend on data left behind by other tests are the
+  root of most flake. Each test sets up and tears down its own state.
+- **Address elements by role and accessible name** where the framework supports it, not
+  by brittle structural selectors. This makes tests survive refactors and doubles as an
+  accessibility check.
+- **No sleeps.** Wait for a condition, never for a duration.
+- **Isolate the layers.** End-to-end suites should be thin: the critical journeys only.
+  Everything else belongs lower, where it is faster and more stable.
+
+## Results back to the test management system
+
+Decide and record: the pipeline maps each automated test to its case ID via the tag,
+opens or reuses a run named with the tracker key and build identifier, and posts
+results. Check the toolchain profile for whether this session or the pipeline holds the
+write credential. **The pipeline should own this write, not an interactive session** —
+results are evidence, and evidence should come from the toolchain, not from a
+conversation.
+
+## Flake policy
+
+Flake destroys the value of continuous testing faster than anything else, because a
+suite people do not trust is a suite people bypass.
+
+- A test that fails intermittently is **quarantined within one working day**, with a
+  tracker issue, not left to erode confidence.
+- Quarantine is time-boxed. A quarantined test that is not fixed within the agreed
+  window is deleted, and its coverage gap is recorded as a risk. Indefinite quarantine
+  is a lie about coverage.
+- **Never** fix flake by adding a retry to hide it, widening a wait, or loosening an
+  assertion. Find the race.
+- Flake rate is a tracked metric, not a mood.
+
+## Interactive browser tooling vs. scripted tests
+
+Driving a browser interactively through an agent is useful for **exploration, test
+authoring, and reproducing a bug**. It is not how tests run in the pipeline. Pipeline
+runs are deterministic scripted executions. Keep the two clearly separate, and never
+present an agent-driven exploratory session as a test run.

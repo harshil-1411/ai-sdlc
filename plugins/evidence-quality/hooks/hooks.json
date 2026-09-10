@@ -1,0 +1,32 @@
+{
+  "description": "Traceability and test-coverage gates. The commit gate is deterministic; the coverage check is advisory.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit *)",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/require-issue-key.sh",
+            "args": [],
+            "statusMessage": "Checking tracker key",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check-test-plan-rows.sh",
+            "args": [],
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

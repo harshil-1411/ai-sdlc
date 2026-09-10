@@ -1,0 +1,29 @@
+# <service name>
+
+## Commands
+- Build: <one command, exits non-zero on failure>
+- Test: <one command> (healthy output looks like: <example>)
+- Lint: <one command> (zero warnings)
+- Run locally: <one command>
+
+## Architecture
+- <dir>/ holds <what>. <dir>/ holds <what>.
+- <Where the audit trail is emitted from. Every regulated state change goes through it.>
+- <Where tenancy scoping is enforced.>
+
+## Conventions
+- <language/framework version, and the patterns we actually use>
+- Every endpoint needs an integration test in <path>.
+- Every regulated state change emits an audit event; never bypass <module>.
+- Every multi-tenant query carries a tenant predicate.
+
+## Verifying your work
+- Run build, test and lint before reporting any task complete, and paste the output.
+- If a test fails, fix the code, not the test.
+- For UI work, screenshot and compare against the approved mock before reporting done.
+
+## Things Claude gets wrong here
+- <add a line every time a mistake happens twice. This section is the highest-value
+  part of this file.>
+- Do not bump dependency versions; the platform team owns them.
+- Do not add a second implementation of <core domain concept> — find the existing one.

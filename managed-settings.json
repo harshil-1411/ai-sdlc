@@ -1,0 +1,56 @@
+{
+  "_comment": "Deployed by the platform team via MDM or the Claude admin console. Engineers cannot edit or override any of it. Start narrower than you think you need, then widen deliberately — every deny trades against capability. Verify every key against https://code.claude.com/docs/en/settings before rollout.",
+
+  "permissions": {
+    "deny": [
+      "Read(.env*)",
+      "Read(./secrets/**)",
+      "Read(**/*.pem)",
+      "Read(**/*.p12)",
+      "Read(**/id_rsa*)",
+      "Bash(curl *)",
+      "Bash(wget *)"
+    ],
+    "allow": [
+      "Bash(git *)",
+      "Bash(npm run build)",
+      "Bash(npm test)",
+      "Bash(npm run lint)",
+      "Bash(make build)",
+      "Bash(make test)",
+      "Bash(make lint)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
+
+  "allowManagedPermissionRulesOnly": true,
+
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "network": {
+      "allowedDomains": [
+        "git.internal.example.com",
+        "registry.npmjs.org"
+      ]
+    },
+    "credentials": {
+      "files": [
+        { "path": "~/.ssh", "mode": "deny" },
+        { "path": "~/.aws/credentials", "mode": "deny" }
+      ],
+      "envVars": [
+        { "name": "GITHUB_TOKEN", "mode": "deny" }
+      ]
+    }
+  },
+
+  "allowManagedHooksOnly": true,
+  "disableSideloadFlags": true,
+  "allowManagedMcpServersOnly": true,
+  "strictKnownMarketplaces": [
+    { "source": "github", "repo": "<your-org>/evidence-chain" }
+  ],
+  "requiredMinimumVersion": "2.1.193"
+}
