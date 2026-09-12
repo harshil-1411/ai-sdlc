@@ -4,10 +4,14 @@ input=$(cat)
 cmd=$(jq -r '.tool_input.command // empty' <<<"$input")
 [ -z "$cmd" ] && exit 0
 
-case "$cmd" in
-  *prod*|*production*) ;;
-  *) exit 0 ;;
-esac
+# Match "prod"/"production" as a whole token (bounded by non-letters or string
+# edges), not as a substring. The previous `case "$cmd" in *prod*|*production*)`
+# glob matched any word merely containing "prod" -- "reproduce", "product",
+# "reproducible", "byproduct" -- false-triggering this gate on ordinary commands
+# and commit messages that had nothing to do with a production deploy.
+if [[ ! "$cmd" =~ (^|[^A-Za-z])(prod|production)([^A-Za-z]|$) ]]; then
+  exit 0
+fi
 
 if [ -n "$RELEASE_APPROVAL" ]; then
   exit 0
