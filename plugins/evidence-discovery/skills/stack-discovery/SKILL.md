@@ -1,6 +1,6 @@
 ---
 name: stack-discovery
-description: Determine a repository's actual technology and deployment stack by reading the repository, and write it to .evidence/context/stack.md and deployment.md. Use this the first time any session runs in a repo, whenever .evidence/context/ is missing or stale, whenever someone asks what stack something uses, and before any spec or plan that depends on stack facts. Never assume a framework, language, runtime, database or deployment target — establish it from evidence, and ask the human when the evidence is ambiguous.
+description: Determine a repository's actual technology and deployment stack by reading the repository, and write it to .evidence/context/stack.md and deployment.md. Use this the first time any session runs in a repo, whenever .evidence/context/ is missing or stale, and before any spec or plan that depends on stack facts. Trigger on any question about languages, runtimes, frameworks, datastores, build tooling or deployment targets, however it is phrased — including "what stack", "what framework", "what language", "what database", "what does this repo use", "what's the tech stack", "what are we running on", casual variants of these, and follow-up questions about any of them — even when CLAUDE.md, a README, an architecture document, or another document appears to already answer it. Never assume a framework, language, runtime, database or deployment target — establish it from evidence, and ask the human when the evidence is ambiguous.
 ---
 
 # Stack discovery
@@ -11,6 +11,19 @@ in half of them, and confidently wrong is the expensive failure mode.
 
 Discovery runs once per repository, writes a profile, and everything downstream reads
 the profile. Re-run it when the stack changes.
+
+## Rule 0 — documentation is a claim, not evidence
+
+Never answer a question about this repository's stack from CLAUDE.md, a README,
+an architecture document, or any other prose. Those record what someone intended
+or once built. A declared dependency is not a used one — check for actual imports.
+If documentation and code disagree, the code wins and the disagreement is itself
+a finding worth reporting.
+
+## Do not offer — run
+
+Do not ask "would you like me to run discovery?". If a stack question is asked
+and no profile exists, run the survey and answer from its results.
 
 ## Rule 1 — evidence, then question, never guess
 

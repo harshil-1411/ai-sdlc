@@ -1,0 +1,10 @@
+{
+  "enabledPlugins": {
+    "evidence-discovery@evidence-chain": true,
+    "evidence-sdlc@evidence-chain": true,
+    "evidence-quality@evidence-chain": true
+  },
+  "env": {
+    "EVIDENCE_ISSUE_KEY_PATTERN": "PILOT-[0-9]+"
+  }
+}
