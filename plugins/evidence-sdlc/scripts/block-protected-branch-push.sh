@@ -5,10 +5,15 @@ input=$(cat)
 cmd=$(jq -r '.tool_input.command // empty' <<<"$input")
 [ -z "$cmd" ] && exit 0
 
-case "$cmd" in
-  *"git push"*) ;;
-  *) exit 0 ;;
-esac
+# Require "git push" at a command-invocation position (start of a line, or
+# right after a shell chaining operator), not merely present as text anywhere
+# in the command -- the same class of false positive found and fixed in
+# require-issue-key.sh's "git commit" check. The previous substring check
+# denied a plain `echo "remember to git push after review"` while sitting on
+# a protected branch, even though it does not push anything.
+if ! printf '%s\n' "$cmd" | grep -Eq '(^|[;&|`(])[[:space:]]*git[[:space:]]+push([[:space:]]|$)'; then
+  exit 0
+fi
 
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
 case "$branch" in
