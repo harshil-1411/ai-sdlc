@@ -5,6 +5,6 @@
     "evidence-quality@evidence-chain": true
   },
   "env": {
-    "EVIDENCE_ISSUE_KEY_PATTERN": "PILOT-[0-9]+|TASK2-[AB][0-9]+"
+    "EVIDENCE_ISSUE_KEY_PATTERN": "PILOT-[0-9]+|TASK2-[AB][0-9]+|TRACE-[0-9]+"
   }
 }
