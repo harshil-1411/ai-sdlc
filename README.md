@@ -27,6 +27,7 @@ that falls out of the process instead of being assembled at release time.
 - [Traceability](#traceability)
 - [The evidence CLI](#the-evidence-cli--testing-whether-any-of-this-is-actually-derivable)
 - [Risk tiering](#risk-tiering--ceremony-scales-with-risk)
+- [Examples](#examples)
 - [Rollout order](#rollout-order)
 - [Measure these](#measure-these)
 - [On third-party plugins](#on-third-party-plugins)
@@ -539,6 +540,24 @@ flowchart TD
 
 **When in doubt, tier up.** A Tier 2 change that was really Tier 3 is the failure that
 matters.
+
+## Examples
+
+Six worked scenarios in [`examples/scenarios/`](examples/scenarios/), each a full
+walkthrough — which skill fires at each stage, what it produces, which gate checks
+it, and why — rather than a description in the abstract:
+
+| Scenario | What it shows |
+| --- | --- |
+| [`new-feature-non-regulated`](examples/scenarios/new-feature-non-regulated/README.md) | The lightest path: a Tier 1 user story, no regulatory obligation |
+| [`regulated-change-tier3`](examples/scenarios/regulated-change-tier3/README.md) | The heaviest path: electronic signature capture under 21 CFR Part 11 |
+| [`incident-bug-fix`](examples/scenarios/incident-bug-fix/README.md) | Root cause before fix, a failing test committed first, and why the entry point isn't Plan |
+| [`schema-migration-regulated-table`](examples/scenarios/schema-migration-regulated-table/README.md) | Expand-contract phasing and the regulated-record checks a normal migration skips |
+| [`third-party-integration`](examples/scenarios/third-party-integration/README.md) | Calling an external API — where security review ends and integration review begins |
+| [`standalone-cli-audit`](examples/scenarios/standalone-cli-audit/README.md) | Using just `cli/evidence` on a repository that uses no part of this framework at all |
+
+See [`examples/README.md`](examples/README.md) for the full index, including the
+optional skills kept there (not installed by default).
 
 ## Rollout order
 

@@ -1,0 +1,85 @@
+# Scenario: a regulated change — electronic signature on a clinical document
+
+**Who this is for:** a team whose product is subject to 21 CFR Part 11 (or an
+equivalent electronic-records/electronic-signature regime), adding a genuinely
+consequential capability: letting a reviewer electronically sign off on a document.
+This is the heaviest, most complete path through the framework — read it after
+[the non-regulated scenario](../new-feature-non-regulated/README.md) to see what
+changes when the stakes are real.
+
+## The story
+
+> "As a QA reviewer, I want to electronically sign a batch record once I've reviewed
+> it, so the signed state is legally attributable to me and cannot be altered
+> afterward."
+
+`.evidence/context/compliance.md` already records 21 CFR Part 11 as an applicable
+framework, confirmed by a named quality owner, with "signed batch records" defined as
+this product's regulated record type.
+
+## Walkthrough
+
+**1 · Plan.** `intent-capture` writes `intent.md` — **Regulated record impact: Yes.**
+The signature itself is the regulated record. Compliance evidence impact: yes, this is
+a new control a customer's own validation package will likely cite.
+
+**Risk tier, stated immediately:** `risk-tiering` marks this **Tier 3** without
+debate — it touches signature creation directly, which is on the Tier 3 list by
+definition, not by judgement call.
+
+**2 · Design.** `spec-and-design` produces a full `spec.md`:
+- **Regulatory control table** — `regulatory-controls` loads
+  `21-cfr-part-11.md` and checks each control (§11.50 signature manifestation:
+  printed name, date/time with timezone, meaning of signing; §11.70 record linking:
+  the signature is linked to the record so it can't be excised and reused
+  elsewhere) with a verdict and a pointer to the design element that satisfies it.
+- **Security design** — `secure-api-review` covers the new signing endpoint: who can
+  invoke it, tenant isolation, and specifically that the signing key material never
+  leaves the server boundary.
+- **UX** — the states table includes what an already-signed record shows on a second
+  view attempt (read-only, signature visibly displayed, no edit affordance at all).
+- **Areas of concern** — this spec names one: whether re-opening a *rejected* review
+  should count as "record integrity" or "record correction," routed to the named
+  quality owner rather than decided silently.
+
+**Decision point:** the choice between an HSM-backed signing key and an
+application-managed one is a one-way door (expensive to reverse, touches key
+material). The team runs `decision-council`'s **Lite** variant (four passes, one
+session) — full council would be reserved for something even more consequential, per
+that skill's own guidance not to let it become a ritual.
+
+**3 · Build.** `codebase-grounded-planning`'s plan.md gets **both** a named technical
+lead's sign-off and the product owner's, per Tier 3's Definition of Ready. The plan
+touches `migrations/` (a new `signature` table) — `protect-validated-paths` requires a
+`CHANGE_TICKET` in the environment before that edit is even allowed.
+
+**4 · Test.** `test-strategy` requires, per requirement: the signature is
+cryptographically verifiable, the audit trail records who/when/what-was-signed, and a
+tampered record's signature fails verification. Automated where possible; the
+tamper-detection case is deliberately adversarial, not just a happy-path check.
+
+**5 · Deploy.** Tier 3's Definition of Ready requires **two human reviewers**: the
+code owner reads the full diff, and a second reviewer independently examines the
+regulated portion specifically. `compliance-reviewer` (agent) runs a controls +
+validation pass over the diff before the PR opens.
+
+**6 · Maintain.** The release record includes a **validation impact assessment**, not
+just "no impact" — a customer relying on this control in their own validation package
+needs to know it changed. `evidence-package` derives this from the artifact chain
+rather than someone writing it from memory at release time.
+
+## What made this Tier 3, concretely
+
+Not "it's in a regulated product" generally — risk-tiering is specific: *touches
+signature creation*. A change to this same product's marketing site would be Tier 1.
+The tier follows the change, not the whole codebase.
+
+## Read next
+
+- [`risk-tiering`](../../../plugins/evidence-sdlc/skills/risk-tiering/SKILL.md)
+- [`regulatory-controls`](../../../plugins/evidence-compliance/skills/regulatory-controls/SKILL.md)
+  and its [21 CFR Part 11 reference](../../../plugins/evidence-compliance/skills/regulatory-controls/references/21-cfr-part-11.md)
+- [`decision-council`](../../skills/decision-council/SKILL.md) (optional skill, kept
+  in `examples/` — see its own README for why)
+- [Scenario: a regulated-table schema migration](../schema-migration-regulated-table/README.md) —
+  what happens when this same signed-record table needs to change shape later
