@@ -264,6 +264,7 @@ def _iter_hook_commands(hooks_data):
 def build_graph(root, adapter):
     tracker_pattern = re.compile(adapter_get(adapter, "tracker_pattern", DEFAULT_TRACKER_PATTERN))
     req_pattern = re.compile(adapter_get(adapter, "requirement_pattern", DEFAULT_REQ_PATTERN))
+    requirements_source = adapter_get(adapter, "requirements_source", "file_glob")
 
     graph = {
         "requirements": {},   # req_id -> {summary, spec_file, spec_commit, tracker_key}
@@ -271,11 +272,18 @@ def build_graph(root, adapter):
         "commits": [],        # {sha, subject, tracker_keys: set}
         "traceability_rows": [],
         "adapter_used": bool(adapter),
+        "requirements_source": requirements_source,
     }
 
-    spec_files = sorted(root.glob("intent/*/spec.md")) + sorted(
-        p for p in root.glob("**/spec.md") if "intent" not in p.parts
-    )
+    # Requirements live in an issue tracker this CLI has no network access to --
+    # skip file-based requirement extraction only; tests and commits are still
+    # scanned below regardless of where requirements themselves live.
+    spec_files = []
+    if requirements_source != "tracker":
+        spec_globs = adapter_get(adapter, "spec_glob", ["intent/*/spec.md"])
+        spec_files = sorted({p for g in spec_globs for p in root.glob(g)})
+        if not adapter:
+            spec_files += sorted(p for p in root.glob("**/spec.md") if "intent" not in p.parts)
     for spec in spec_files:
         text = read_text(spec) or ""
         for line in text.splitlines():
@@ -355,7 +363,17 @@ def cmd_scan(root, args):
     print(f"Adapter: {adapter_path if adapter else 'none found -- using built-in defaults for this framework\'s own layout'}")
     print()
 
-    if not graph["requirements"] and not graph["traceability_rows"]:
+    if graph["requirements_source"] == "tracker":
+        print("Requirements live in an issue tracker per .evidence/adapter.yml")
+        print("(requirements_source: tracker). This CLI has no network access and")
+        print("cannot scan a tracker's API -- it can only report what's derivable")
+        print("locally (commits and their tracker keys, below). To trace")
+        print("requirement-level coverage for this repository, export the tracker's")
+        print("requirements to a local file and point spec_glob at it, or provide")
+        print("validation/traceability.csv directly.")
+        print()
+
+    if not graph["requirements"] and not graph["traceability_rows"] and graph["requirements_source"] != "tracker":
         print("Nothing to trace: no requirement IDs found in any spec.md, and no")
         print("validation/traceability.csv exists yet. This is a clean report, not an")
         print("error -- either this repository has not run intent-capture/spec-and-design")

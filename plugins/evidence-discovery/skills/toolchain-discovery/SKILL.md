@@ -69,6 +69,32 @@ Write `.evidence/context/toolchain.md` from the template. Every tool gets: what 
 used for, its class from Step 2, the credential source, the scope, who owns access,
 and — critically — **what happens in the workflow when it is unreachable.**
 
+## Step 6 — generate `.evidence/adapter.yml`
+
+The `evidence` CLI (`cli/evidence`) and other tooling need to know where this
+repository's traceability chain actually lives, so they can work against
+repositories that do not use this framework's own file layout. Write
+`.evidence/adapter.yml` from `.evidence/adapter.example.yml`'s field list:
+
+- `requirements_source` — `file_glob` if requirement IDs live in files here (spec
+  documents, a requirements doc); `tracker` if they exist only in an issue
+  tracker's API. Establish this from evidence (Step 1), not assumption.
+- `spec_glob` — where those files live, if `file_glob`.
+- `requirement_pattern` — the requirement ID shape actually used, grepped from
+  real files, not the framework's own `REQ-<area>-<nn>` convention assumed by
+  default.
+- `tracker_pattern` — the issue key shape actually used, grepped from real
+  commit messages and branch names.
+- `test_dir_segments` — the actual test-location convention.
+- `artifact_chain` — actual intent/plan file locations, if any exist.
+- `test_results_location` — where CI publishes results, if anywhere locally
+  reachable; `none` is a valid, honest answer.
+
+Mark any field you could not establish as `[ASK]` rather than filling it with the
+framework's own default, exactly as every other profile does. An `.evidence/adapter.yml`
+full of unconfirmed defaults is worse than an honestly incomplete one — it tells the
+CLI to look somewhere that might not be where this repository's evidence actually is.
+
 ## Rule
 
 Never write a workflow step that assumes a tool is reachable without checking the

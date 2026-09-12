@@ -1,0 +1,91 @@
+# .evidence/adapter.yml -- tells `evidence` (cli/evidence) and toolchain-discovery
+# where this repository's traceability chain actually lives. Copy the preset that
+# matches this repo below into .evidence/adapter.yml and fill in the [ASK] fields;
+# do not guess a value you have not confirmed from a file, a command, or a person.
+#
+# Every field, in full, with what it controls:
+#
+#   requirements_source: file_glob | tracker
+#     file_glob  -- requirements live in files in this repo (e.g. spec.md tables).
+#     tracker    -- requirements live only in an issue tracker's API. The CLI has
+#                   no network access and cannot read a tracker directly; it will
+#                   say so plainly rather than reporting zero requirements as if
+#                   none existed. Export the tracker's requirements to a local
+#                   file (CSV, JSON, whatever) and point spec_glob at it, or keep
+#                   validation/traceability.csv as the source of truth instead.
+#   spec_glob: [list of glob patterns]
+#     Where requirement-bearing files live, if requirements_source is file_glob.
+#   requirement_pattern: a regex
+#     How a requirement ID is written, e.g. REQ-<area>-<nn>, JIRA-REQ-123, US-4021.
+#   tracker_pattern: a regex
+#     How a tracker issue key is written, e.g. PROJ-123, [A-Z]+-[0-9]+.
+#   test_dir_segments: [list of directory names]
+#     Any path segment matching one of these is treated as test-owning
+#     (e.g. tests, __tests__, spec, qa).
+#   test_tag_pattern: a regex (optional; defaults to requirement_pattern)
+#     How a test file marks which requirement/case it proves, if different from
+#     the requirement ID pattern itself (e.g. a `@covers REQ-123` annotation
+#     comment rather than the bare ID).
+#   artifact_chain:
+#     intent_glob: [glob patterns for intent.md-equivalent files]
+#     plan_glob: [glob patterns for plan.md-equivalent files]
+#   test_results_location: a path, a description, or "none"
+#     Where CI publishes test run results, if anywhere reachable locally
+#     (a JUnit XML directory, a results.json, etc). Informational for now --
+#     the CLI does not yet ingest this automatically; record it so a human or a
+#     future scan knows where to look.
+
+# ---------------------------------------------------------------------------
+# PRESET A -- this framework's own layout (the default the CLI assumes when no
+# adapter.yml exists at all; write this preset explicitly once you want the
+# defaults on record rather than implicit).
+# ---------------------------------------------------------------------------
+# requirements_source: file_glob
+# spec_glob:
+#   - intent/*/spec.md
+# requirement_pattern: REQ-[A-Za-z0-9]+-[0-9]+
+# tracker_pattern: "[A-Z][A-Z0-9]+-[0-9]+"
+# test_dir_segments:
+#   - tests
+#   - __tests__
+#   - qa
+# artifact_chain:
+#   intent_glob:
+#     - intent/*/intent.md
+#   plan_glob:
+#     - plan.md
+#     - plan/*.md
+#     - intent/*/plan.md
+# test_results_location: none
+
+# ---------------------------------------------------------------------------
+# PRESET B -- tracker-native: the repository holds only code. Requirements,
+# and often acceptance criteria, live entirely in the issue tracker.
+# ---------------------------------------------------------------------------
+# requirements_source: tracker
+# tracker_pattern: "[A-Z][A-Z0-9]+-[0-9]+"
+# test_dir_segments:
+#   - test
+#   - tests
+#   - spec
+#   - __tests__
+# test_results_location: [ASK] -- e.g. "CI artifact: junit.xml per run, not committed"
+
+# ---------------------------------------------------------------------------
+# PRESET C -- generic: infer from git history alone. No known requirement
+# convention, no known tracker-key convention. Use this as a starting point for
+# an unfamiliar repository and expect most fields to stay [ASK] until confirmed.
+# ---------------------------------------------------------------------------
+# requirements_source: file_glob
+# spec_glob:
+#   - "**/REQUIREMENTS.md"
+#   - "**/requirements/*.md"
+# requirement_pattern: [ASK] -- no convention established yet; grep git log and
+#   any requirements doc for a recurring ID shape before filling this in
+# tracker_pattern: [ASK] -- no branch/commit convention established yet
+# test_dir_segments:
+#   - test
+#   - tests
+#   - spec
+#   - __tests__
+# test_results_location: [ASK]
