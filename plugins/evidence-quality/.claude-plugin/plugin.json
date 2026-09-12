@@ -1,5 +1,6 @@
 {
   "name": "evidence-quality",
+  "version": "0.2.0",
   "description": "Test strategy, test-case authoring into the test management system, automation, continuous testing, and the traceability ID chain that links tracker to test case to commit to evidence.",
-  "author": { "name": "Evidence Chain maintainers", "email": "platform@example.com" }
+  "author": { "name": "Suparn Bector", "email": "suparnbector@gmail.com" }
 }

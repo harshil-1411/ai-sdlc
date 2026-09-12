@@ -1,5 +1,6 @@
 {
   "name": "evidence-integrations",
+  "version": "0.2.0",
   "description": "Third-party and partner integration change management: contracts, versioning, sandboxes, contract tests, failure modes and the regulated-record implications of data leaving the platform.",
-  "author": { "name": "Evidence Chain maintainers", "email": "platform@example.com" }
+  "author": { "name": "Suparn Bector", "email": "suparnbector@gmail.com" }
 }

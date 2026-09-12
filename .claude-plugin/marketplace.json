@@ -1,0 +1,34 @@
+{
+  "name": "evidence-chain",
+  "owner": {
+    "name": "Suparn Bector",
+    "email": "suparnbector@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "evidence-discovery",
+      "source": "./plugins/evidence-discovery",
+      "description": "Discovers a repository's technology stack, deployment stack, toolchain and design system, and writes them to .evidence/context/ so every other skill reads facts instead of assuming them. Never guesses — asks."
+    },
+    {
+      "name": "evidence-sdlc",
+      "source": "./plugins/evidence-sdlc",
+      "description": "The Evidence Chain control plane: skills that encode our standards, subagents that verify work, and hooks that make the non-negotiable gates deterministic."
+    },
+    {
+      "name": "evidence-quality",
+      "source": "./plugins/evidence-quality",
+      "description": "Test strategy, test-case authoring into the test management system, automation, continuous testing, and the traceability ID chain that links tracker to test case to commit to evidence."
+    },
+    {
+      "name": "evidence-compliance",
+      "source": "./plugins/evidence-compliance",
+      "description": "Regulatory controls for regulated records and the derivation of validation deliverables from the artifact chain."
+    },
+    {
+      "name": "evidence-integrations",
+      "source": "./plugins/evidence-integrations",
+      "description": "Third-party and partner integration change management: contracts, versioning, sandboxes, contract tests, failure modes and the regulated-record implications of data leaving the platform."
+    }
+  ]
+}
