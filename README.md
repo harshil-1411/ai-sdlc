@@ -156,6 +156,10 @@ relevant.
 Read every hook script before installing. They run on your machine with your
 permissions — that is the point, and it is also the risk. See [SECURITY.md](SECURITY.md).
 
+`cli/evidence` needs no install step of its own — it's a single Python 3 script,
+standard library only. `python3 cli/evidence doctor` is a reasonable first command to
+run in any repository, installed or not.
+
 ## What's in here
 
 ```
@@ -166,10 +170,21 @@ pipeline.example.yml              CI + continuous testing stage design
 .evidence/adapter.example.yml     Where THIS repo's traceability chain lives — copy
                                   the matching preset to .evidence/adapter.yml
 cli/evidence                      doctor / scan / gaps / export — see cli/README.md
+cli/REVIEW-BRIEF.md               Structural walkthrough + reviewer checklist for
+                                  the CLI itself — read before trusting its output
+cli/tests/                        The CLI's own regression fixtures
+intent/                           This repo's own artifact chain, dogfooded — real
+                                  intent.md/spec.md pairs, including a retrospective
+                                  one written for the CLI after the fact
+validation/traceability.csv       A real, populated sample export — not the empty
+                                  template; see docs/external-review-packet.md
 docs/                             toolchain-connectivity.md — what connects how
                                   third-party-tooling.md — what to adopt, and what
                                   quietly disables the controls
-governance/                       The documents an auditor asks for
+                                  external-review-packet.md — the traceability export,
+                                  explained for a QA/RA lead who has never seen this
+governance/                       The documents an auditor asks for, including
+                                  human-capability.md — the reviewer-judgement risk
 
 plugins/
   evidence-discovery/     RUN FIRST. Establishes facts; never assumes a stack.
@@ -187,20 +202,18 @@ plugins/
     risk-tiering                Ceremony scales with risk; tiered DoR and DoD
     secure-api-review           What a generic scanner can't know: tenancy, regulated
                                 records, audit requirements, residency
-    schema-migration             Expand-contract, backfill verification, tested
+    schema-migration            Expand-contract, backfill verification, tested
                                 rollback, regulated-record integrity on migrations
     agent-trust-boundaries      Untrusted content is data, never instruction
     legacy-characterization     Pin down old code before touching it
     root-cause-analysis         Trace a defect to its actual cause before fixing it
     agents/                     cartographer, verifier, security-reviewer
-    hooks/ scripts/             The deterministic gates
+    hooks/ scripts/             The deterministic gates, plus preflight.sh
+                                (checks jq/scripts/hooks.json health at session start)
+                                and tests/ (regression suite for the gate scripts)
     templates/                  intent / spec / plan / REVIEW / DoR-DoD / CLAUDE.md
                                 (spec.md's own Diagrams section now carries the
                                 guidance the former architecture-diagrams skill gave)
-
-examples/
-  skills/decision-council/  Optional, not installed by default — multi-perspective
-                            pressure test for one-way doors. See examples/README.md.
 
   evidence-quality/       Testing and the traceability chain.
     traceability-ids            One key linking tracker → case → commit → evidence
@@ -218,6 +231,10 @@ examples/
   evidence-integrations/  Anything crossing the platform boundary.
     integration-change          Trust + availability + compliance boundary at once
     contract-testing            Catch partner drift in the pipeline, not in production
+
+examples/
+  skills/decision-council/  Optional, not installed by default — multi-perspective
+                            pressure test for one-way doors. See examples/README.md.
 ```
 
 ## How the plugins fit together
@@ -393,6 +410,39 @@ audits expensive.
 **Two-way linking is the point.** One-way links rot. Creating a test case writes its ID
 back onto the issue; a completed run attaches results to both.
 
+## The evidence CLI — testing whether any of this is actually derivable
+
+Every skill above describes how the artifact chain is *supposed* to trace. `cli/evidence`
+is the one part of this framework that actually tries to derive it — a small,
+dependency-free Python 3 script, no network access, that reads a repository's own
+commits, spec files and tests and builds the traceability graph itself, rather than
+trusting a description of one.
+
+```
+evidence doctor   # preflight: jq on PATH, gate scripts readable, hooks.json sane,
+                  # profile presence, unresolved [ASK] count, profile staleness
+evidence scan     # build the graph: tracker keys -> requirements -> tests -> commits
+evidence gaps     # NO COVERAGE / ORPHANED / UNTRACED / UNPROVEN, exit 0/1/2 -- see below
+evidence export   # write the traceability matrix, --format csv|md, append-safe
+```
+
+A requirement counts as covered only when there is a genuine structural link — a test
+declaration or explicit tag next to the requirement ID, or a `validation/traceability.csv`
+row whose claim is independently corroborated against the file it names — never mere
+proximity, and never an assertion nobody checked. `gaps` distinguishes three exit codes
+that must never render the same: `0` (assessed, clean), `1` (assessed, gaps found), `2`
+(nothing to assess — zero requirements found anywhere). `.evidence/adapter.yml` (see
+`.evidence/adapter.example.yml`) tells it where a repository that doesn't use this
+framework's own layout keeps its requirements, tests and tracker keys, so it can run
+against repositories this framework never touched.
+
+Full docs, a worked example against this repository's own real (and honestly imperfect)
+traceability data, and the exit-code table: [`cli/README.md`](cli/README.md). Before
+trusting its output on something that matters, read
+[`cli/REVIEW-BRIEF.md`](cli/REVIEW-BRIEF.md) — a structural walkthrough and reviewer
+checklist for the tool itself, written because it was built in one session with no
+human reviewer and is the artifact most likely to reach someone outside the team.
+
 ## Risk tiering — ceremony scales with risk
 
 Nine mandatory gates on every change recreates the process weight this framework exists
@@ -464,8 +514,10 @@ change management and quality have listed the approvals that must survive.
 **Phase 6 — review in both directions.** `REVIEW.md`, agent review passes, human
 attention moved up a level to intent and risk.
 
-**Phase 7 — close the loop.** Scheduled scans, control bands on production metrics,
-findings re-entering as `intent.md`. Rehearse rollback before you get here.
+**Phase 7 — close the loop.** Scheduled `evidence gaps` runs (see "The evidence CLI"
+above) wired into CI so a coverage gap blocks a release the same way a failing test
+does, control bands on production metrics, findings re-entering as `intent.md`.
+Rehearse rollback before you get here.
 
 ## Measure these
 
@@ -479,7 +531,7 @@ failure rate are the classic failure of these programmes.
 - **Review depth** — review time per change, plus a quarterly spot-audit of whether
   approvals were substantiated. This is the only honest check on approval theatre
 - **Evidence assembly time at release.** If the chain is working this collapses from a
-  project to an export. Usually the clearest number to show leadership
+  project to running `evidence export`. Usually the clearest number to show leadership
 
 ## On third-party plugins
 
