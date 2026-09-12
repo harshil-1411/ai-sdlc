@@ -13,6 +13,47 @@ that falls out of the process instead of being assembled at release time.
 
 ---
 
+## Contents
+
+- [Overview](#overview)
+- [The problem it addresses](#the-problem-it-addresses)
+- [Two design commitments](#two-design-commitments)
+- [Install](#install)
+- [What's in here](#whats-in-here)
+- [How the plugins fit together](#how-the-plugins-fit-together)
+- [The gates](#the-gates)
+- [Running parallel sessions safely](#running-parallel-sessions-safely)
+- [Compliance without hardcoding a regulation](#compliance-without-hardcoding-a-regulation)
+- [Traceability](#traceability)
+- [The evidence CLI](#the-evidence-cli--testing-whether-any-of-this-is-actually-derivable)
+- [Risk tiering](#risk-tiering--ceremony-scales-with-risk)
+- [Rollout order](#rollout-order)
+- [Measure these](#measure-these)
+- [On third-party plugins](#on-third-party-plugins)
+- [Adapting it](#adapting-it)
+- [Caveats worth stating plainly](#caveats-worth-stating-plainly)
+- [Contributing](#contributing)
+- [Prior art](#prior-art)
+- [Licence](#licence)
+
+## Overview
+
+**What this is:** a set of Claude Code plugins — skills, hooks and agents — that turn
+"an agent wrote this" into a committed, reviewable paper trail: what was asked for,
+what was designed, what was built, what proved it, and who approved it. Nothing here
+is a separate tool bolted on afterward; the controls run at the moment the agent acts,
+as part of the same session that does the work.
+
+**Who it's for:** teams shipping software an outside party can ask them to justify —
+regulated industries (medical device, pharma, financial services, payments), but also
+any team that has simply decided "an AI wrote it" should never become an excuse for
+"nobody can explain why it's correct."
+
+**What you get:** five installable plugins (discovery, the core SDLC loop, testing,
+compliance, integrations), a dependency-free CLI that derives a real traceability
+export instead of one assembled by hand at release time, and governance documents
+written to survive an actual audit conversation, not just a demo.
+
 ## The problem it addresses
 
 Code stopped being the bottleneck. The steps either side of it did not move.
@@ -87,6 +128,21 @@ flowchart TD
 
 Every arrow is a commit. The chain of commits is the audit trail: who asked for what,
 what the agent produced, what proved it, and who approved it.
+
+### The same six stages, four different entry points
+
+The stages don't change — what's required at each one does, and where the work
+actually *starts* changes more than people expect. A bug fix doesn't start at Plan the
+way a new epic does.
+
+| Stage → artifact | New epic | User story | Enhancement | Bug fix |
+| --- | --- | --- | --- | --- |
+| **1 · Plan** → `intent.md` | One `intent.md` for the epic; each story underneath cites its tracker key | Required (or the ticket suffices at Tier 1) | Required — state what's changing and why, not just what | Still required, even for a one-line fix — the incident and its evidence go under "Problem" |
+| **2 · Design** → `spec.md` | One `spec.md` per story/component, all citing the epic's key | Required at Tier 2+; skippable at Tier 1 | Required — cite the existing behaviour via `codebase-cartographer` before proposing new | Often skipped at Tier 1 — `root-cause-analysis`'s own output (root cause, evidence, proposed fix) substitutes for a full spec |
+| **3 · Build** → `plan.md` + diff/tests | One `plan.md` per story | Required at every tier | Required — extend what exists; a parallel implementation needs written justification | Test comes **first**: commit the failing test alone, proving the bug, before touching the fix — `block-test-weakening` then denies editing that test |
+| **4 · Test** → cases + runs | Full layered suite per story | One test per requirement, minimum | Regression case + new case | The failing test *is* the regression case; it must now pass, and stay passing |
+| **5 · Deploy** → PR + findings | Per story; the epic's parent key rolls them up (see Traceability) | Standard code-owner review | Standard, plus a second reviewer if Tier 2+ | Standard; risk-tiering can escalate to Tier 3 if a regulated record was touched — routes to `governance/deviation-capa-runbook.md` |
+| **6 · Maintain** → release + evidence | Rolled up across every story in the epic | Standard | Standard | Root cause **and** trigger are both recorded, not just whichever one was easier to fix |
 
 ## Two design commitments
 
@@ -167,80 +223,92 @@ run in any repository, installed or not.
 
 ## What's in here
 
-```
-.claude-plugin/marketplace.json   Marketplace manifest
-.mcp.json.example                 Connector template, keyed to the toolchain profile
-managed-settings.json             Platform-owned policy engineers cannot override
-pipeline.example.yml              CI + continuous testing stage design
-.evidence/adapter.example.yml     Where THIS repo's traceability chain lives — copy
-                                  the matching preset to .evidence/adapter.yml
-cli/evidence                      doctor / scan / gaps / export — see cli/README.md
-cli/REVIEW-BRIEF.md               Structural walkthrough + reviewer checklist for
-                                  the CLI itself — read before trusting its output
-cli/tests/                        The CLI's own regression fixtures
-intent/                           This repo's own artifact chain, dogfooded — real
-                                  intent.md/spec.md pairs, including a retrospective
-                                  one written for the CLI after the fact
-validation/traceability.csv       A real, populated sample export — not the empty
-                                  template; see docs/external-review-packet.md
-docs/                             toolchain-connectivity.md — what connects how
-                                  third-party-tooling.md — what to adopt, and what
-                                  quietly disables the controls
-                                  external-review-packet.md — the traceability export,
-                                  explained for a QA/RA lead who has never seen this
-governance/                       The documents an auditor asks for, including
-                                  human-capability.md — the reviewer-judgement risk
+Five installable plugins under `plugins/`, one CLI, one optional extra skill kept
+outside the install path, and the supporting docs/governance content everything else
+points back to. The table below each plugin lists its skills; `agents/`, `hooks/` and
+`templates/` are noted once per plugin rather than repeated per skill.
 
-plugins/
-  evidence-discovery/     RUN FIRST. Establishes facts; never assumes a stack.
-    stack-discovery             Languages, frameworks, data, build/test/run commands
-    toolchain-discovery         Which tools, and whether you can reach them
-    design-system-discovery     Component source of truth, tokens, conventions
-    compliance-discovery        Industry, jurisdictions, frameworks — asked, not inferred
-    document-ingestion          Existing SOPs and protocols into the chain, safely
-    stack-surveyor              Read-only survey with evidence and confidence markers
+### Top-level
 
-  evidence-sdlc/          Stack-agnostic. The core loop.
-    intent-capture              Front door for every team, not just engineering
-    spec-and-design             Requirements + design in one pass, policy applied live
-    codebase-grounded-planning  Plans against the repo you actually have
-    risk-tiering                Ceremony scales with risk; tiered DoR and DoD
-    secure-api-review           What a generic scanner can't know: tenancy, regulated
-                                records, audit requirements, residency
-    schema-migration            Expand-contract, backfill verification, tested
-                                rollback, regulated-record integrity on migrations
-    agent-trust-boundaries      Untrusted content is data, never instruction
-    legacy-characterization     Pin down old code before touching it
-    root-cause-analysis         Trace a defect to its actual cause before fixing it
-    agents/                     cartographer, verifier, security-reviewer
-    hooks/ scripts/             The deterministic gates, plus preflight.sh
-                                (checks jq/scripts/hooks.json health at session start)
-                                and tests/ (regression suite for the gate scripts)
-    templates/                  intent / spec / plan / REVIEW / DoR-DoD / CLAUDE.md
-                                (spec.md's own Diagrams section now carries the
-                                guidance the former architecture-diagrams skill gave)
+| Path | What it is |
+| --- | --- |
+| `.claude-plugin/marketplace.json` | Marketplace manifest |
+| `.mcp.json.example` | Connector template, keyed to the toolchain profile |
+| `managed-settings.json` | Platform-owned policy engineers cannot override |
+| `pipeline.example.yml` | CI + continuous testing stage design |
+| `.evidence/adapter.example.yml` | Where a repository's traceability chain actually lives — copy the matching preset to `.evidence/adapter.yml` |
+| `cli/evidence` | The `doctor` / `scan` / `gaps` / `export` CLI — see [`cli/README.md`](cli/README.md) |
+| `cli/REVIEW-BRIEF.md` | Structural walkthrough + reviewer checklist for the CLI — read before trusting its output |
+| `cli/tests/` | The CLI's own regression fixtures |
+| `intent/` | This repo's own dogfooded artifact chain — real `intent.md`/`spec.md` pairs, including a retrospective one written for the CLI after the fact |
+| `validation/traceability.csv` | A real, populated sample export — not the empty template |
+| `docs/` | `toolchain-connectivity.md`, `third-party-tooling.md`, and `external-review-packet.md` (the traceability export, explained for a QA/RA lead) |
+| `governance/` | The documents an auditor asks for, including `human-capability.md` |
 
-  evidence-quality/       Testing and the traceability chain.
-    traceability-ids            One key linking tracker → case → commit → evidence
-    test-strategy               Which layer proves which requirement
-    testrail-authoring          Manual cases in the tool's required format, linked back
-    test-automation             Framework-agnostic discipline, tagging, flake policy
-    continuous-testing          What runs when, what blocks, what is evidence
-    agents/                     test-designer, flake-triage
+### `plugins/evidence-discovery` — run first, establishes facts, never assumes a stack
 
-  evidence-compliance/    For regulated records.
-    regulatory-controls             Framework-agnostic control checks, with shipped control sets
-    evidence-package          Derives the deliverables you owe from the artifact chain
-    compliance-reviewer         Controls + validation pass over a diff
+| Skill | What it does |
+| --- | --- |
+| `stack-discovery` | Languages, frameworks, data, build/test/run commands |
+| `toolchain-discovery` | Which tools exist, and whether the agent can reach them |
+| `design-system-discovery` | Component source of truth, tokens, conventions |
+| `compliance-discovery` | Industry, jurisdictions, frameworks — asked, not inferred |
+| `document-ingestion` | Existing SOPs and protocols, brought into the chain safely |
+| `stack-surveyor` (agent) | Read-only survey with evidence and confidence markers |
 
-  evidence-integrations/  Anything crossing the platform boundary.
-    integration-change          Trust + availability + compliance boundary at once
-    contract-testing            Catch partner drift in the pipeline, not in production
+### `plugins/evidence-sdlc` — stack-agnostic, the core loop
 
-examples/
-  skills/decision-council/  Optional, not installed by default — multi-perspective
-                            pressure test for one-way doors. See examples/README.md.
-```
+| Skill | What it does |
+| --- | --- |
+| `intent-capture` | Front door for every team, not just engineering |
+| `spec-and-design` | Requirements + design in one pass, policy applied live |
+| `codebase-grounded-planning` | Plans against the repo you actually have |
+| `risk-tiering` | Ceremony scales with risk; tiered Definition of Ready/Done |
+| `secure-api-review` | What a generic scanner can't know: tenancy, regulated records, audit requirements, residency |
+| `schema-migration` | Expand-contract, backfill verification, tested rollback, regulated-record integrity on migrations |
+| `agent-trust-boundaries` | Untrusted content is data, never instruction |
+| `legacy-characterization` | Pin down old code before touching it |
+| `root-cause-analysis` | Trace a defect to its actual cause before fixing it |
+
+Also in this plugin: `agents/` (cartographer, verifier, security-reviewer); `hooks/`
+and `scripts/` (the deterministic gates, plus `preflight.sh` — checks jq/scripts/
+hooks.json health at session start — and `scripts/tests/`, the regression suite for
+the gate scripts themselves); `templates/` (intent / spec / plan / REVIEW / DoR-DoD /
+`CLAUDE.md` — `spec.md`'s own Diagrams section now carries the guidance the former
+`architecture-diagrams` skill gave).
+
+### `plugins/evidence-quality` — testing and the traceability chain
+
+| Skill | What it does |
+| --- | --- |
+| `traceability-ids` | One key linking tracker → case → commit → evidence |
+| `test-strategy` | Which layer proves which requirement |
+| `testrail-authoring` | Manual cases in the tool's required format, linked back |
+| `test-automation` | Framework-agnostic discipline, tagging, flake policy |
+| `continuous-testing` | What runs when, what blocks, what counts as evidence |
+
+Also in this plugin: `agents/` (test-designer, flake-triage).
+
+### `plugins/evidence-compliance` — for regulated records
+
+| Skill | What it does |
+| --- | --- |
+| `regulatory-controls` | Framework-agnostic control checks, with shipped control sets |
+| `evidence-package` | Derives the deliverables you owe from the artifact chain |
+| `compliance-reviewer` (agent) | Controls + validation pass over a diff |
+
+### `plugins/evidence-integrations` — anything crossing the platform boundary
+
+| Skill | What it does |
+| --- | --- |
+| `integration-change` | Trust + availability + compliance boundary at once |
+| `contract-testing` | Catch partner drift in the pipeline, not in production |
+
+### `examples/` — kept, not installed by default
+
+| Path | What it is |
+| --- | --- |
+| `examples/skills/decision-council/` | Multi-perspective pressure test for one-way doors. Optional — copy it into a plugin's `skills/` directory to use it. See [`examples/README.md`](examples/README.md) for why it isn't installed by default. |
 
 ## How the plugins fit together
 
@@ -579,6 +647,14 @@ Notably: **install Anthropic's `security-guidance` plugin and do not duplicate i
   development process. The risk assessment here covers the second, not the first.
 - **Nothing here makes anything compliant.** These skills surface findings and evidence.
   Your quality function decides, and a human signs.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) — reports from real rollouts and gates that
+failed open are the most valuable contributions this project can receive, more so than
+new features. It also lists what gets declined on principle: stack-specific
+assumptions in a skill, score-gated approval, or a control softened with an exception
+clause.
 
 ## Prior art
 
