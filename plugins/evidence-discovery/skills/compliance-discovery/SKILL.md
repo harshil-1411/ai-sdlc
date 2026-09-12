@@ -1,6 +1,6 @@
 ---
 name: compliance-discovery
-description: Establish which industry, regulatory frameworks, standards and contractual obligations actually apply to a project, and write them to .evidence/context/compliance.md so every other skill applies the right control set instead of a default one. Use this at repository onboarding alongside stack discovery, whenever someone asks what regulations apply, whenever a new market or customer segment is entered, and before any spec that could touch a regulated record. Never assume a framework applies, and never assume none does.
+description: Establish which industry, regulatory frameworks, standards and contractual obligations actually apply to a project, and write them to .evidence/context/compliance.md so every other skill applies the right control set instead of a default one. Use this at repository onboarding alongside stack discovery, whenever someone asks what regulations apply, whenever a new market or customer segment is entered, and before any spec that could touch a regulated record. Trigger on plain questions too: "are we HIPAA/SOC2/GDPR/PCI compliant", "is this regulated", "what compliance requirements apply to us", "do we need to worry about [a named regulation]" — even when a README or policy doc appears to already answer it. Never assume a framework applies, and never assume none does.
 ---
 
 # Compliance discovery
