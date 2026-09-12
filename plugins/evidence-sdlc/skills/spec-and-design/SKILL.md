@@ -1,6 +1,6 @@
 ---
 name: spec-and-design
-description: Produce a reviewable requirements-and-design spec.md from an accepted intent.md, with the organisation security, compliance, UX and API standards applied while the spec is written and every conflict flagged. Use this whenever an intent has been accepted, whenever someone asks for a design, a solution approach, an API design, or a technical approach document, and before any implementation planning begins. Do not let work jump from intent straight to code.
+description: Produce a reviewable requirements-and-design spec.md from an accepted intent.md, with the organisation security, compliance, UX and API standards applied while the spec is written and every conflict flagged. Use this whenever an intent has been accepted, whenever someone asks for a design, a solution approach, an API design, or a technical approach document, and before any implementation planning begins. Also trigger on direct design requests that use no process vocabulary at all — "design the schema", "design the data model", "design the API", "how should we structure...", "what should the table look like", "model this", "what fields do we need", "sketch the design" — those are still design work and still need a spec, not just an answer. Do not let work jump from intent straight to code.
 ---
 
 # Requirements and design (Stage 2: Design)

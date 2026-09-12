@@ -1,6 +1,6 @@
 ---
 name: risk-tiering
-description: Classify a change into a risk tier and apply the matching Definition of Ready, review depth, and Definition of Done, so process weight lands where the risk is. Use this at the start of every intent, spec and plan, whenever someone asks how much process a change needs, whenever a Definition of Ready or Done is being checked, and whenever review is being assigned. Apply it before proposing any gate, so routine work is not buried in ceremony.
+description: Classify a change into a risk tier and apply the matching Definition of Ready, review depth, and Definition of Done, so process weight lands where the risk is. Use this at the start of every intent, spec and plan, whenever someone asks how much process a change needs, whenever a Definition of Ready or Done is being checked, and whenever review is being assigned. Also trigger on direct design requests with no process vocabulary at all — "design the schema", "design the data model", "design the API", "how should we structure...", "what should the table look like", "model this", "what fields do we need", "sketch the design" — a tier must be stated before that design work proceeds. Apply it before proposing any gate, so routine work is not buried in ceremony.
 ---
 
 # Risk tiering
@@ -55,6 +55,12 @@ Tier 1: merged, tests pass, lint clean.
 Tier 2: the above, plus security pass clean, docs updated, release note entry.
 Tier 3: the above, plus compliance pass clean, traceability rows updated, validation
 impact recorded, ADR stored if a design decision was made, QA/RA sign-off attached.
+
+## State the tier before any design work
+
+No schema, data model, API contract or architecture is produced without a stated
+tier. If asked to design something directly, state the tier first, in one line,
+with the reason. A design for a regulated record is Tier 3 by definition.
 
 ## Review-depth honesty
 
