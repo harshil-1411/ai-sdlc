@@ -25,7 +25,12 @@ else
   esac
 fi
 
-if ls plan.md */plan.md intent/*/plan.md >/dev/null 2>&1; then
+# Each location is an independent alternative (OR), not a simultaneous
+# requirement. `ls plan.md */plan.md intent/*/plan.md` used to fail (and thus
+# deny) whenever ANY one of the three glob patterns had no match, even when
+# plan.md existed at the repo root -- because bash passes an unmatched glob to
+# ls as a literal, nonexistent filename, and ls's exit status reflects that.
+if [ -f plan.md ] || ls */plan.md >/dev/null 2>&1 || ls intent/*/plan.md >/dev/null 2>&1; then
   exit 0
 fi
 
