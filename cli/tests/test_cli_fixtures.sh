@@ -1,12 +1,17 @@
 #!/bin/bash
 # Regression fixtures for the item-1 fix: "gaps reports fully covered on a
-# repository with no tests." These four cases must never regress:
+# repository with no tests." Six cases must never regress. Tagged against
+# cli/REVIEW-BRIEF.md's retrospective spec (intent/<date>-evidence-cli/spec.md):
 #   1. requirements + no tests at all           -> ALL uncovered, exit 1
 #   2. no requirements anywhere                 -> exit 2, "nothing to assess"
 #   3. a requirement + a genuinely, structurally
 #      linked test                              -> covered, exit 0
 #   4. a requirement ID merely co-located with the word "test" in the same
 #      file, with no structural link            -> NOT coverage (still exit 1)
+#   5. a traceability.csv row claiming a test_case_id NOT actually present in
+#      the named automated_test file            -> NOT coverage (still exit 1)
+#   6. a traceability.csv row claiming a test_case_id that IS present in the
+#      named automated_test file                -> covered, exit 0
 set -u
 CLI="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/evidence"
 SCRATCH=$(mktemp -d)
@@ -51,6 +56,7 @@ check_contains() {
   fi
 }
 
+# covers REQ-CLI-01 (gaps distinguishes exit 0/1/2, never rendering two the same)
 # ---- Fixture 1: requirements, no tests at all -> all uncovered, exit 1 ----
 F1="$SCRATCH/f1_no_tests"
 make_repo "$F1"
@@ -76,6 +82,8 @@ git -C "$F2" add -A && git -C "$F2" -c user.email=t@t.com -c user.name=t commit 
 check_exit "Fixture 2: no requirements anywhere -> exit 2" "$F2" "gaps" 2
 check_contains "Fixture 2: says 'nothing to assess'" "$F2" "gaps" "Nothing to assess"
 
+# covers REQ-CLI-02 (coverage requires a structural tie -- name/tag/annotation/
+# docstring/decorator adjacent to a real test declaration, not mere proximity)
 # ---- Fixture 3: a requirement with a genuinely, structurally linked test -> exit 0 ----
 F3="$SCRATCH/f3_covered"
 make_repo "$F3"
@@ -124,6 +132,52 @@ EOF
 git -C "$F4" add -A && git -C "$F4" -c user.email=t@t.com -c user.name=t commit -q -m "FIX-1: add spec and an unrelated test mentioning the ID in passing"
 check_exit "Fixture 4: loose mention (not structural) -> still exit 1" "$F4" "gaps" 1
 check_contains "Fixture 4: REQ-FIX-03 listed as NO COVERAGE despite the mention" "$F4" "gaps" "REQ-FIX-03"
+
+# covers REQ-CLI-03 (a traceability.csv claim is only trusted if independently
+# corroborated against the automated_test file it names)
+# ---- Fixture 5: CSV claims a test_case_id that is NOT in the named file -> NOT coverage ----
+F5="$SCRATCH/f5_csv_uncorroborated"
+make_repo "$F5"
+mkdir -p "$F5/intent/2026-01-01-demo" "$F5/validation"
+cat > "$F5/intent/2026-01-01-demo/spec.md" <<'EOF'
+# Spec: Demo
+Tracker: FIX-1
+
+## Requirements
+| ID | Requirement | Source | Acceptance |
+| --- | --- | --- | --- |
+| REQ-FIX-04 | Something the CSV claims is tested, but isn't really | intent.md | it works |
+EOF
+echo "print('this file never mentions the case id or requirement id')" > "$F5/run.py"
+cat > "$F5/validation/traceability.csv" <<'EOF'
+tracker_key,requirement_id,requirement_summary,spec_commit,implementing_commits,test_case_id,automated_test,test_run_id,result,evidence_link,risk_tier,revalidation
+FIX-1,REQ-FIX-04,claims coverage,abc123,def456,CASE-1,run.py,run-1,PASS,see run.py,1,None
+EOF
+git -C "$F5" add -A && git -C "$F5" -c user.email=t@t.com -c user.name=t commit -q -m "FIX-1: add spec + an uncorroborated CSV claim"
+check_exit "Fixture 5: uncorroborated CSV claim -> still exit 1" "$F5" "gaps" 1
+check_contains "Fixture 5: REQ-FIX-04 listed as NO COVERAGE with the reason" "$F5" "gaps" "could not be independently verified"
+
+# ---- Fixture 6: CSV claims a test_case_id that IS in the named file -> covered ----
+F6="$SCRATCH/f6_csv_corroborated"
+make_repo "$F6"
+mkdir -p "$F6/intent/2026-01-01-demo" "$F6/validation"
+cat > "$F6/intent/2026-01-01-demo/spec.md" <<'EOF'
+# Spec: Demo
+Tracker: FIX-1
+
+## Requirements
+| ID | Requirement | Source | Acceptance |
+| --- | --- | --- | --- |
+| REQ-FIX-05 | Something the CSV claims is tested, and genuinely is | intent.md | it works |
+EOF
+echo "# this file genuinely contains CASE-2 and REQ-FIX-05" > "$F6/run.py"
+cat > "$F6/validation/traceability.csv" <<'EOF'
+tracker_key,requirement_id,requirement_summary,spec_commit,implementing_commits,test_case_id,automated_test,test_run_id,result,evidence_link,risk_tier,revalidation
+FIX-1,REQ-FIX-05,genuinely covered,abc123,def456,CASE-2,run.py,run-1,PASS,see run.py,1,None
+EOF
+git -C "$F6" add -A && git -C "$F6" -c user.email=t@t.com -c user.name=t commit -q -m "FIX-1: add spec + a corroborated CSV claim"
+check_exit "Fixture 6: corroborated CSV claim -> exit 0" "$F6" "gaps" 0
+check_contains "Fixture 6: NO COVERAGE (0)" "$F6" "gaps" "NO COVERAGE (0)"
 
 echo
 echo "==================================="
