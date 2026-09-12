@@ -19,6 +19,22 @@ depends on, that is also a stop — ask the human.
 The single biggest failure mode of AI-assisted development here is a beautiful
 plan that assumes an architecture we don't have. This skill exists to stop that.
 
+## Concurrent sessions
+
+Before planning, check for other active work: other worktrees, other `plan/` files,
+and open branches touching the same paths. If another plan claims a file this plan
+needs, STOP and say so — silent concurrent edits to one module is how two correct
+changes produce one broken merge.
+
+Changes that touch the same regulated path must not run concurrently. Sequence them
+and say why.
+
+Use `plan/<TRACKER-KEY>.md` (not bare `plan.md`) whenever more than one session might
+be planning against this repository at once — it is what lets `gate-plan-exists`
+tell one session's plan apart from another's, and lets a concurrent session see what
+is already claimed via the plan's own "Files claimed" section (see
+`templates/plan.md`).
+
 ## Sequence — do not reorder
 
 1. **Start in plan mode.** You may read, grep and run read-only commands. You may
@@ -41,8 +57,9 @@ plan that assumes an architecture we don't have. This skill exists to stop that.
    its automated test. `REQ-...` with no named test is an incomplete plan.
 7. **State the risks.** What could this break, which step is riskiest, and what did
    you consider and reject.
-8. Write to `plan.md` next to `spec.md` using `${CLAUDE_PLUGIN_ROOT}/templates/plan.md`,
-   then get the engineer's approval before implementing.
+8. Write to `plan.md` (or `plan/<TRACKER-KEY>.md` — see "Concurrent sessions" above)
+   using `${CLAUDE_PLUGIN_ROOT}/templates/plan.md`, including the "Files claimed"
+   section, then get the engineer's approval before implementing.
 
 ## While implementing
 
@@ -68,5 +85,6 @@ component requires a written justification naming what was considered.
 
 ## Done means
 
-`plan.md` is committed, every path in it exists, every requirement has a named test,
-and an engineer who has never seen your session could implement it from the file alone.
+`plan.md` (or `plan/<TRACKER-KEY>.md`) is committed, every path in it exists, every
+requirement has a named test, "Files claimed" is filled in, and an engineer who has
+never seen your session could implement it from the file alone.

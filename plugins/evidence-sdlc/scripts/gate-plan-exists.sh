@@ -6,7 +6,7 @@ path=$(jq -r '.tool_input.file_path // .tool_input.path // empty' <<<"$input")
 [ -z "$path" ] && exit 0
 
 case "$path" in
-  */intent/*|*/docs/*|*intent.md|*spec.md|*plan.md|*CLAUDE.md|*.claude/*|*/validation/*|*/tmp/*|*.log) exit 0 ;;
+  */intent/*|*/docs/*|*intent.md|*spec.md|*plan.md|plan/*.md|*CLAUDE.md|*.claude/*|*/validation/*|*/tmp/*|*.log) exit 0 ;;
 esac
 
 # Gate source paths. The pattern is repo-specific and comes from the repository
@@ -30,7 +30,20 @@ fi
 # deny) whenever ANY one of the three glob patterns had no match, even when
 # plan.md existed at the repo root -- because bash passes an unmatched glob to
 # ls as a literal, nonexistent filename, and ls's exit status reflects that.
-if [ -f plan.md ] || ls */plan.md >/dev/null 2>&1 || ls intent/*/plan.md >/dev/null 2>&1; then
+#
+# plan/<TRACKER-KEY>.md is the namespaced form for concurrent sessions in
+# separate worktrees (see codebase-grounded-planning's "Concurrent sessions"
+# section): each session's plan lives under its own tracker key instead of
+# every session fighting over one bare plan.md. The key must match a tracker
+# key found in the CURRENT branch name, so one session cannot satisfy this
+# gate by pointing at a plan that claims a different piece of work. Bare
+# plan.md (and the two locations above) keep working unchanged.
+branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+key_pattern="${EVIDENCE_ISSUE_KEY_PATTERN:-[A-Z][A-Z0-9]+-[0-9]+}"
+branch_key=$(echo "$branch" | grep -Eo "$key_pattern" | head -1)
+
+if [ -f plan.md ] || ls */plan.md >/dev/null 2>&1 || ls intent/*/plan.md >/dev/null 2>&1 \
+   || { [ -n "$branch_key" ] && [ -f "plan/$branch_key.md" ]; }; then
   exit 0
 fi
 
@@ -38,6 +51,6 @@ jq -n '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
     permissionDecision: "deny",
-    permissionDecisionReason: "No plan.md found. Run the codebase-grounded-planning skill in plan mode and commit an approved plan before editing source. See the Evidence Chain handbook."
+    permissionDecisionReason: "No plan.md found (checked plan.md, */plan.md, intent/*/plan.md, and plan/<tracker-key>.md for the current branch). Run the codebase-grounded-planning skill in plan mode and commit an approved plan before editing source. See the Evidence Chain handbook."
   }
 }'

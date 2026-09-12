@@ -4,6 +4,13 @@ Tracker: <KEY>   From: spec.md   Approved by: <engineer>   Date: <yyyy-mm-dd>
 Any claim below not confirmed from a file, a command, or a named person is marked
 inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
 
+## Files claimed
+<Every path this plan is going to touch, so a concurrent session in another
+worktree can see it is already spoken for before it starts. Same list as "Files
+that change" below, checked here BEFORE work starts. If another plan/<key>.md
+already claims one of these paths, stop and sequence the two changes instead of
+proceeding — see codebase-grounded-planning's "Concurrent sessions" section.>
+
 ## Files that change
 <Real, verified paths only. New files: the directory must already exist.>
 

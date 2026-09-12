@@ -245,7 +245,7 @@ all read the profile.
 | Gate | Enforces |
 | --- | --- |
 | `require-repo-profile` | Every session knows the stack — or knows that it doesn't |
-| `gate-plan-exists` | No source edit without an approved `plan.md` on disk |
+| `gate-plan-exists` | No source edit without an approved `plan.md` (or `plan/<TRACKER-KEY>.md`) on disk |
 | `require-issue-key` | No commit without the tracker key. The chain has no gaps |
 | `protect-validated-paths` | Change-controlled paths need a change ticket in the environment |
 | `block-test-weakening` | An agent fixing a bug cannot edit the test that proves it |
@@ -257,7 +257,7 @@ flowchart TD
     S(["Session starts"]) --> H0["require-repo-profile<br/>— advisory"]
     H0 --> ACT{"Agent acts"}
 
-    ACT -- "Edit / Write" --> H1{"plan.md on disk?"}
+    ACT -- "Edit / Write" --> H1{"plan.md or plan/&lt;key&gt;.md on disk?"}
     H1 -- no --> D1["DENY<br/>— run planning first"]
     H1 -- yes --> H2{"change-controlled path?"}
     H2 -- "yes, no ticket" --> D2["DENY<br/>— needs a change record"]
@@ -285,6 +285,31 @@ flowchart TD
     style D6 fill:#fbe6e6,stroke:#c05050
     style ALLOW fill:#e7f5ec,stroke:#4a9163
 ```
+
+## Running parallel sessions safely
+
+The framework originally assumed one session, one `plan.md`, one branch. Parallel
+agent sessions in separate worktrees are becoming standard, and two sessions fighting
+over one bare `plan.md` — or silently editing the same module without either
+cartographer seeing the other's uncommitted work — is how two correct changes produce
+one broken merge. A few rules keep that from happening:
+
+- **One tracker key per worktree.** Each concurrent session plans into its own
+  `plan/<TRACKER-KEY>.md` (see `codebase-grounded-planning`'s "Concurrent sessions"
+  section) rather than the bare `plan.md` every session used to share.
+  `gate-plan-exists` accepts both — the namespaced form is required only when more
+  than one session might be planning here at once.
+- **No shared regulated paths across concurrent sessions.** A change-controlled path
+  (`migrations/`, `infra/`, `audit/`, `signing/`, `crypto/`, `validation/`, per
+  `protect-validated-paths`) gets one session at a time. Sequence them and say why in
+  each plan.
+- **Check "Files claimed" before planning.** Every `plan.md`/`plan/<key>.md` has a
+  "Files claimed" section. Read the other active plans in this repository (other
+  worktrees, other open branches) before writing yours; if a path you need is already
+  claimed, stop and sequence instead of proceeding.
+- **State merge order up front.** When two plans are known to touch adjacent code,
+  name which one merges first in both plans, not just the one that happens to finish
+  first.
 
 ## Compliance without hardcoding a regulation
 
