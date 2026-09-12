@@ -31,3 +31,7 @@ scepticism — knowing that fluent, well-structured, confidently-explained outpu
 evidence of correctness, and that the moment it feels effortless is the moment to look
 harder. Teach it with real examples of agent output that was wrong and looked right.
 Collect those examples as they happen; they are the best training material you will get.
+
+See [`governance/human-capability.md`](human-capability.md) for the underlying risk
+this competency exists to guard against: if agents write most of the code, engineers
+may never build the judgement C4 assumes they have.

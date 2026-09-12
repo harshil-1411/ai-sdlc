@@ -510,6 +510,10 @@ Notably: **install Anthropic's `security-guidance` plugin and do not duplicate i
 
 - **Human approval on a change nobody read is worse than no AI at all.** Risk-tier the
   work and measure review depth, or the control becomes a fiction.
+- **If agents write most of the code, engineers do not build the judgement needed to
+  review it.** That takes years to become visible and undermines the review-depth
+  control directly — see [`governance/human-capability.md`](governance/human-capability.md).
+  This is an open question the industry has not solved; writing it down is the point.
 - **An agent inside your product is a different system** from an agent inside your
   development process. The risk assessment here covers the second, not the first.
 - **Nothing here makes anything compliant.** These skills surface findings and evidence.
