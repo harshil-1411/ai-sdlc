@@ -5,10 +5,21 @@ input=$(cat)
 path=$(jq -r '.tool_input.file_path // .tool_input.path // empty' <<<"$input")
 [ -z "$path" ] && exit 0
 
+# Match exact path segments, not substrings. The previous globs required no
+# leading boundary on migrations/infra/terraform/validation, so an unrelated
+# directory whose name merely ENDS in one of those words also matched --
+# "cache-invalidation/" (contains "validation/"), "test-infra/" (contains
+# "infra/") -- wrongly pulling ordinary code under change control. The
+# */audit/*, */signing/*, */crypto/* patterns had the opposite gap: requiring
+# a leading slash meant a root-level "audit/report.pdf" (no leading slash)
+# was missed while "src/audit/report.pdf" was caught.
 protected=0
-case "$path" in
-  *migrations/*|*infra/*|*terraform/*|*/audit/*|*/signing/*|*/crypto/*|*validation/*) protected=1 ;;
-esac
+IFS='/' read -ra parts <<< "$path"
+for seg in "${parts[@]}"; do
+  case "$seg" in
+    migrations|infra|terraform|audit|signing|crypto|validation) protected=1; break ;;
+  esac
+done
 [ "$protected" -eq 0 ] && exit 0
 
 if [ -n "$CHANGE_TICKET" ]; then
