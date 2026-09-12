@@ -163,6 +163,9 @@ permissions — that is the point, and it is also the risk. See [SECURITY.md](SE
 .mcp.json.example                 Connector template, keyed to the toolchain profile
 managed-settings.json             Platform-owned policy engineers cannot override
 pipeline.example.yml              CI + continuous testing stage design
+.evidence/adapter.example.yml     Where THIS repo's traceability chain lives — copy
+                                  the matching preset to .evidence/adapter.yml
+cli/evidence                      doctor / scan / gaps / export — see cli/README.md
 docs/                             toolchain-connectivity.md — what connects how
                                   third-party-tooling.md — what to adopt, and what
                                   quietly disables the controls
@@ -184,6 +187,8 @@ plugins/
     risk-tiering                Ceremony scales with risk; tiered DoR and DoD
     secure-api-review           What a generic scanner can't know: tenancy, regulated
                                 records, audit requirements, residency
+    schema-migration             Expand-contract, backfill verification, tested
+                                rollback, regulated-record integrity on migrations
     architecture-diagrams       Diagrams as code, reviewed in the diff
     agent-trust-boundaries      Untrusted content is data, never instruction
     legacy-characterization     Pin down old code before touching it
