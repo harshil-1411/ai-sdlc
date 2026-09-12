@@ -1,6 +1,6 @@
 ---
 name: integration-change
-description: Design, review and change any integration between the platform and an external system — inbound APIs, outbound calls, webhooks, file transfers, identity federation, partner platforms, connectors. Use whenever an integration is added, versioned, deprecated or debugged, whenever a partner announces a change, and whenever a spec proposes calling or being called by anything outside the platform. Treat every integration as a trust, availability and compliance boundary at once.
+description: Design, review and change any integration between the platform and an external system — inbound APIs, outbound calls, webhooks, file transfers, identity federation, partner platforms, connectors. Use whenever an integration is added, versioned, deprecated or debugged, whenever a partner announces a change, and whenever a spec proposes calling or being called by anything outside the platform. Trigger on plain-language phrasings too: "calls a third-party", "calls an external API", "integrates with", "webhook", "provider", "vendor API", "SDK for", and any named external service (an e-sign provider, a payment processor, a mapping service, and so on). This applies at DESIGN time, the first time such a call is proposed — not only at review time — and it runs ALONGSIDE `secure-api-review` rather than being replaced by it: security covers the attack surface, this skill covers availability, idempotency and the compliance boundary. Treat every integration as a trust, availability and compliance boundary at once.
 ---
 
 # Integration change
