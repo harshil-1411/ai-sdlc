@@ -38,7 +38,23 @@ delete the headings you do not use. Diagrams live in the repo as code, not as li
 new egress, new dependencies. Findings from secure-api-review.>
 
 ## UX
-<States, empty/error/loading, accessibility requirement, responsive behaviour.>
+<Delete rows that do not apply; do not delete the table.>
+
+| State / concern | Behaviour |
+| --- | --- |
+| Loading | |
+| Empty | |
+| Error | |
+| Success | |
+| Partial / stale data | |
+| Edge cases (long values, zero, maximum, unusual input) | |
+| Responsive behaviour | |
+| Keyboard navigation | |
+| Screen reader / assistive technology | |
+| Focus management | |
+
+Component reuse: <which existing components from design-system.md this uses, and
+justification for anything new>
 
 ## Areas of concern
 <Every conflict between standards, every unsatisfiable constraint, each with the
