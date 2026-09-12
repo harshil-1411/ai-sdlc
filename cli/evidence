@@ -197,12 +197,22 @@ def cmd_doctor(root, args):
         except json.JSONDecodeError as e:
             bad_hooks.append(f"{hf.relative_to(root)}: {e}")
             continue
-        for cmd in _iter_hook_commands(data):
-            resolved = cmd.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
-            resolved = resolved[len("bash "):] if resolved.startswith("bash ") else resolved
-            script_path = resolved.split()[0] if resolved.split() else resolved
-            if not Path(script_path).exists():
-                missing_cmds.append(f"{hf.relative_to(root)} -> {script_path}")
+        for cmd, hook_args in _iter_hook_commands(data):
+            if hook_args:
+                # Exec form (Claude Code hooks docs: "args" present, even empty,
+                # selects exec form -- "command" is spawned as a literal
+                # executable, never shell-parsed). The script path is whichever
+                # arg looks like a path after substitution.
+                candidates = [a.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root)) for a in hook_args]
+                candidates = [c for c in candidates if "/" in c]
+            else:
+                # Shell form: "command" is a full shell command line.
+                resolved = cmd.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
+                resolved = resolved[len("bash "):] if resolved.startswith("bash ") else resolved
+                candidates = [resolved.split()[0]] if resolved.split() else [resolved]
+            for script_path in candidates:
+                if not Path(script_path).exists():
+                    missing_cmds.append(f"{hf.relative_to(root)} -> {script_path}")
     ok = not bad_hooks and not missing_cmds
     detail_parts = []
     if bad_hooks:
@@ -289,7 +299,7 @@ def _iter_hook_commands(hooks_data):
             for hook in group.get("hooks", []) if isinstance(group, dict) else []:
                 cmd = hook.get("command") if isinstance(hook, dict) else None
                 if cmd:
-                    yield cmd
+                    yield cmd, (hook.get("args") if isinstance(hook, dict) else None)
 
 
 # ---------------------------------------------------------------------------
