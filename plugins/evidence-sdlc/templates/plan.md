@@ -1,6 +1,9 @@
 # Plan: <short title>
 Tracker: <KEY>   From: spec.md   Approved by: <engineer>   Date: <yyyy-mm-dd>
 
+Any claim below not confirmed from a file, a command, or a named person is marked
+inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
+
 ## Files that change
 <Real, verified paths only. New files: the directory must already exist.>
 

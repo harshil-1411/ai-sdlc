@@ -1,6 +1,9 @@
 # Spec: <short title>
 Tracker: <KEY>   From: intent/<...>/intent.md   Risk tier: 1 | 2 | 3
 
+Any claim below not confirmed from a file, a command, or a named person is marked
+inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
+
 ## Requirements
 | ID | Requirement | Source (intent.md section) | Acceptance |
 | --- | --- | --- | --- |

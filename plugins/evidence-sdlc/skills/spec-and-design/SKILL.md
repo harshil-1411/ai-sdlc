@@ -59,6 +59,17 @@ If the change calls, or is called by, anything outside the platform, apply the
 `integration-change` skill and give it its own spec section. An integration is a trust,
 availability and compliance boundary at once.
 
+## Mark what you have not verified
+
+Any factual claim you did not confirm from a file you read, a command you ran, or
+a person who told you, is marked inline as [NEEDS VERIFICATION]. This includes:
+performance characteristics, third-party API behaviour, capacity and cost figures,
+claims about how an existing system behaves, and anything sourced from
+documentation rather than code.
+
+An unmarked claim asserts that you checked it. Do not make that assertion loosely.
+A reviewer should be able to find every unchecked claim by searching the file.
+
 ## Rules
 
 - Where a standard exists, cite it rather than restating your own version.
