@@ -1,6 +1,5 @@
 {
   "name": "evidence-discovery",
-  "version": "0.2.0",
   "description": "Discovers a repository's technology stack, deployment stack, toolchain and design system, and writes them to .evidence/context/ so every other skill reads facts instead of assuming them. Never guesses — asks.",
   "author": { "name": "Suparn Bector", "email": "suparnbector@gmail.com" }
 }

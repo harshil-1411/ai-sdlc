@@ -36,6 +36,15 @@ most valuable contributions are usually about **what works in practice**, not fe
   explain the block in a way that tells the user how to proceed legitimately.
 - Every JSON file must parse. Every shell script must pass `bash -n`.
 - Prefer editing an existing skill over adding a new one. The number of skills is a cost.
+- **Never add a `version` field to a `plugins/*/.claude-plugin/plugin.json`.** This was
+  tried twice and reverted twice. A static version string makes `/plugin update`
+  silently no-op on every real change that doesn't also bump that string — the
+  install just quietly stays on stale, possibly-buggy code. Per Anthropic's own
+  plugin-marketplace documentation and the version strategy their own official
+  plugins use, omitting `version` lets Claude Code track the resolved git commit
+  SHA instead, which updates correctly on every commit with nothing to remember.
+  This holds for a `directory`-sourced marketplace exactly as it does for a
+  git-hosted one — the source type doesn't change the mechanics.
 
 ## Code of conduct
 
