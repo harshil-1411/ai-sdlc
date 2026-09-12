@@ -222,12 +222,19 @@ permissions — that is the point, and it is also the risk. See [SECURITY.md](SE
 standard library only. `python3 cli/evidence doctor` is a reasonable first command to
 run in any repository, installed or not.
 
+**New here?** [`docs/getting-started.md`](docs/getting-started.md) walks one real
+piece of work through every step above — install, run discovery, capture an
+intent, produce a spec/plan, hit the gates, and run the CLI against what you
+produced — instead of the architecture-level tour below.
+
 ## What's in here
 
 Five installable plugins under `plugins/`, one CLI, one optional extra skill kept
 outside the install path, and the supporting docs/governance content everything else
 points back to. The table below each plugin lists its skills; `agents/`, `hooks/` and
-`templates/` are noted once per plugin rather than repeated per skill.
+`templates/` are noted once per plugin rather than repeated per skill. For every
+skill's trigger phrases in one place, see
+[`docs/skills-reference.md`](docs/skills-reference.md).
 
 ### Top-level
 
@@ -243,7 +250,7 @@ points back to. The table below each plugin lists its skills; `agents/`, `hooks/
 | `cli/tests/` | The CLI's own regression fixtures |
 | `intent/` | This repo's own dogfooded artifact chain — real `intent.md`/`spec.md` pairs, including a retrospective one written for the CLI after the fact |
 | `validation/traceability.csv` | A real, populated sample export — not the empty template |
-| `docs/` | `toolchain-connectivity.md`, `third-party-tooling.md`, and `external-review-packet.md` (the traceability export, explained for a QA/RA lead) |
+| `docs/` | [`getting-started.md`](docs/getting-started.md) (start here), [`skills-reference.md`](docs/skills-reference.md) (every skill's trigger phrases in one table), [`gates-reference.md`](docs/gates-reference.md) (every hook's decision logic), [`extending.md`](docs/extending.md) (adding a skill or a gate), plus `toolchain-connectivity.md`, `third-party-tooling.md`, and `external-review-packet.md` (the traceability export, for a QA/RA lead) |
 | `governance/` | The documents an auditor asks for, including `human-capability.md` |
 
 ### `plugins/evidence-discovery` — run first, establishes facts, never assumes a stack
@@ -336,6 +343,9 @@ Nothing downstream of discovery hardcodes a stack, a toolchain, or a regulation.
 all read the profile.
 
 ## The gates
+
+For the exact decision logic, inputs, and bypass environment variables behind each
+one, see [`docs/gates-reference.md`](docs/gates-reference.md).
 
 | Gate | Enforces |
 | --- | --- |

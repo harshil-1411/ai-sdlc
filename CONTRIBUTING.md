@@ -3,6 +3,10 @@
 Thanks for considering it. This project is a set of conventions as much as code, so the
 most valuable contributions are usually about **what works in practice**, not features.
 
+For the mechanics of adding a new skill, understanding the `hooks.json` exec-form vs.
+shell-form schema, or the `plugin.json`/`marketplace.json` conventions referenced below,
+see [`docs/extending.md`](docs/extending.md).
+
 ## What is especially welcome
 
 - **Reports from real rollouts.** What broke, what people routed around, what you had to
