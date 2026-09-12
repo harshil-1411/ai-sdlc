@@ -189,14 +189,18 @@ plugins/
                                 records, audit requirements, residency
     schema-migration             Expand-contract, backfill verification, tested
                                 rollback, regulated-record integrity on migrations
-    architecture-diagrams       Diagrams as code, reviewed in the diff
     agent-trust-boundaries      Untrusted content is data, never instruction
     legacy-characterization     Pin down old code before touching it
     root-cause-analysis         Trace a defect to its actual cause before fixing it
-    decision-council            Multi-perspective pressure test for one-way doors
     agents/                     cartographer, verifier, security-reviewer
     hooks/ scripts/             The deterministic gates
     templates/                  intent / spec / plan / REVIEW / DoR-DoD / CLAUDE.md
+                                (spec.md's own Diagrams section now carries the
+                                guidance the former architecture-diagrams skill gave)
+
+examples/
+  skills/decision-council/  Optional, not installed by default — multi-perspective
+                            pressure test for one-way doors. See examples/README.md.
 
   evidence-quality/       Testing and the traceability chain.
     traceability-ids            One key linking tracker → case → commit → evidence

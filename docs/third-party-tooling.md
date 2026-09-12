@@ -101,8 +101,9 @@ prevent.
 **Browser automation for exploration.** Useful for test authoring and reproducing
 defects. Never for pipeline test runs — see `test-automation`.
 
-**Diagrams as code.** Both Mermaid and code-rendered architecture diagrams. See the
-`architecture-diagrams` skill for why this is a fit rather than a preference.
+**Diagrams as code.** Both Mermaid and code-rendered architecture diagrams. See
+`spec.md`'s Diagrams section (its guidance was folded in from the former
+`architecture-diagrams` skill) for why this is a fit rather than a preference.
 
 ### Evaluate, but do not bundle
 

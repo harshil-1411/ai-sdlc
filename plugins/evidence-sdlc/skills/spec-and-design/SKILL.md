@@ -78,7 +78,10 @@ A reviewer should be able to find every unchecked claim by searching the file.
   `Risk classification:` line at the top. High-risk specs need a named technical
   lead as well as the product owner before they progress.
 - If the decision between two designs is genuinely close and expensive to reverse,
-  stop and run the `decision-council` skill instead of picking silently.
+  stop and say so rather than picking silently. `decision-council` (optional, not
+  installed by default — see `examples/skills/decision-council/`) is the
+  multi-perspective pressure test for exactly this; install it, or at minimum name
+  the reversibility line and the strongest objection yourself before deciding.
 
 ## Done means
 

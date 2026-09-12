@@ -27,8 +27,28 @@ retired; re-verification call and justification. "Out of regulatory scope becaus
 a valid and useful answer.>
 
 ## Diagrams
-<Apply the `architecture-diagrams` skill. Include only the diagrams this change needs;
-delete the headings you do not use. Diagrams live in the repo as code, not as links.>
+<Diagrams as code: the diagram lives in the repository, next to this spec, in a
+diagrams/ directory or inline in this file — never a link to an external design tool
+as the canonical version. Prefer text-based markup (Mermaid and similar) by default;
+it needs no build step, diffs readably, and reviewers see it without leaving the PR.
+Reserve a code-rendered diagram (a generation script with a committed render step)
+for infrastructure/deployment topology where vendor iconography carries real meaning.
+Update the diagram in the same commit as the change it describes — a diagram that no
+longer matches the code is worse than none. Label trust boundaries explicitly on any
+diagram touching security or regulated data. No credentials, internal hostnames, or
+account identifiers in a diagram that might reach a customer or an auditor.
+
+Include only the diagrams this specific change needs; delete the headings below you
+do not use, per the table:
+
+| Diagram | Include when |
+| --- | --- |
+| Component / context | The change adds or moves a service, or crosses a system boundary |
+| Sequence | Ordering matters — approvals, retries, async flows |
+| State machine | A record moves through states with rules about legal transitions |
+| Data flow | Sensitive data moves, crosses a trust boundary, or leaves a residency zone — for regulated work this is the diagram that earns its place |
+| Deployment topology | Infrastructure changes |
+>
 
 - Component / context:
 - Sequence:
