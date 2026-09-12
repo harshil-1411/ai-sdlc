@@ -40,6 +40,9 @@ Tracker issue  <KEY>
 | Test run | Named with `<KEY>` and the build identifier |
 | Traceability matrix row | `<KEY>`, REQ ID, test case ID, automated test, commit SHA, result |
 
+For a change spanning repositories, `<KEY>` in every row above is `PARENT/CHILD` for
+that repository — see "Changes that span repositories" below.
+
 ## Two-way linking is the point
 
 One-way linking rots. Whenever you create a downstream artifact, **write the link
@@ -62,12 +65,35 @@ rules — not as the default model.
 Whatever you choose, record it in the repository profile so the gates and the matrix
 agree with reality.
 
+## Changes that span repositories
+
+A change crossing repositories uses one **PARENT** tracker key. Each repository's
+branch, commits and PR carry both: the parent key and its own **child** key, written
+as `PARENT/CHILD` (e.g. `PLAT-100/API-204`).
+
+Requirement IDs are allocated once, against the parent, and referenced from each
+repository — never re-numbered per repo. A requirement that a second repository also
+implements cites the same `REQ-<area>-<nn>`, not a new ID local to that repo.
+
+The parent issue records which repositories participate. A participating repository
+with no linked child chain is an incomplete change, and a release finding — treat it
+exactly as a `NO COVERAGE` requirement is treated within one repository.
+
+Integration tests proving the cross-repo behaviour live in **one named repository**,
+declared on the parent. "Both sides tested their half" is not proof the whole works —
+each repository's unit and contract tests prove its own behaviour; only an
+integration test that actually exercises the crossing proves the requirement the
+parent issue exists for.
+
 ## Rules
 
 - No key, no artifact. If someone starts work without a tracker issue, the first step
   is creating one — not proceeding and adding it later.
-- One key per change. If a change genuinely serves two issues, it is two changes, or
-  one issue with the other linked as related. Do not put two keys on one branch.
+- One key per change **within a repository**. If a change genuinely serves two
+  issues, it is two changes, or one issue with the other linked as related. Do not
+  put two unrelated keys on one branch. A cross-repository change is the one
+  exception, and even then carries exactly one parent key and one child key per
+  repository, written as `PARENT/CHILD` — never more than that pair.
 - Never invent a key. If you cannot reach the tracker to confirm the key exists, ask.
   A traceability chain anchored to a non-existent issue is worse than none.
 - The chain is the audit evidence. Treat a missing link as a finding, not a tidiness

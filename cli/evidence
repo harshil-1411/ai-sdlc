@@ -353,7 +353,49 @@ def build_graph(root, adapter):
     return graph
 
 
+def find_sibling_repos(repos_dir):
+    base = Path(repos_dir)
+    if not base.exists():
+        return []
+    return sorted(c for c in base.iterdir() if c.is_dir() and (c / ".git").exists())
+
+
+def parent_key(tracker_key):
+    """PARENT/CHILD -> PARENT, per traceability-ids' cross-repo convention."""
+    return tracker_key.split("/")[0] if tracker_key else tracker_key
+
+
 def cmd_scan(root, args):
+    if getattr(args, "repos", None):
+        repos = find_sibling_repos(args.repos)
+        if not repos:
+            print(f"No sibling git repositories found under {args.repos}.")
+            return 0
+        print("evidence scan --repos")
+        print("=" * 60)
+        graphs = {}
+        for r in repos:
+            adapter, _ = load_adapter(r)
+            graphs[r.name] = build_graph(r, adapter)
+            print(f"[{r.name}] requirements={len(graphs[r.name]['requirements'])} "
+                  f"tests={len(graphs[r.name]['tests'])} "
+                  f"commits={len(graphs[r.name]['commits'])} "
+                  f"traceability_rows={len(graphs[r.name]['traceability_rows'])}")
+        print()
+        by_parent = {}
+        for name, g in graphs.items():
+            for c in g["commits"]:
+                for k in c["tracker_keys"]:
+                    by_parent.setdefault(parent_key(k), set()).add(name)
+        joined = {p: repos_ for p, repos_ in by_parent.items() if len(repos_) > 1}
+        print(f"Parent keys joining more than one repository: {len(joined)}")
+        for p, repos_ in sorted(joined.items()):
+            print(f"  {p}: {', '.join(sorted(repos_))}")
+        if not joined:
+            print("  none -- no tracker key (or PARENT/CHILD pair) appeared in more than")
+            print("  one sibling repository's commit history")
+        return 0
+
     adapter, adapter_path = load_adapter(root)
     graph = build_graph(root, adapter)
 
@@ -442,16 +484,11 @@ def compute_gaps(graph):
     }
 
 
-def cmd_gaps(root, args):
-    adapter, _ = load_adapter(root)
-    graph = build_graph(root, adapter)
-    gaps = compute_gaps(graph)
-
-    print("evidence gaps")
-    print("=" * 60)
+def _print_gaps(label_prefix, gaps):
+    any_no_coverage = False
     for label in ["NO COVERAGE", "ORPHANED", "UNTRACED", "UNPROVEN"]:
         items = gaps[label]
-        print(f"{label} ({len(items)})")
+        print(f"{label_prefix}{label} ({len(items)})")
         if not items:
             print("  none")
         else:
@@ -460,8 +497,78 @@ def cmd_gaps(root, args):
             if len(items) > 50:
                 print(f"  ... and {len(items) - 50} more")
         print()
+        if label == "NO COVERAGE" and items:
+            any_no_coverage = True
+    return any_no_coverage
 
-    if gaps["NO COVERAGE"]:
+
+def cmd_gaps(root, args):
+    if getattr(args, "repos", None):
+        repos = find_sibling_repos(args.repos)
+        if not repos:
+            print(f"No sibling git repositories found under {args.repos}.")
+            return 0
+        print("evidence gaps --repos")
+        print("=" * 60)
+        graphs = {}
+        any_no_coverage = False
+        for r in repos:
+            adapter, _ = load_adapter(r)
+            graphs[r.name] = build_graph(r, adapter)
+            print(f"--- {r.name} ---")
+            if _print_gaps("", compute_gaps(graphs[r.name])):
+                any_no_coverage = True
+
+        # Cross-repo: a requirement referenced in more than one repo's requirements
+        # or traceability rows, covered in some but not covered in others.
+        req_repos = {}   # req_id -> {repo_name: covered_bool}
+        for name, g in graphs.items():
+            covered = set()
+            for t in g["tests"]:
+                covered |= t["req_ids"]
+            for row in g["traceability_rows"]:
+                if row.get("requirement_id") and row.get("test_case_id"):
+                    covered.add(row["requirement_id"])
+            referenced = set(g["requirements"]) | {
+                row.get("requirement_id") for row in g["traceability_rows"] if row.get("requirement_id")
+            }
+            for rid in referenced:
+                req_repos.setdefault(rid, {})[name] = rid in covered
+
+        cross_repo_gaps = []
+        for rid, per_repo in sorted(req_repos.items()):
+            if len(per_repo) < 2:
+                continue
+            covered_in = sorted(n for n, ok in per_repo.items() if ok)
+            missing_in = sorted(n for n, ok in per_repo.items() if not ok)
+            if covered_in and missing_in:
+                cross_repo_gaps.append(f"{rid}: covered in {', '.join(covered_in)}; NOT covered in {', '.join(missing_in)}")
+
+        print("--- CROSS-REPO COVERAGE GAPS ---")
+        print(f"({len(cross_repo_gaps)})")
+        if not cross_repo_gaps:
+            print("  none")
+        else:
+            for i in cross_repo_gaps:
+                print(f"  - {i}")
+
+        if any_no_coverage or cross_repo_gaps:
+            print()
+            print("RESULT: coverage gap(s) exist across the participating repositories.")
+            return 1
+        print()
+        print("RESULT: no coverage gaps.")
+        return 0
+
+    adapter, _ = load_adapter(root)
+    graph = build_graph(root, adapter)
+    gaps = compute_gaps(graph)
+
+    print("evidence gaps")
+    print("=" * 60)
+    any_no_coverage = _print_gaps("", gaps)
+
+    if any_no_coverage:
         print("RESULT: NO COVERAGE items exist -- this must block a release gate.")
         return 1
     print("RESULT: no NO COVERAGE items.")
@@ -537,8 +644,12 @@ def main():
     parser = argparse.ArgumentParser(prog="evidence", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="preflight checks for this repository's gate environment")
-    sub.add_parser("scan", help="build and report the traceability graph")
-    sub.add_parser("gaps", help="report coverage gaps; non-zero exit on NO COVERAGE")
+    p_scan = sub.add_parser("scan", help="build and report the traceability graph")
+    p_scan.add_argument("--repos", metavar="DIR",
+                         help="walk sibling repositories under DIR and join their chains on the parent tracker key")
+    p_gaps = sub.add_parser("gaps", help="report coverage gaps; non-zero exit on NO COVERAGE")
+    p_gaps.add_argument("--repos", metavar="DIR",
+                         help="also report requirements with coverage in some sibling repositories but not others")
     p_export = sub.add_parser("export", help="write the traceability matrix")
     p_export.add_argument("--format", choices=["csv", "md"], default="csv")
     p_export.add_argument("--write", action="store_true",

@@ -53,6 +53,14 @@ The question that ruins audits:
 
 Exits non-zero when any `NO COVERAGE` item exists, so it can gate a pipeline.
 
+With `--repos <dir>`, both `scan` and `gaps` walk sibling repositories under `<dir>`
+and join their chains on the **parent** tracker key (see `traceability-ids`'
+"Changes that span repositories" — a cross-repo change carries `PARENT/CHILD` per
+repository). `gaps --repos` additionally reports requirements with coverage in some
+participating repositories but not others — the hardest audit question
+("show me everything that implemented this requirement") a single-repo chain
+cannot answer.
+
 ### `evidence export [--format csv|md] [--write]`
 
 Writes the traceability matrix, columns exactly as in
