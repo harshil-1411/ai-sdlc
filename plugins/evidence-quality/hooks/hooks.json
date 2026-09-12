@@ -8,7 +8,7 @@
           {
             "type": "command",
             "if": "Bash(git commit *)",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/require-issue-key.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/require-issue-key.sh",
             "args": [],
             "statusMessage": "Checking tracker key",
             "timeout": 15
@@ -21,7 +21,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check-test-plan-rows.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/check-test-plan-rows.sh",
             "args": [],
             "timeout": 20
           }

@@ -37,3 +37,14 @@ that shape what an agent does. That makes a few classes of issue especially rele
   a gate silently disabled — check for the hook-error notice on first run.
 - Treat any third-party MCP server as a supply-chain dependency holding credentials to a
   business system. Scope the credential; prefer read-only.
+- **Hook execution failures are treated as non-blocking (allow) by the runtime.** A gate
+  script that cannot execute — most commonly because the zip that shipped it lost the
+  execute bit on extraction — does not deny the tool call, it lets it through silently.
+  This is exactly the fail-open condition named above, and it will hit every adopter
+  who unzips rather than clones. That is why every hook in this repository invokes its
+  script via `bash ${CLAUDE_PLUGIN_ROOT}/scripts/<script>.sh` rather than relying on the
+  script's own execute bit: `bash` running a file it can read does not depend on that
+  file being independently executable. `evidence-sdlc`'s `preflight.sh` SessionStart
+  hook additionally checks that `jq` resolves on PATH and that every gate script is at
+  least readable, and says so loudly if not — but the `bash` wrapper is what removes the
+  underlying cause.
