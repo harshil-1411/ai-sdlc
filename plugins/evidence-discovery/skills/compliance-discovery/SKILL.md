@@ -12,6 +12,14 @@ inside a neighbouring one false confidence that they are covered.
 This runs once per project alongside stack discovery, and everything downstream reads
 its output.
 
+## Do not offer — run
+
+Do not ask "would you like me to run compliance discovery?". If someone asks what
+regulations apply, a new market or customer segment is entered, or a spec could touch
+a regulated record, and no profile exists, run Step 1's evidence gathering and put
+Step 2's questions to the accountable human directly — do not ask permission first to
+go gather that evidence and ask those questions.
+
 ## Rule — this is a question for humans, not an inference
 
 Discovery of a *stack* can be done from files. Discovery of *applicable regulation*

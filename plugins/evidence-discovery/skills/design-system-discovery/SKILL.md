@@ -8,6 +8,12 @@ description: Establish what design system, component library, and UI conventions
 The most common agent failure in UI work is inventing a component that already exists,
 slightly differently. That is how design systems rot.
 
+## Do not offer — run
+
+Do not ask "would you like me to run design-system discovery?". If UI or frontend
+work is planned, a new component is proposed, or someone asks what the design
+conventions are, and no profile exists, run the survey and answer from its results.
+
 ## Find the source of truth
 
 1. **Is the design system a package?** A dependency on an internal component library

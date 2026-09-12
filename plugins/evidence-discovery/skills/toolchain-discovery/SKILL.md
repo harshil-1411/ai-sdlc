@@ -8,6 +8,12 @@ description: Establish which delivery tools a team actually uses — issue track
 A workflow that assumes it can write to a tool it cannot reach fails at the worst
 moment — halfway through, having already made half the changes. Establish reach first.
 
+## Do not offer — run
+
+Do not ask "would you like me to run toolchain discovery?". If a workflow needs a
+tool the session cannot currently reach, or someone asks whether Claude can talk to
+a given system, and no profile exists, run the survey and answer from its results.
+
 ## Step 1 — what the team actually uses
 
 Read the evidence in the repository before asking anyone:
