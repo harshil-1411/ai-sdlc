@@ -1,0 +1,545 @@
+#!/usr/bin/env python3
+"""evidence -- derive, gap-check and export the traceability chain from what is
+actually committed, instead of assembling it by hand.
+
+Standard library only. No network access. No writes outside the working directory
+except the file `evidence export` is asked to write.
+
+Subcommands: doctor, scan, gaps, export. See cli/README.md for a worked example.
+"""
+import argparse
+import csv
+import datetime
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+CSV_COLUMNS = [
+    "tracker_key", "requirement_id", "requirement_summary", "spec_commit",
+    "implementing_commits", "test_case_id", "automated_test", "test_run_id",
+    "result", "evidence_link", "risk_tier", "revalidation",
+]
+
+DEFAULT_TRACKER_PATTERN = r"[A-Z][A-Z0-9]+-[0-9]+"
+DEFAULT_REQ_PATTERN = r"REQ-[A-Za-z0-9]+-[0-9]+"
+DEFAULT_TEST_DIR_SEGMENTS = {"tests", "__tests__", "qa"}
+DEFAULT_TEST_BASENAME_PATTERNS = [
+    re.compile(r"^test_"), re.compile(r"_test\."),
+    re.compile(r"\.test\."), re.compile(r"\.spec\."),
+]
+STALE_DAYS = 183  # ~6 months
+KNOWN_PROFILES = ["stack.md", "deployment.md", "toolchain.md", "design-system.md", "compliance.md"]
+
+
+# ---------------------------------------------------------------------------
+# small helpers
+# ---------------------------------------------------------------------------
+
+def find_repo_root():
+    """Walk up from cwd to find a git repo root; fall back to cwd."""
+    d = Path.cwd()
+    for candidate in [d, *d.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    return d
+
+
+def run_git(root, *args):
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), *args],
+            capture_output=True, text=True, timeout=30,
+        )
+        if out.returncode != 0:
+            return None
+        return out.stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def is_git_repo(root):
+    return (root / ".git").exists()
+
+
+def read_text(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def iter_files(root, *, suffix=None, under=None):
+    base = root / under if under else root
+    if not base.exists():
+        return
+    for p in base.rglob("*"):
+        if p.is_file() and (suffix is None or p.suffix == suffix):
+            if ".git" in p.parts:
+                continue
+            yield p
+
+
+# ---------------------------------------------------------------------------
+# a deliberately minimal adapter-file reader (item 2 defines the real schema).
+# Only supports flat `key: value` lines and simple `key:` + indented `- item`
+# lists -- exactly what .evidence/adapter.example.yml uses. Not a YAML parser.
+# ---------------------------------------------------------------------------
+
+def load_adapter(root):
+    path = root / ".evidence" / "adapter.yml"
+    if not path.exists():
+        return None, None
+    text = read_text(path)
+    if text is None:
+        return None, path
+    data = {}
+    current_list_key = None
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        if not line or line.lstrip().startswith("#"):
+            continue
+        if line.startswith("  - ") and current_list_key:
+            data.setdefault(current_list_key, []).append(line.strip()[2:].strip())
+            continue
+        if ":" in line and not line.startswith(" "):
+            key, _, value = line.partition(":")
+            key = key.strip()
+            value = value.strip()
+            if value:
+                data[key] = value
+                current_list_key = None
+            else:
+                current_list_key = key
+                data.setdefault(key, [])
+    return data, path
+
+
+def adapter_get(adapter, key, default):
+    if not adapter:
+        return default
+    return adapter.get(key, default)
+
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+def cmd_doctor(root, args):
+    checks = []  # (label, ok, critical, detail)
+
+    jq_path = shutil.which("jq")
+    checks.append((
+        "jq resolves on PATH", jq_path is not None, True,
+        f"found at {jq_path}" if jq_path else
+        "not found -- install jq (e.g. `brew install jq` / `apt-get install jq`) and ensure it is on PATH",
+    ))
+
+    unreadable = []
+    scripts = sorted(root.glob("plugins/*/scripts/*.sh"))
+    for s in scripts:
+        if not os.access(s, os.R_OK):
+            unreadable.append(str(s.relative_to(root)))
+    checks.append((
+        f"every plugins/*/scripts/*.sh is readable ({len(scripts)} found)",
+        not unreadable, True,
+        "all readable" if not unreadable else
+        "unreadable: " + ", ".join(unreadable) + " -- fix with `chmod +r <path>`",
+    ))
+
+    hook_files = sorted(root.glob("plugins/*/hooks/hooks.json"))
+    bad_hooks = []
+    missing_cmds = []
+    for hf in hook_files:
+        plugin_root = hf.parent.parent
+        text = read_text(hf)
+        try:
+            data = json.loads(text) if text is not None else None
+        except json.JSONDecodeError as e:
+            bad_hooks.append(f"{hf.relative_to(root)}: {e}")
+            continue
+        for cmd in _iter_hook_commands(data):
+            resolved = cmd.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
+            resolved = resolved[len("bash "):] if resolved.startswith("bash ") else resolved
+            script_path = resolved.split()[0] if resolved.split() else resolved
+            if not Path(script_path).exists():
+                missing_cmds.append(f"{hf.relative_to(root)} -> {script_path}")
+    ok = not bad_hooks and not missing_cmds
+    detail_parts = []
+    if bad_hooks:
+        detail_parts.append("invalid JSON: " + "; ".join(bad_hooks))
+    if missing_cmds:
+        detail_parts.append("missing script(s) referenced: " + "; ".join(missing_cmds))
+    checks.append((
+        f"every hooks.json parses and every command it references exists ({len(hook_files)} files)",
+        ok, True,
+        "all good" if ok else " | ".join(detail_parts) + " -- fix the path or the hooks.json entry",
+    ))
+
+    ctx_dir = root / ".evidence" / "context"
+    if not ctx_dir.exists():
+        checks.append((
+            ".evidence/context/ present", False, True,
+            "missing entirely -- run stack-discovery, toolchain-discovery, design-system-discovery and compliance-discovery",
+        ))
+        missing_profiles = KNOWN_PROFILES
+    else:
+        present = {p.name for p in ctx_dir.glob("*.md")}
+        missing_profiles = [p for p in KNOWN_PROFILES if p not in present]
+        checks.append((
+            ".evidence/context/ present", True, True,
+            f"{len(present)}/{len(KNOWN_PROFILES)} profiles present" +
+            (f"; missing: {', '.join(missing_profiles)}" if missing_profiles else ""),
+        ))
+
+    ask_count = 0
+    if ctx_dir.exists():
+        for p in ctx_dir.glob("*.md"):
+            text = read_text(p) or ""
+            ask_count += text.count("[ASK]")
+    checks.append((
+        "unresolved [ASK] count across profiles", True, False,
+        f"{ask_count} unresolved -- each is a blocker for any downstream skill that depends on that area",
+    ))
+
+    stale = []
+    if ctx_dir.exists():
+        today = datetime.date.today()
+        for p in ctx_dir.glob("*.md"):
+            text = read_text(p) or ""
+            head = "\n".join(text.splitlines()[:6])
+            dates = re.findall(r"\b(\d{4}-\d{2}-\d{2})\b", head)
+            if not dates:
+                continue
+            try:
+                oldest = min(datetime.date.fromisoformat(d) for d in dates)
+            except ValueError:
+                continue
+            age = (today - oldest).days
+            if age > STALE_DAYS:
+                stale.append(f"{p.name} ({age} days old)")
+    checks.append((
+        "profile staleness (established/re-verify date over ~6 months old)",
+        not stale, False,
+        "none stale" if not stale else "STALE: " + ", ".join(stale) + " -- re-run discovery",
+    ))
+
+    critical_failed = any(not ok and crit for _, ok, crit, _ in checks)
+
+    print("evidence doctor")
+    print("=" * 60)
+    for label, ok, critical, detail in checks:
+        tag = "PASS" if ok else ("FAIL" if critical else "WARN")
+        print(f"[{tag}] {label}")
+        print(f"       {detail}")
+    print("=" * 60)
+    if critical_failed:
+        print("RESULT: critical check(s) failed -- fix these before trusting any gate in this repo.")
+        return 1
+    print("RESULT: no critical failures.")
+    return 0
+
+
+def _iter_hook_commands(hooks_data):
+    if not isinstance(hooks_data, dict):
+        return
+    for event_list in hooks_data.get("hooks", {}).values():
+        if not isinstance(event_list, list):
+            continue
+        for group in event_list:
+            for hook in group.get("hooks", []) if isinstance(group, dict) else []:
+                cmd = hook.get("command") if isinstance(hook, dict) else None
+                if cmd:
+                    yield cmd
+
+
+# ---------------------------------------------------------------------------
+# scan -- builds the in-memory graph shared by scan/gaps/export
+# ---------------------------------------------------------------------------
+
+def build_graph(root, adapter):
+    tracker_pattern = re.compile(adapter_get(adapter, "tracker_pattern", DEFAULT_TRACKER_PATTERN))
+    req_pattern = re.compile(adapter_get(adapter, "requirement_pattern", DEFAULT_REQ_PATTERN))
+
+    graph = {
+        "requirements": {},   # req_id -> {summary, spec_file, spec_commit, tracker_key}
+        "tests": [],          # {path, req_ids: set}
+        "commits": [],        # {sha, subject, tracker_keys: set}
+        "traceability_rows": [],
+        "adapter_used": bool(adapter),
+    }
+
+    spec_files = sorted(root.glob("intent/*/spec.md")) + sorted(
+        p for p in root.glob("**/spec.md") if "intent" not in p.parts
+    )
+    for spec in spec_files:
+        text = read_text(spec) or ""
+        for line in text.splitlines():
+            m = req_pattern.search(line)
+            if not m or "|" not in line:
+                continue
+            req_id = m.group(0)
+            if req_id in graph["requirements"]:
+                continue
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            summary = cells[1] if len(cells) > 1 else ""
+            spec_commit = None
+            if is_git_repo(root):
+                log = run_git(root, "log", "--format=%H", "--follow", "--", str(spec.relative_to(root)))
+                if log:
+                    lines = [l for l in log.splitlines() if l]
+                    if lines:
+                        spec_commit = lines[-1]  # oldest = introducing commit
+            tracker_key = None
+            if spec_commit:
+                msg = run_git(root, "log", "-1", "--format=%s%n%b", spec_commit) or ""
+                tm = tracker_pattern.search(msg)
+                if tm:
+                    tracker_key = tm.group(0)
+            graph["requirements"][req_id] = {
+                "summary": summary, "spec_file": str(spec.relative_to(root)),
+                "spec_commit": spec_commit, "tracker_key": tracker_key,
+            }
+
+    test_dir_segments = set(adapter_get(adapter, "test_dir_segments", DEFAULT_TEST_DIR_SEGMENTS))
+    for p in root.rglob("*"):
+        if not p.is_file() or ".git" in p.parts:
+            continue
+        rel_parts = p.relative_to(root).parts
+        is_test = any(seg in test_dir_segments for seg in rel_parts[:-1])
+        if not is_test:
+            is_test = any(pat.search(p.name) for pat in DEFAULT_TEST_BASENAME_PATTERNS)
+        if not is_test:
+            continue
+        text = read_text(p) or ""
+        req_ids = set(req_pattern.findall(text))
+        if req_ids or True:
+            graph["tests"].append({"path": str(p.relative_to(root)), "req_ids": req_ids})
+
+    if is_git_repo(root):
+        log = run_git(root, "log", "--format=%H%x1f%s%x1f%b%x1e") or ""
+        for entry in log.split("\x1e"):
+            entry = entry.strip("\n")
+            if not entry:
+                continue
+            parts = entry.split("\x1f")
+            sha = parts[0] if len(parts) > 0 else ""
+            subject = parts[1] if len(parts) > 1 else ""
+            body = parts[2] if len(parts) > 2 else ""
+            if not sha:
+                continue
+            keys = set(tracker_pattern.findall(subject + " " + body))
+            graph["commits"].append({"sha": sha[:10], "subject": subject, "tracker_keys": keys})
+
+    csv_path = root / "validation" / "traceability.csv"
+    if csv_path.exists():
+        text = read_text(csv_path) or ""
+        reader = csv.DictReader(io.StringIO(text))
+        for row in reader:
+            graph["traceability_rows"].append(row)
+
+    return graph
+
+
+def cmd_scan(root, args):
+    adapter, adapter_path = load_adapter(root)
+    graph = build_graph(root, adapter)
+
+    print("evidence scan")
+    print("=" * 60)
+    print(f"Repository: {root}")
+    print(f"Adapter: {adapter_path if adapter else 'none found -- using built-in defaults for this framework\'s own layout'}")
+    print()
+
+    if not graph["requirements"] and not graph["traceability_rows"]:
+        print("Nothing to trace: no requirement IDs found in any spec.md, and no")
+        print("validation/traceability.csv exists yet. This is a clean report, not an")
+        print("error -- either this repository has not run intent-capture/spec-and-design")
+        print("yet, or its requirements live somewhere this scan does not know to look")
+        print("(configure .evidence/adapter.yml).")
+        return 0
+
+    print(f"Requirements found: {len(graph['requirements'])}")
+    for req_id, info in sorted(graph["requirements"].items()):
+        print(f"  {req_id}  (spec: {info['spec_file']}, spec_commit: {info['spec_commit'] or '[NEEDS VERIFICATION]'})")
+    print()
+
+    print(f"Test files scanned (matching test-location conventions): {len(graph['tests'])}")
+    tagged = [t for t in graph["tests"] if t["req_ids"]]
+    print(f"  of which reference a requirement ID: {len(tagged)}")
+    for t in tagged:
+        print(f"  {t['path']} -> {', '.join(sorted(t['req_ids']))}")
+    print()
+
+    print(f"Commits scanned: {len(graph['commits'])}")
+    keyed = [c for c in graph["commits"] if c["tracker_keys"]]
+    print(f"  of which carry a tracker key: {len(keyed)}")
+    print()
+
+    print(f"validation/traceability.csv rows: {len(graph['traceability_rows'])}")
+    if not graph["traceability_rows"]:
+        print("  none -- run `evidence export` once requirements have evidence to cite")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# gaps
+# ---------------------------------------------------------------------------
+
+def compute_gaps(graph):
+    covered_req_ids = set()
+    for t in graph["tests"]:
+        covered_req_ids |= t["req_ids"]
+    for row in graph["traceability_rows"]:
+        rid = row.get("requirement_id")
+        if rid and row.get("test_case_id"):
+            covered_req_ids.add(rid)
+
+    no_coverage = sorted(set(graph["requirements"]) - covered_req_ids)
+
+    known_req_ids = set(graph["requirements"])
+    orphaned = sorted({
+        f"{t['path']} -> {rid}"
+        for t in graph["tests"] for rid in t["req_ids"]
+        if rid not in known_req_ids
+    })
+
+    untraced = [c["sha"] + " " + c["subject"] for c in graph["commits"] if not c["tracker_keys"]]
+
+    unproven = []
+    for row in graph["traceability_rows"]:
+        result = (row.get("result") or "").strip()
+        if not result.upper().startswith("PASS"):
+            unproven.append(f"{row.get('requirement_id', '?')}: result={result or '(none)'}")
+
+    return {
+        "NO COVERAGE": no_coverage,
+        "ORPHANED": orphaned,
+        "UNTRACED": untraced,
+        "UNPROVEN": unproven,
+    }
+
+
+def cmd_gaps(root, args):
+    adapter, _ = load_adapter(root)
+    graph = build_graph(root, adapter)
+    gaps = compute_gaps(graph)
+
+    print("evidence gaps")
+    print("=" * 60)
+    for label in ["NO COVERAGE", "ORPHANED", "UNTRACED", "UNPROVEN"]:
+        items = gaps[label]
+        print(f"{label} ({len(items)})")
+        if not items:
+            print("  none")
+        else:
+            for i in items[:50]:
+                print(f"  - {i}")
+            if len(items) > 50:
+                print(f"  ... and {len(items) - 50} more")
+        print()
+
+    if gaps["NO COVERAGE"]:
+        print("RESULT: NO COVERAGE items exist -- this must block a release gate.")
+        return 1
+    print("RESULT: no NO COVERAGE items.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# export
+# ---------------------------------------------------------------------------
+
+def cmd_export(root, args):
+    adapter, _ = load_adapter(root)
+    graph = build_graph(root, adapter)
+
+    existing = {}
+    order = []
+    csv_path = root / "validation" / "traceability.csv"
+    if csv_path.exists():
+        text = read_text(csv_path) or ""
+        reader = csv.DictReader(io.StringIO(text))
+        for row in reader:
+            rid = row.get("requirement_id", "")
+            existing[rid] = row
+            order.append(rid)
+
+    touched = set(graph["requirements"])
+    for req_id, info in graph["requirements"].items():
+        row = existing.get(req_id, {col: "" for col in CSV_COLUMNS})
+        row["requirement_id"] = req_id
+        row["requirement_summary"] = info["summary"] or row.get("requirement_summary", "")
+        row["spec_commit"] = info["spec_commit"] or row.get("spec_commit", "")
+        row["tracker_key"] = info["tracker_key"] or row.get("tracker_key", "")
+        matching_tests = [t for t in graph["tests"] if req_id in t["req_ids"]]
+        if matching_tests:
+            row["automated_test"] = ", ".join(sorted(t["path"] for t in matching_tests))
+        if not row.get("evidence_link"):
+            row["evidence_link"] = "NO COVERAGE" if not matching_tests and not row.get("test_case_id") else row.get("evidence_link", "")
+        existing[req_id] = row
+        if req_id not in order:
+            order.append(req_id)
+
+    rows = [existing[rid] for rid in order]
+
+    fmt = args.format
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
+        output = buf.getvalue()
+    else:
+        lines = ["| " + " | ".join(CSV_COLUMNS) + " |", "| " + " | ".join(["---"] * len(CSV_COLUMNS)) + " |"]
+        for row in rows:
+            lines.append("| " + " | ".join((row.get(col, "") or "").replace("|", "/") for col in CSV_COLUMNS) + " |")
+        output = "\n".join(lines) + "\n"
+
+    if args.write:
+        out_path = root / "validation" / f"traceability.{'csv' if fmt == 'csv' else 'md'}"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(output, encoding="utf-8")
+        print(f"Wrote {out_path.relative_to(root)} ({len(rows)} rows, {len(touched)} touched this scan).")
+    else:
+        sys.stdout.write(output)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(prog="evidence", description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("doctor", help="preflight checks for this repository's gate environment")
+    sub.add_parser("scan", help="build and report the traceability graph")
+    sub.add_parser("gaps", help="report coverage gaps; non-zero exit on NO COVERAGE")
+    p_export = sub.add_parser("export", help="write the traceability matrix")
+    p_export.add_argument("--format", choices=["csv", "md"], default="csv")
+    p_export.add_argument("--write", action="store_true",
+                           help="write to validation/traceability.<ext> instead of stdout")
+
+    args = parser.parse_args()
+    root = find_repo_root()
+
+    if args.command == "doctor":
+        return cmd_doctor(root, args)
+    if args.command == "scan":
+        return cmd_scan(root, args)
+    if args.command == "gaps":
+        return cmd_gaps(root, args)
+    if args.command == "export":
+        return cmd_export(root, args)
+    parser.print_help()
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
