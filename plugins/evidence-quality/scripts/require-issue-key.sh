@@ -6,10 +6,18 @@ input=$(cat)
 cmd=$(jq -r '.tool_input.command // empty' <<<"$input")
 [ -z "$cmd" ] && exit 0
 
-case "$cmd" in
-  *"git commit"*) ;;
-  *) exit 0 ;;
-esac
+# Require "git commit" at a command-invocation position (start of a line, or
+# right after a shell chaining operator), not merely present as text anywhere
+# in the command. The previous substring check matched a command that only
+# MENTIONED "git commit" inside a quoted string or heredoc body -- e.g.
+# `echo "remember to git commit later"`, or test payload data constructing a
+# sample command string -- denying it as though it were a real, un-keyed
+# commit. This was hit live: a heredoc writing a test script whose sample
+# data contained the literal text "git commit -m '...'" was denied even
+# though no commit was being made.
+if ! printf '%s\n' "$cmd" | grep -Eq '(^|[;&|`(])[[:space:]]*git[[:space:]]+commit([[:space:]]|$)'; then
+  exit 0
+fi
 
 pattern="${EVIDENCE_ISSUE_KEY_PATTERN:-[A-Z][A-Z0-9]+-[0-9]+}"
 
