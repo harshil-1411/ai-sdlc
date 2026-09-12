@@ -187,6 +187,7 @@ plugins/
     architecture-diagrams       Diagrams as code, reviewed in the diff
     agent-trust-boundaries      Untrusted content is data, never instruction
     legacy-characterization     Pin down old code before touching it
+    root-cause-analysis         Trace a defect to its actual cause before fixing it
     decision-council            Multi-perspective pressure test for one-way doors
     agents/                     cartographer, verifier, security-reviewer
     hooks/ scripts/             The deterministic gates
