@@ -7,22 +7,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/gate-plan-exists.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/gate-plan-exists.sh"],
             "statusMessage": "Checking for an approved plan.md",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/protect-validated-paths.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/protect-validated-paths.sh"],
             "statusMessage": "Checking validated / protected paths",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/block-test-weakening.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/block-test-weakening.sh"],
             "statusMessage": "Protecting the test suite",
             "timeout": 15
           }
@@ -34,16 +34,16 @@
           {
             "type": "command",
             "if": "Bash(git push *)",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/block-protected-branch-push.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/block-protected-branch-push.sh"],
             "statusMessage": "Checking branch protection",
             "timeout": 15
           },
           {
             "type": "command",
             "if": "Bash(*deploy*)",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/production-gate.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/production-gate.sh"],
             "statusMessage": "Checking release authorization",
             "timeout": 15
           }
@@ -56,8 +56,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/audit-log.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/audit-log.sh"],
             "async": true
           }
         ]
@@ -68,15 +68,15 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"],
             "statusMessage": "Verifying gate environment",
             "timeout": 20
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh"],
             "timeout": 20
           }
         ]

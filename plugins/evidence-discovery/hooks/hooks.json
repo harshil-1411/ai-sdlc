@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/require-repo-profile.sh",
-            "args": [],
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/require-repo-profile.sh"],
             "timeout": 20
           }
         ]
