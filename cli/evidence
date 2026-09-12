@@ -35,6 +35,41 @@ DEFAULT_TEST_BASENAME_PATTERNS = [
 STALE_DAYS = 183  # ~6 months
 KNOWN_PROFILES = ["stack.md", "deployment.md", "toolchain.md", "design-system.md", "compliance.md"]
 
+# A requirement ID counts as covered by a test only when it sits next to something
+# that actually declares or tags a test -- not merely anywhere in a file that
+# happens to also be shaped like a test file. "A requirement ID appearing in a
+# file that also contains the word 'test' is NOT coverage" (see cli/REVIEW-BRIEF.md
+# and the item-1 fix that introduced this). This is a heuristic, not a parser: it
+# recognises common conventions (pytest, unittest, Jest/Mocha, JUnit-style
+# annotations, and an explicit "covers"/"requirement" tag) but is not a substitute
+# for real static analysis of an unfamiliar test framework.
+TEST_DECL_RE = re.compile(
+    r"\bdef\s+test\w*\b|\bit\s*\(|\bdescribe\s*\(|\bclass\s+Test\w*\b|"
+    r"\bfunction\s+test\w*\b|@Test\b",
+    re.IGNORECASE,
+)
+TEST_TAG_RE = re.compile(
+    r"@covers\b|#\s*covers\b|//\s*covers\b|@requirement\b|#\s*req:|//\s*req:|@pytest\.mark",
+    re.IGNORECASE,
+)
+
+
+def find_structural_req_ids(text, req_pattern):
+    """Requirement IDs with a genuine structural tie to a test: the ID's own line,
+    or the line immediately before or after it, contains a test declaration or an
+    explicit tag (a one-line window in each direction covers both a tag comment
+    placed above the def it annotates, and a docstring placed below it). Mere
+    presence anywhere else in the file is NOT enough on its own."""
+    lines = text.splitlines()
+    found = set()
+    for i, line in enumerate(lines):
+        for m in req_pattern.finditer(line):
+            window = lines[max(0, i - 1): i + 2]
+            context = "\n".join(window)
+            if TEST_DECL_RE.search(context) or TEST_TAG_RE.search(context):
+                found.add(m.group(0))
+    return found
+
 
 # ---------------------------------------------------------------------------
 # small helpers
@@ -268,11 +303,14 @@ def build_graph(root, adapter):
 
     graph = {
         "requirements": {},   # req_id -> {summary, spec_file, spec_commit, tracker_key}
-        "tests": [],          # {path, req_ids: set}
+        "tests": [],          # {path, req_ids: set}  -- req_ids are STRUCTURAL matches only
         "commits": [],        # {sha, subject, tracker_keys: set}
         "traceability_rows": [],
         "adapter_used": bool(adapter),
         "requirements_source": requirements_source,
+        "skipped_files": 0,   # unreadable files encountered while scanning specs/tests
+        "spec_files_scanned": 0,
+        "test_source_desc": "",
     }
 
     # Requirements live in an issue tracker this CLI has no network access to --
@@ -284,8 +322,12 @@ def build_graph(root, adapter):
         spec_files = sorted({p for g in spec_globs for p in root.glob(g)})
         if not adapter:
             spec_files += sorted(p for p in root.glob("**/spec.md") if "intent" not in p.parts)
+    graph["spec_files_scanned"] = len(spec_files)
     for spec in spec_files:
-        text = read_text(spec) or ""
+        text = read_text(spec)
+        if text is None:
+            graph["skipped_files"] += 1
+            continue
         for line in text.splitlines():
             m = req_pattern.search(line)
             if not m or "|" not in line:
@@ -314,6 +356,11 @@ def build_graph(root, adapter):
             }
 
     test_dir_segments = set(adapter_get(adapter, "test_dir_segments", DEFAULT_TEST_DIR_SEGMENTS))
+    graph["test_source_desc"] = (
+        f"test-location conventions (directories named {sorted(test_dir_segments)}, "
+        f"or basenames matching test_*/​*_test.*/​.test./​.spec.) with a structural tie "
+        f"(a test declaration or an explicit tag on the same or preceding line)"
+    )
     for p in root.rglob("*"):
         if not p.is_file() or ".git" in p.parts:
             continue
@@ -323,10 +370,15 @@ def build_graph(root, adapter):
             is_test = any(pat.search(p.name) for pat in DEFAULT_TEST_BASENAME_PATTERNS)
         if not is_test:
             continue
-        text = read_text(p) or ""
-        req_ids = set(req_pattern.findall(text))
-        if req_ids or True:
-            graph["tests"].append({"path": str(p.relative_to(root)), "req_ids": req_ids})
+        text = read_text(p)
+        if text is None:
+            graph["skipped_files"] += 1
+            continue
+        # STRUCTURAL matches only -- see find_structural_req_ids. A requirement ID
+        # merely present somewhere in a test-shaped file (a comment, a docstring
+        # paragraph, test fixture data) is NOT coverage on its own.
+        req_ids = find_structural_req_ids(text, req_pattern)
+        graph["tests"].append({"path": str(p.relative_to(root)), "req_ids": req_ids})
 
     if is_git_repo(root):
         log = run_git(root, "log", "--format=%H%x1f%s%x1f%b%x1e") or ""
@@ -430,9 +482,13 @@ def cmd_scan(root, args):
 
     print(f"Test files scanned (matching test-location conventions): {len(graph['tests'])}")
     tagged = [t for t in graph["tests"] if t["req_ids"]]
-    print(f"  of which reference a requirement ID: {len(tagged)}")
+    print(f"  of which structurally reference a requirement ID (same/preceding line as a")
+    print(f"  test declaration or an explicit tag -- not merely present anywhere in the file):")
+    print(f"  {len(tagged)}")
     for t in tagged:
         print(f"  {t['path']} -> {', '.join(sorted(t['req_ids']))}")
+    if graph["skipped_files"]:
+        print(f"  ({graph['skipped_files']} file(s) could not be read and were skipped, not silently treated as empty)")
     print()
 
     print(f"Commits scanned: {len(graph['commits'])}")
@@ -450,16 +506,60 @@ def cmd_scan(root, args):
 # gaps
 # ---------------------------------------------------------------------------
 
-def compute_gaps(graph):
+def csv_row_corroborated(root, row):
+    """A traceability.csv row naming a requirement and a test_case_id is only
+    real evidence if that claim can be independently checked against something
+    other than the CSV itself -- otherwise it is a description someone typed, not
+    a link (evidence-package's own rule: "Evidence is a link... never a
+    description"). Requires: automated_test names at least one file that exists,
+    and that file's content contains the test_case_id or the requirement_id
+    verbatim. A non-empty test_case_id with no corroborating file is an
+    assertion, not coverage."""
+    test_case_id = (row.get("test_case_id") or "").strip()
+    rid = (row.get("requirement_id") or "").strip()
+    automated_test = (row.get("automated_test") or "").strip()
+    if not test_case_id or not rid or not automated_test:
+        return False
+    for rel in (p.strip() for p in automated_test.split(",")):
+        if not rel:
+            continue
+        p = root / rel
+        if not p.is_file():
+            continue
+        text = read_text(p)
+        if text is None:
+            continue
+        if test_case_id in text or rid in text:
+            return True
+    return False
+
+
+def compute_gaps(root, graph):
     covered_req_ids = set()
     for t in graph["tests"]:
         covered_req_ids |= t["req_ids"]
+
+    csv_claims = {}  # req_id -> row, for rows that name both a req and a test_case_id
     for row in graph["traceability_rows"]:
         rid = row.get("requirement_id")
         if rid and row.get("test_case_id"):
-            covered_req_ids.add(rid)
+            csv_claims[rid] = row
+            if csv_row_corroborated(root, row):
+                covered_req_ids.add(rid)
 
-    no_coverage = sorted(set(graph["requirements"]) - covered_req_ids)
+    no_coverage = []
+    for rid in sorted(set(graph["requirements"]) - covered_req_ids):
+        if rid in csv_claims:
+            row = csv_claims[rid]
+            automated_test = row.get("automated_test") or "(empty)"
+            no_coverage.append(
+                f"{rid} (validation/traceability.csv claims test_case_id="
+                f"'{row.get('test_case_id')}' in automated_test='{automated_test}', "
+                f"but that claim could not be independently verified against the "
+                f"named file's actual content -- treated as uncovered, not assumed correct)"
+            )
+        else:
+            no_coverage.append(rid)
 
     known_req_ids = set(graph["requirements"])
     orphaned = sorted({
@@ -502,6 +602,19 @@ def _print_gaps(label_prefix, gaps):
     return any_no_coverage
 
 
+def assessment_basis_line(root, graph):
+    req_source = (
+        "an issue tracker (unavailable locally, per requirements_source: tracker)"
+        if graph["requirements_source"] == "tracker"
+        else f"{graph['spec_files_scanned']} spec file(s)"
+    )
+    return (
+        f"Assessment basis: {len(graph['requirements'])} requirements from {req_source}, "
+        f"{len(graph['tests'])} tests parsed from {graph['test_source_desc'] or 'test-location conventions'}, "
+        f"{graph['skipped_files']} unparseable file(s) skipped."
+    )
+
+
 def cmd_gaps(root, args):
     if getattr(args, "repos", None):
         repos = find_sibling_repos(args.repos)
@@ -516,18 +629,22 @@ def cmd_gaps(root, args):
             adapter, _ = load_adapter(r)
             graphs[r.name] = build_graph(r, adapter)
             print(f"--- {r.name} ---")
-            if _print_gaps("", compute_gaps(graphs[r.name])):
+            print(assessment_basis_line(r, graphs[r.name]))
+            if _print_gaps("", compute_gaps(r, graphs[r.name])):
                 any_no_coverage = True
 
         # Cross-repo: a requirement referenced in more than one repo's requirements
-        # or traceability rows, covered in some but not covered in others.
+        # or traceability rows, covered in some but not covered in others. Uses the
+        # same corroboration rule as the single-repo path -- a CSV claim only
+        # counts if the named test file exists and contains the ID.
+        roots_by_name = {r.name: r for r in repos}
         req_repos = {}   # req_id -> {repo_name: covered_bool}
         for name, g in graphs.items():
             covered = set()
             for t in g["tests"]:
                 covered |= t["req_ids"]
             for row in g["traceability_rows"]:
-                if row.get("requirement_id") and row.get("test_case_id"):
+                if row.get("requirement_id") and row.get("test_case_id") and csv_row_corroborated(roots_by_name[name], row):
                     covered.add(row["requirement_id"])
             referenced = set(g["requirements"]) | {
                 row.get("requirement_id") for row in g["traceability_rows"] if row.get("requirement_id")
@@ -562,10 +679,24 @@ def cmd_gaps(root, args):
 
     adapter, _ = load_adapter(root)
     graph = build_graph(root, adapter)
-    gaps = compute_gaps(graph)
 
     print("evidence gaps")
     print("=" * 60)
+
+    all_known_reqs = set(graph["requirements"]) | {
+        row.get("requirement_id") for row in graph["traceability_rows"] if row.get("requirement_id")
+    }
+    if not all_known_reqs:
+        print("No requirements found.")
+        print(f"Scanned: {graph['spec_files_scanned']} spec file(s), {len(graph['commits'])} commits, "
+              f"{len(graph['tests'])} test files.")
+        print("Nothing to assess -- this is not a coverage result.")
+        print("If this repository should have requirement IDs, check .evidence/adapter.yml.")
+        return 2
+
+    print(assessment_basis_line(root, graph))
+    print()
+    gaps = compute_gaps(root, graph)
     any_no_coverage = _print_gaps("", gaps)
 
     if any_no_coverage:
@@ -604,16 +735,34 @@ def cmd_export(root, args):
         matching_tests = [t for t in graph["tests"] if req_id in t["req_ids"]]
         if matching_tests:
             row["automated_test"] = ", ".join(sorted(t["path"] for t in matching_tests))
-        if not row.get("evidence_link"):
-            row["evidence_link"] = "NO COVERAGE" if not matching_tests and not row.get("test_case_id") else row.get("evidence_link", "")
+        # Covered only with a structural test match OR a CSV claim that is itself
+        # independently corroborated against the file it names -- a bare
+        # test_case_id with nothing behind it is not evidence (see item-1 fix).
+        covered = bool(matching_tests) or csv_row_corroborated(root, row)
+        if not covered:
+            reason = "NO COVERAGE"
+            if (row.get("test_case_id") or "").strip():
+                reason = (f"NO COVERAGE (test_case_id '{row['test_case_id']}' in "
+                          f"automated_test '{row.get('automated_test') or '(empty)'}' could not be "
+                          f"independently verified)")
+            row["evidence_link"] = reason
+        elif not row.get("evidence_link"):
+            row["evidence_link"] = "see automated_test / spec_commit"
         existing[req_id] = row
         if req_id not in order:
             order.append(req_id)
 
     rows = [existing[rid] for rid in order]
 
+    basis = assessment_basis_line(root, graph)
+
     fmt = args.format
     if fmt == "csv":
+        # The basis line is NEVER written into the CSV itself -- a leading comment
+        # would be mis-parsed as the header row by csv.DictReader on the very next
+        # `evidence scan`/`export` (both re-read validation/traceability.csv). It
+        # goes to stderr instead, so `evidence export --format csv > file.csv`
+        # still redirects clean, re-parseable CSV.
         buf = io.StringIO()
         writer = csv.DictWriter(buf, fieldnames=CSV_COLUMNS, extrasaction="ignore")
         writer.writeheader()
@@ -621,10 +770,13 @@ def cmd_export(root, args):
             writer.writerow({col: row.get(col, "") for col in CSV_COLUMNS})
         output = buf.getvalue()
     else:
-        lines = ["| " + " | ".join(CSV_COLUMNS) + " |", "| " + " | ".join(["---"] * len(CSV_COLUMNS)) + " |"]
+        lines = [basis, "", "| " + " | ".join(CSV_COLUMNS) + " |", "| " + " | ".join(["---"] * len(CSV_COLUMNS)) + " |"]
         for row in rows:
             lines.append("| " + " | ".join((row.get(col, "") or "").replace("|", "/") for col in CSV_COLUMNS) + " |")
         output = "\n".join(lines) + "\n"
+
+    if fmt == "csv":
+        print(basis, file=sys.stderr)
 
     if args.write:
         out_path = root / "validation" / f"traceability.{'csv' if fmt == 'csv' else 'md'}"
