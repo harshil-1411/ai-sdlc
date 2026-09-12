@@ -31,6 +31,16 @@ for every team, not just engineering.
    needs <role>" rather than deleting a heading.
 5. Show it to the originator, correct what you misunderstood, and commit it.
 
+## Ask only for what is essential and missing
+
+Ask only for information that is (a) genuinely absent from the repository and
+(b) would change what you produce. If an answer would not change the output,
+do not ask for it.
+
+Batch questions into one round where possible rather than interrogating turn by
+turn. Order them most-consequential first. A question you could have answered by
+reading a file is a question you should not have asked.
+
 ## Rules
 
 - **Do not design.** No API shapes, no table names, no component names. If the

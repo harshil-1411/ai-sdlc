@@ -44,6 +44,16 @@ Before asking, look for signals so the questions are informed rather than blank:
 
 Present what you found as context for the questions, not as an answer.
 
+## Ask only for what is essential and missing
+
+Ask only for information that is (a) genuinely absent from the repository and
+(b) would change what you produce. If an answer would not change the output,
+do not ask for it.
+
+Batch questions into one round where possible rather than interrogating turn by
+turn. Order them most-consequential first. A question you could have answered by
+reading a file is a question you should not have asked.
+
 ## Step 2 — the questions
 
 Put these to the accountable person — typically a quality, compliance, legal or security

@@ -38,6 +38,16 @@ Ambiguity that must always be escalated rather than guessed:
 - A test framework present with no tests, or tests with no runner config
 - Any environment or region you find referenced but cannot confirm exists
 
+## Ask only for what is essential and missing
+
+Ask only for information that is (a) genuinely absent from the repository and
+(b) would change what you produce. If an answer would not change the output,
+do not ask for it.
+
+Batch questions into one round where possible rather than interrogating turn by
+turn. Order them most-consequential first. A question you could have answered by
+reading a file is a question you should not have asked.
+
 ## Rule 2 — read in this order
 
 1. **Manifests and lockfiles** — whatever the repo has: `package.json`, `pom.xml`,
