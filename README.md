@@ -150,8 +150,13 @@ wrong in either direction is the main way these rollouts fail.
 ```
 
 Then run discovery in the repository you want to onboard, and answer its questions. Add
-`evidence-quality`, `evidence-compliance` and `evidence-integrations` as they become
-relevant.
+the rest as they become relevant — each is its own `/plugin install`, not a bundle:
+
+```
+/plugin install evidence-quality@evidence-chain       # test strategy + traceability IDs
+/plugin install evidence-compliance@evidence-chain    # regulated-record control sets
+/plugin install evidence-integrations@evidence-chain  # third-party / partner boundaries
+```
 
 Read every hook script before installing. They run on your machine with your
 permissions — that is the point, and it is also the risk. See [SECURITY.md](SECURITY.md).
