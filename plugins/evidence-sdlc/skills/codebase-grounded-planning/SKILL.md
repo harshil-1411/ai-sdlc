@@ -5,6 +5,17 @@ description: Build an implementation plan.md that is grounded in what the reposi
 
 # Codebase-grounded planning (Stage 3: Build)
 
+## Precondition — stop if there is no stack profile
+
+Read `.evidence/context/stack.md` before anything else. If it does not exist,
+STOP. Do not produce a spec, a design, a schema, or a plan. Say that discovery
+has not run and that designing against unverified stack facts is how confidently
+wrong designs get built. Run stack-discovery, then resume.
+This is not a warning to note and move past. It is a stop.
+
+If the profile exists but carries an unresolved [ASK] in an area this change
+depends on, that is also a stop — ask the human.
+
 The single biggest failure mode of AI-assisted development here is a beautiful
 plan that assumes an architecture we don't have. This skill exists to stop that.
 

@@ -5,6 +5,17 @@ description: Produce a reviewable requirements-and-design spec.md from an accept
 
 # Requirements and design (Stage 2: Design)
 
+## Precondition — stop if there is no stack profile
+
+Read `.evidence/context/stack.md` before anything else. If it does not exist,
+STOP. Do not produce a spec, a design, a schema, or a plan. Say that discovery
+has not run and that designing against unverified stack facts is how confidently
+wrong designs get built. Run stack-discovery, then resume.
+This is not a warning to note and move past. It is a stop.
+
+If the profile exists but carries an unresolved [ASK] in an area this change
+depends on, that is also a stop — ask the human.
+
 You are collapsing "analyst writes requirements" and "designer writes design" into
 one session. The product owner reviews the output; they do not write it.
 
