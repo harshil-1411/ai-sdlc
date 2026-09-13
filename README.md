@@ -347,15 +347,18 @@ all read the profile.
 For the exact decision logic, inputs, and bypass environment variables behind each
 one, see [`docs/gates-reference.md`](docs/gates-reference.md).
 
-| Gate | Enforces |
-| --- | --- |
-| `require-repo-profile` | Every session knows the stack — or knows that it doesn't |
-| `gate-plan-exists` | No source edit without an approved `plan.md` (or `plan/<TRACKER-KEY>.md`) on disk |
-| `require-issue-key` | No commit without the tracker key. The chain has no gaps |
-| `protect-validated-paths` | Change-controlled paths need a change ticket in the environment |
-| `block-test-weakening` | An agent fixing a bug cannot edit the test that proves it |
-| `block-protected-branch-push` | The agent has no route to main. Segregation of duties, mechanically |
-| `production-gate` | The agent may act up to the production gate and not past it |
+| Gate | Plugin | Enforces |
+| --- | --- | --- |
+| `require-repo-profile` | evidence-discovery | Every session knows the stack — or knows that it doesn't |
+| `gate-plan-exists` | evidence-sdlc | No source edit without an approved `plan.md` (or `plan/<TRACKER-KEY>.md`) on disk |
+| `require-issue-key` | evidence-quality | No commit without the tracker key. The chain has no gaps |
+| `protect-validated-paths` | evidence-sdlc | Change-controlled paths need a change ticket in the environment |
+| `block-test-weakening` | evidence-sdlc | An agent fixing a bug cannot edit the test that proves it |
+| `block-protected-branch-push` | evidence-sdlc | The agent has no route to main. Segregation of duties, mechanically |
+| `production-gate` | evidence-sdlc | The agent may act up to the production gate and not past it |
+
+Note: `require-issue-key` ships in `evidence-quality`, not in the two plugins named in
+[Install](#install) above — install it before relying on tracker-key enforcement.
 
 ```mermaid
 flowchart TD
@@ -459,6 +462,13 @@ points drafted from public sources, structured for reviewing a diff rather than 
 satisfying an auditor. Writing your own is expected — `references/README.md` gives the
 shape.
 
+A project also declares its **evidence profile** once — `evidence_profile: L0` through
+`L3`, in `.evidence/context/compliance.md` — so `test-strategy`, `testrail-authoring`
+and `evidence-package` all read the same answer for what a test result's evidence must
+actually contain (a log, a screenshot, a video, a signed attestation) instead of each
+guessing per change. See `evidence-package`'s ["Step 0 — read or set the evidence
+profile"](plugins/evidence-compliance/skills/evidence-package/SKILL.md).
+
 ## Traceability
 
 The tracker issue key is the anchor; everything references it.
@@ -506,9 +516,14 @@ trusting a description of one.
 evidence doctor   # preflight: jq on PATH, gate scripts readable, hooks.json sane,
                   # profile presence, unresolved [ASK] count, profile staleness
 evidence scan     # build the graph: tracker keys -> requirements -> tests -> commits
-evidence gaps     # NO COVERAGE / ORPHANED / UNTRACED / UNPROVEN, exit 0/1/2 -- see below
+evidence gaps     # NO COVERAGE / ORPHANED / UNTRACED / UNPROVEN / UNVERIFIED-RESULT, exit 0/1/2 -- see below
 evidence export   # write the traceability matrix, --format csv|md, append-safe
 ```
+
+`UNVERIFIED-RESULT` is the fifth category: a requirement whose only evidence is a
+structural test tie, with no `validation/traceability.csv` row anywhere recording
+whether that test actually passed — informational, not a blocking gap, but the honest
+caveat that "structurally linked" is not the same claim as "proven to pass."
 
 A requirement counts as covered only when there is a genuine structural link — a test
 declaration or explicit tag next to the requirement ID, or a `validation/traceability.csv`
@@ -553,7 +568,7 @@ matters.
 
 ## Examples
 
-Six worked scenarios in [`examples/scenarios/`](examples/scenarios/), each a full
+Seven worked scenarios in [`examples/scenarios/`](examples/scenarios/), each a full
 walkthrough — which skill fires at each stage, what it produces, which gate checks
 it, and why — rather than a description in the abstract:
 
@@ -565,6 +580,7 @@ it, and why — rather than a description in the abstract:
 | [`schema-migration-regulated-table`](examples/scenarios/schema-migration-regulated-table/README.md) | Expand-contract phasing and the regulated-record checks a normal migration skips |
 | [`third-party-integration`](examples/scenarios/third-party-integration/README.md) | Calling an external API — where security review ends and integration review begins |
 | [`standalone-cli-audit`](examples/scenarios/standalone-cli-audit/README.md) | Using just `cli/evidence` on a repository that uses no part of this framework at all |
+| [`qa-evidence-profile`](examples/scenarios/qa-evidence-profile/README.md) | The evidence profile and per-layer test-case design made concrete for one regulated requirement — what each case's evidence actually is, and where it lands |
 
 See [`examples/README.md`](examples/README.md) for the full index, including the
 optional skills kept there (not installed by default).

@@ -1,0 +1,14 @@
+{
+  "_comment": "Connector template, keyed to the toolchain profile at .evidence/context/toolchain.md. This file is NOT loaded by anything -- it is a starting point. Copy the entries you actually need into .mcp.json, fill in the real command/args/env for your environment, and record the connectivity class (MCP-official / MCP-community / MCP-internal / CLI / REST-scripted / Manual), the credential source, the scope, and the owner in toolchain.md per the toolchain-discovery skill. Never add a server here that toolchain-discovery has not classified. See docs/toolchain-connectivity.md and docs/third-party-tooling.md before enabling anything, and route every addition through managed-settings.json's strictKnownMarketplaces / allowManagedMcpServersOnly allowlist rather than a personal one-off.",
+
+  "mcpServers": {
+    "_comment_source_hosting": "Example only -- replace with your actual tracker/source-host server once toolchain-discovery has classified it as MCP-official or MCP-community and a named owner has reviewed it.",
+    "example-source-host": {
+      "command": "<vendor-provided command, e.g. npx>",
+      "args": ["<vendor package>", "--flag", "<value>"],
+      "env": {
+        "EXAMPLE_API_TOKEN": "<never a literal value -- reference an env var scoped to the minimum permissions needed>"
+      }
+    }
+  }
+}
