@@ -1,6 +1,6 @@
 ---
 name: document-ingestion
-description: Convert existing controlled documents — SOPs, validation protocols, requirement specifications, design documents, audit reports — into markdown the artifact chain can read, without losing their identity as controlled records. Use this at the start of any adoption where prior documentation exists in Word, PDF, spreadsheets or slides, whenever someone asks how existing procedures fit into this process, and whenever a change touches a requirement that only exists in a legacy document. Do this before writing new artifacts that would otherwise duplicate what already exists.
+description: Convert existing controlled documents — SOPs, validation protocols, requirement specifications, design documents, audit reports — into markdown the artifact chain can read, without losing their identity as controlled records. Use this at the start of any adoption where prior documentation exists in Word, PDF, spreadsheets or slides, whenever someone asks how existing procedures fit into this process, and whenever a change touches a requirement that only exists in a legacy document. Trigger on plain statements too: "we have existing SOPs in Word or PDF", "how do our current procedures fit into this process", "convert this document", "we already have a requirements spec, we're not starting from scratch" — even when it looks like the fastest path is to just retype it as markdown. Do this before writing new artifacts that would otherwise duplicate what already exists.
 ---
 
 # Ingesting existing documentation
