@@ -55,6 +55,15 @@ are what make audits expensive.
 - Cases that have never failed in two years and cover code that never changes are
   candidates for automation or retirement, not for silent perpetuity.
 
+## Regulated attestation
+
+For a Tier 3 manual result, the case record is not complete with a pass/fail alone.
+It must carry the tester's name, a timestamp, and the execution method (screenshot
+or video reference) — see `test-strategy`'s "Regulated changes" section for why this
+content, not just a status, is what the attestation is. Recording only "PASS" for a
+Tier 3 case is the same failure as marking a case passed without executing it: a
+status with no attestation behind it.
+
 ## Never
 
 Never mark a case as passed. You author and organise cases; execution and results are a
