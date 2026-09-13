@@ -8,6 +8,38 @@ description: Derive the compliance evidence deliverables a project owes — trac
 Compliance evidence is usually assembled by hand at release time, which is where the
 schedule pain lives. The point of the artifact chain is that it can be **derived**.
 
+## Step 0 — read or set the evidence profile
+
+"Evidence is a link, never a description" says nothing about what the link must point
+*at*. Before producing anything, establish the **evidence profile** this project runs
+at — read it from `.evidence/context/compliance.md`'s `evidence_profile` field if it is
+already set; if it is not, set it there now so every later skill reads the same answer
+instead of re-deciding it per change.
+
+| Level | Adds | Typical floor |
+| --- | --- | --- |
+| L0 | Machine output only — CI logs, structured test reports | Internal tooling, Tier 1 |
+| L1 | + screenshot on failure | Tier 1 production paths (recommended default) |
+| L2 | + screenshot at every step of manual and regulated execution | Tier 2, and Tier 3 workflows with no signature involved |
+| L3 | + video for critical workflows, and signed attestation on manual results | Tier 3 — audit trail, signatures, record integrity |
+
+**Default: L1.** Raise to **L2** for anything `risk-tiering` marks Tier 2 or above, and
+to **L3** for Tier 3. A customer validation package typically expects **L2 as the
+floor**, and **L3 wherever a signature or audit-trail control depends on the evidence**
+— a screenshot proves the workflow was exercised; a signed attestation proves a named
+human verified the result and cannot later disclaim it.
+
+**Screenshot requirements, when the profile calls for one.** In frame: the record
+identifier, a timestamp, the logged-in user (or role), and an environment banner that
+distinguishes test from production. Named `<tracker-key>-<test-case-id>-<step-n>.png`.
+Stored under `validation/evidence/<tracker-key>/`. The traceability row's
+`evidence_link` column cites this path directly — a real path a reviewer can open,
+never a description of what the screenshot would have shown.
+
+Record the profile once, in `.evidence/context/compliance.md`, e.g.
+`evidence_profile: L2, raised to L3 for Tier 3`. `test-strategy` and `testrail-authoring`
+read it from there too; do not let three skills each guess at it independently.
+
 ## Step 1 — know what you owe
 
 Read `.evidence/context/compliance.md`. The frameworks that apply determine the
@@ -66,6 +98,9 @@ diverge.
 - For audits testing whether a control **operated over a period**, design evidence is not
   enough. Every control needs a dated artifact showing it ran.
 - The named owner approves the package. You assemble and flag; you do not sign.
+- A manual or regulated result must meet the evidence profile in force (Step 0) — a
+  bare pointer is not enough where the profile calls for a screenshot, a video, or a
+  signed attestation.
 
 ## The number worth tracking
 

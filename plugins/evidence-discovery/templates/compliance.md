@@ -26,6 +26,15 @@ Role definitions — do not conflate these:
 | Framework | Why it does not apply | Confirmed by |
 | --- | --- | --- |
 
+## Evidence profile
+> Read by `evidence-package`, `test-strategy` and `testrail-authoring` — set once here
+> rather than re-decided per change. Levels: L0 machine output only; L1 + screenshot on
+> failure; L2 + screenshot at every step of manual/regulated execution; L3 + video for
+> critical workflows and signed attestation on manual results. Default L1, raised to L2
+> at Tier 2+ and L3 at Tier 3.
+
+- [confirmed] evidence_profile: <e.g. "L1, raised to L2 for Tier 2+ and L3 for Tier 3">
+
 ## Regulated record types for this product
 > Used by every other skill. Specific enough that an engineer can decide unaided.
 
