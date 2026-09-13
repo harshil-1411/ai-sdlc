@@ -5,6 +5,20 @@ plan="none"
 p=$(ls plan.md */plan.md intent/*/plan.md 2>/dev/null | head -1)
 [ -n "$p" ] && plan="$p"
 
+# Same namespaced-plan lookup gate-plan-exists.sh uses: a plan/<TRACKER-KEY>.md
+# satisfies the gate when the key is present in the current branch name, even
+# though none of the three globs above match it. Without this, a concurrent
+# session using only a keyed plan file is correctly allowed to edit by the gate
+# but told "Approved plan on disk: none" here -- a cosmetic but confusing
+# mismatch between what is reported and what is actually enforced.
+if [ "$plan" = "none" ]; then
+  key_pattern="${EVIDENCE_ISSUE_KEY_PATTERN:-[A-Z][A-Z0-9]+-[0-9]+}"
+  branch_key=$(echo "$branch" | grep -Eo "$key_pattern" | head -1)
+  if [ -n "$branch_key" ] && [ -f "plan/$branch_key.md" ]; then
+    plan="plan/$branch_key.md"
+  fi
+fi
+
 jq -n --arg b "$branch" --arg p "$plan" --arg t "${CHANGE_TICKET:-none}" '{
   hookSpecificOutput: {
     hookEventName: "SessionStart",
