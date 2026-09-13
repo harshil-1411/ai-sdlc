@@ -161,6 +161,17 @@ Named honestly, in descending order of how much I'd want a second opinion:
    house convention like `# proves` or `# validates`, gets zero matches from this
    default and needs `.evidence/adapter.yml`'s (currently unimplemented —- see section
    d) `test_tag_pattern` field to override it.
+6. **`UNVERIFIED-RESULT` (the item-3 fix) knows about exactly one way a result can be
+   recorded: a non-empty `result` field on a `validation/traceability.csv` row for
+   that requirement.** It cannot see a CI test report, a JUnit XML file, or any other
+   place a real pass/fail outcome might actually live — a requirement whose test runs
+   green in CI every commit but has no corresponding CSV row shows up here
+   indistinguishable from one that has genuinely never been run. This is a deliberate,
+   narrow claim: "nobody recorded a result in the one place this tool can check," not
+   "this test has never passed." Overclaiming the second from the first would be
+   exactly the kind of confident-wrong assurance this tool exists to avoid producing.
+   It is also, by design, informational only — it does not affect `gaps`' exit code,
+   the same way `UNPROVEN` does not; only `NO COVERAGE` blocks.
 
 ## d) What is NOT covered by the CLI's own tests
 

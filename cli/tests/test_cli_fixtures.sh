@@ -105,6 +105,11 @@ EOF
 git -C "$F3" add -A && git -C "$F3" -c user.email=t@t.com -c user.name=t commit -q -m "FIX-1: add spec and a real tagged test"
 check_exit "Fixture 3: structurally-tagged test -> exit 0" "$F3" "gaps" 0
 check_contains "Fixture 3: NO COVERAGE (0)" "$F3" "gaps" "NO COVERAGE (0)"
+# covers the item-3 fix (UNVERIFIED-RESULT): a structural tie proves the tag
+# exists, not that the test was ever run -- with no traceability.csv row
+# recording a result, this must surface as UNVERIFIED-RESULT even though it
+# does not block the exit code (still exit 0, same as above).
+check_contains "Fixture 3: REQ-FIX-02 listed under UNVERIFIED-RESULT (structural tie, no recorded result)" "$F3" "gaps" "REQ-FIX-02"
 
 # ---- Fixture 4: loose-match regression -- REQ ID + word "test" in the same
 # file, but no structural link -> must NOT count as coverage ----
@@ -178,6 +183,36 @@ EOF
 git -C "$F6" add -A && git -C "$F6" -c user.email=t@t.com -c user.name=t commit -q -m "FIX-1: add spec + a corroborated CSV claim"
 check_exit "Fixture 6: corroborated CSV claim -> exit 0" "$F6" "gaps" 0
 check_contains "Fixture 6: NO COVERAGE (0)" "$F6" "gaps" "NO COVERAGE (0)"
+
+# covers the item-3 fix (UNVERIFIED-RESULT), negative case: a requirement with
+# BOTH a structural test tie AND a traceability.csv row that actually records
+# a result must NOT be flagged UNVERIFIED-RESULT -- a result has genuinely
+# been recorded for it, even though the CSV row itself names a different file
+# than the structurally-tagged test.
+F7="$SCRATCH/f7_structural_with_recorded_result"
+make_repo "$F7"
+mkdir -p "$F7/intent/2026-01-01-demo" "$F7/tests" "$F7/validation"
+cat > "$F7/intent/2026-01-01-demo/spec.md" <<'EOF'
+# Spec: Demo
+Tracker: FIX-1
+
+## Requirements
+| ID | Requirement | Source | Acceptance |
+| --- | --- | --- | --- |
+| REQ-FIX-06 | Something structurally tested AND with a recorded run result | intent.md | it works |
+EOF
+cat > "$F7/tests/test_demo2.py" <<'EOF'
+# covers REQ-FIX-06
+def test_demo2():
+    assert True
+EOF
+cat > "$F7/validation/traceability.csv" <<'EOF'
+tracker_key,requirement_id,requirement_summary,spec_commit,implementing_commits,test_case_id,automated_test,test_run_id,result,evidence_link,risk_tier,revalidation
+FIX-1,REQ-FIX-06,structural plus recorded result,abc123,def456,CASE-3,tests/test_demo2.py,run-1,PASS,see test_demo2.py,1,None
+EOF
+git -C "$F7" add -A && git -C "$F7" -c user.email=t@t.com -c user.name=t commit -q -m "FIX-1: add spec, structurally-tagged test, and a CSV row recording its result"
+check_exit "Fixture 7: structural tie + recorded CSV result -> exit 0" "$F7" "gaps" 0
+check_contains "Fixture 7: UNVERIFIED-RESULT (0)" "$F7" "gaps" "UNVERIFIED-RESULT (0)"
 
 echo
 echo "==================================="

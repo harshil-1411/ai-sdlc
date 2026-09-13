@@ -545,9 +545,11 @@ def csv_row_corroborated(root, row):
 
 
 def compute_gaps(root, graph):
-    covered_req_ids = set()
+    structural_covered = set()
     for t in graph["tests"]:
-        covered_req_ids |= t["req_ids"]
+        structural_covered |= t["req_ids"]
+
+    covered_req_ids = set(structural_covered)
 
     csv_claims = {}  # req_id -> row, for rows that name both a req and a test_case_id
     for row in graph["traceability_rows"]:
@@ -586,17 +588,38 @@ def compute_gaps(root, graph):
         if not result.upper().startswith("PASS"):
             unproven.append(f"{row.get('requirement_id', '?')}: result={result or '(none)'}")
 
+    # A requirement whose ONLY evidence is a structural test tie -- the test
+    # declares or tags the requirement ID -- but for which no
+    # validation/traceability.csv row has ever recorded a result. A structural
+    # match proves the tag exists next to a real test declaration; it does NOT
+    # prove that test was ever run, let alone that it passed. This is the same
+    # class of honesty gap UNPROVEN closes for CSV rows, applied to the
+    # structural-match path instead. Heuristic, not a guarantee: this tool has
+    # exactly one place a run result can be recorded (a CSV row's `result`
+    # field) -- a requirement whose result lives only in a CI report this CLI
+    # doesn't read would also show here, indistinguishable from one that was
+    # never run at all.
+    result_recorded_for = set()
+    for row in graph["traceability_rows"]:
+        rid = row.get("requirement_id")
+        result = (row.get("result") or "").strip()
+        if rid and result:
+            result_recorded_for.add(rid)
+
+    unverified_result = sorted(rid for rid in structural_covered if rid not in result_recorded_for)
+
     return {
         "NO COVERAGE": no_coverage,
         "ORPHANED": orphaned,
         "UNTRACED": untraced,
         "UNPROVEN": unproven,
+        "UNVERIFIED-RESULT": unverified_result,
     }
 
 
 def _print_gaps(label_prefix, gaps):
     any_no_coverage = False
-    for label in ["NO COVERAGE", "ORPHANED", "UNTRACED", "UNPROVEN"]:
+    for label in ["NO COVERAGE", "ORPHANED", "UNTRACED", "UNPROVEN", "UNVERIFIED-RESULT"]:
         items = gaps[label]
         print(f"{label_prefix}{label} ({len(items)})")
         if not items:

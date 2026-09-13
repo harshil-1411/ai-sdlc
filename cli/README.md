@@ -50,6 +50,13 @@ The question that ruins audits:
 - `ORPHANED` — tests that trace to a requirement ID that doesn't exist
 - `UNTRACED` — commits carrying no tracker key
 - `UNPROVEN` — requirements whose covering test's last recorded result wasn't `PASS`
+- `UNVERIFIED-RESULT` — requirements whose only evidence is a structural test tie
+  (the test declares or tags the requirement ID) with no `validation/traceability.csv`
+  row anywhere recording a result for it. A structural match proves the tag exists
+  next to a real test declaration; it does not prove that test was ever run, let
+  alone that it passed. This does not block a release on its own (unlike
+  `NO COVERAGE`) — it is the honest caveat on what "covered" actually means for a
+  structural match, surfaced so nobody mistakes "tagged" for "proven."
 
 A requirement counts as covered only when there is an explicit, structural link —
 a test whose name, tag, annotation, docstring or decorator (on the same line, or
@@ -138,6 +145,9 @@ UNTRACED (6)
   ...
 
 UNPROVEN (0)
+  none
+
+UNVERIFIED-RESULT (0)
   none
 
 RESULT: NO COVERAGE items exist -- this must block a release gate.
