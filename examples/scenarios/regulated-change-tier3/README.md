@@ -83,3 +83,6 @@ The tier follows the change, not the whole codebase.
   in `examples/` — see its own README for why)
 - [Scenario: a regulated-table schema migration](../schema-migration-regulated-table/README.md) —
   what happens when this same signed-record table needs to change shape later
+- [Scenario: proving a regulated-record case, not just naming it](../qa-evidence-profile/README.md) —
+  the evidence profile and case design made concrete for a later change to this
+  same signed-record table
