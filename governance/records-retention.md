@@ -8,6 +8,7 @@ is whatever the tooling happens to do, which is not a policy.
 | Record | System of record | Contains |
 | --- | --- | --- |
 | Artifact chain (intent/spec/plan/diff/PR) | Git | The development record. Retain per existing source-control retention. |
+| Test-evidence artifacts (screenshots, video, signed manual-test attestations) | `validation/evidence/<tracker-key>/` (or the project's own declared location, per the evidence profile in `evidence-package`) | Screenshots, video and signed attestations captured at execution time for manual and regulated test runs — this is validation evidence, not a development record |
 | Session transcripts | Claude Code / Compliance API export | The full working conversation, including reasoning and discarded approaches |
 | Telemetry (OpenTelemetry export) | Observability stack | Tool calls, hook allow/block verdicts with timestamps, session attribution |
 | Local agent edit log | `.claude/logs/` in the repo | Convenience only — not a system of record |
@@ -37,6 +38,11 @@ where, and whether it rotates. See `docs/third-party-tooling.md`.
 5. **What is the audit trail.** State plainly: **git history and the telemetry export
    are the audit trail; transcripts are working papers.** Without this sentence,
    someone will eventually be asked to produce transcripts as validation evidence.
+6. **Retention period and access for test-evidence artifacts.** Unlike session
+   transcripts, these can be genuine validation evidence — a shorter retention period
+   is not automatically defensible the way it is for transcripts, and may need to
+   match the retention period of the regulated record the test proved rather than the
+   shorter development-record period.
 
 ## Do not
 
