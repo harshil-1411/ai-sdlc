@@ -2,6 +2,18 @@
 # Segregation of duties: the agent has no route to main. Branch protection is the
 # real control; this stops the attempt earlier and explains why.
 input=$(cat)
+
+# Fail closed, not open, if jq itself is unavailable -- without it this script
+# cannot read the command at all, and falling through to exit 0 would allow a
+# push to a protected branch unconditionally. See SECURITY.md.
+if ! command -v jq >/dev/null 2>&1; then
+  msg="block-protected-branch-push could not evaluate this tool call because 'jq' is not available on PATH. Failing closed rather than silently allowing an unenforced push. Install jq and retry -- see SECURITY.md."
+  escaped="${msg//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "PreToolUse",\n    "permissionDecision": "deny",\n    "permissionDecisionReason": "%s"\n  }\n}\n' "$escaped"
+  exit 0
+fi
+
 cmd=$(jq -r '.tool_input.command // empty' <<<"$input")
 [ -z "$cmd" ] && exit 0
 

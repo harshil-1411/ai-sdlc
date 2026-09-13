@@ -2,9 +2,23 @@
 # An agent fixing code must not be able to weaken the check on that code.
 # Set FIX_TASK=1 for bug-fix sessions where the failing test is written first.
 input=$(cat)
+[ "${FIX_TASK:-0}" != "1" ] && exit 0
+
+# Fail closed, not open, if jq itself is unavailable. Reordered ahead of the
+# jq-based path extraction below: this gate is only ever consequential during
+# a fix task (FIX_TASK=1, checked above without needing jq), so failing closed
+# on a missing jq only when it would actually have mattered avoids denying
+# every ordinary edit outside a fix task. See SECURITY.md.
+if ! command -v jq >/dev/null 2>&1; then
+  msg="block-test-weakening could not evaluate this tool call because 'jq' is not available on PATH. Failing closed rather than silently allowing the test to be weakened during a fix task. Install jq and retry -- see SECURITY.md."
+  escaped="${msg//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "PreToolUse",\n    "permissionDecision": "deny",\n    "permissionDecisionReason": "%s"\n  }\n}\n' "$escaped"
+  exit 0
+fi
+
 path=$(jq -r '.tool_input.file_path // .tool_input.path // empty' <<<"$input")
 [ -z "$path" ] && exit 0
-[ "${FIX_TASK:-0}" != "1" ] && exit 0
 
 # Test-file patterns are checked against the basename, and *test_* must be a
 # PREFIX of it (not merely present anywhere in the path). The previous

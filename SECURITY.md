@@ -48,3 +48,9 @@ that shape what an agent does. That makes a few classes of issue especially rele
   hook additionally checks that `jq` resolves on PATH and that every gate script is at
   least readable, and says so loudly if not — but the `bash` wrapper is what removes the
   underlying cause.
+- **A missing `jq` is a second, distinct fail-open vector from the one above** — every
+  gate script shells out to `jq` to read its input, and `preflight.sh` can only ever
+  warn about this (a `SessionStart` hook cannot deny a future tool call). Each of the
+  six deny-capable gate scripts therefore now checks for `jq` itself, at the top, before
+  parsing anything, and fails closed (denies) if it is absent, rather than falling
+  through to an empty variable and an unintended default-allow.

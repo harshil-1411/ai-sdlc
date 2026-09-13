@@ -2,6 +2,18 @@
 # Nothing in a source directory gets edited without an approved plan.md on disk.
 # Docs, the artifact chain itself, and scratch files are exempt.
 input=$(cat)
+
+# Fail closed, not open, if jq itself is unavailable -- without it this script
+# cannot read the tool call at all, and falling through to exit 0 would allow
+# every source edit unconditionally. See SECURITY.md.
+if ! command -v jq >/dev/null 2>&1; then
+  msg="gate-plan-exists could not evaluate this tool call because 'jq' is not available on PATH. Failing closed rather than silently allowing an unenforced change. Install jq and retry -- see SECURITY.md."
+  escaped="${msg//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "PreToolUse",\n    "permissionDecision": "deny",\n    "permissionDecisionReason": "%s"\n  }\n}\n' "$escaped"
+  exit 0
+fi
+
 path=$(jq -r '.tool_input.file_path // .tool_input.path // empty' <<<"$input")
 [ -z "$path" ] && exit 0
 

@@ -2,6 +2,18 @@
 # Paths under formal change control. Editing these needs a change ticket in the
 # environment (CHANGE_TICKET) so the edit is attributable in the change record.
 input=$(cat)
+
+# Fail closed, not open, if jq itself is unavailable -- without it this script
+# cannot read the tool call at all, and falling through to exit 0 would allow
+# an edit to a change-controlled path unconditionally. See SECURITY.md.
+if ! command -v jq >/dev/null 2>&1; then
+  msg="protect-validated-paths could not evaluate this tool call because 'jq' is not available on PATH. Failing closed rather than silently allowing an unenforced change. Install jq and retry -- see SECURITY.md."
+  escaped="${msg//\\/\\\\}"
+  escaped="${escaped//\"/\\\"}"
+  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "PreToolUse",\n    "permissionDecision": "deny",\n    "permissionDecisionReason": "%s"\n  }\n}\n' "$escaped"
+  exit 0
+fi
+
 path=$(jq -r '.tool_input.file_path // .tool_input.path // empty' <<<"$input")
 [ -z "$path" ] && exit 0
 
