@@ -80,8 +80,24 @@ A reviewer should be able to find every unchecked claim by searching the file.
 - If the decision between two designs is genuinely close and expensive to reverse,
   stop and say so rather than picking silently. `decision-council` (optional, not
   installed by default — see `examples/skills/decision-council/`) is the
-  multi-perspective pressure test for exactly this; install it, or at minimum name
-  the reversibility line and the strongest objection yourself before deciding.
+  multi-perspective pressure test for exactly this; install it, or at minimum do
+  the following before deciding:
+  - **Name at least two genuinely different approaches** — not a strawman and the
+    real one. Reuse what `codebase-cartographer` already found; do not re-explore
+    to produce these. For each, state what it touches, which existing pattern it
+    fits or breaks, and its cost to reverse later.
+  - **State a recommendation with reasoning** — which approach and why, not just
+    a list of options with no opinion.
+  - **State the reversibility line explicitly** — is this actually a one-way door,
+    and if so, say that plainly rather than let it read as a routine choice.
+  - **Write the comparison into `spec.md`'s "Rejected alternatives" section** —
+    the rejected approach and the reasoning that decided against it, not a
+    one-line "considered and lost." This is the record a later reviewer or an
+    inspector reads; the reasoning has to survive without you in the room.
+
+  This only fires under the condition already named above — genuinely close and
+  expensive to reverse. It is not a new step for every Tier 2+ spec, and does not
+  lower the bar for when `decision-council` itself should be convened instead.
 
 ## Done means
 
