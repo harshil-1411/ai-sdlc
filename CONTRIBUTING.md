@@ -41,14 +41,16 @@ see [`docs/extending.md`](docs/extending.md).
 - Every JSON file must parse. Every shell script must pass `bash -n`.
 - Prefer editing an existing skill over adding a new one. The number of skills is a cost.
 - **Never add a `version` field to a `plugins/*/.claude-plugin/plugin.json`.** This was
-  tried twice and reverted twice. A static version string makes `/plugin update`
-  silently no-op on every real change that doesn't also bump that string — the
-  install just quietly stays on stale, possibly-buggy code. Per Anthropic's own
-  plugin-marketplace documentation and the version strategy their own official
-  plugins use, omitting `version` lets Claude Code track the resolved git commit
-  SHA instead, which updates correctly on every commit with nothing to remember.
-  This holds for a `directory`-sourced marketplace exactly as it does for a
-  git-hosted one — the source type doesn't change the mechanics.
+  tried twice and reverted twice, here, in this repo: a static version string made
+  `/plugin update` silently no-op on a real change that didn't also bump that
+  string — the install just quietly stayed on stale, possibly-buggy code (see
+  `PILOT-13`/`PILOT-15`). Not every official Anthropic plugin follows this
+  convention — some do set a `version` — so don't cite "what official plugins do"
+  as the justification; cite this repo's own reverted-twice history instead.
+  Omitting `version` lets Claude Code track the resolved git commit SHA instead,
+  which updates correctly on every commit with nothing to remember. This holds
+  for a `directory`-sourced marketplace exactly as it does for a git-hosted one —
+  the source type doesn't change the mechanics.
 
 ## Code of conduct
 
