@@ -118,6 +118,35 @@ Other conventions worth carrying over, seen repeatedly:
   number of skills is a cost." Adding a new skill directory should be the exception, not
   the default extension mechanism.
 
+### Agent frontmatter
+
+Agents (`plugins/*/agents/*.md`) are a distinct file kind from `SKILL.md` — they carry a
+`tools:` field skills never do — so the "exactly two fields" rule above does not describe
+them. As of this writing, 5 of the 7 agents in this repo use exactly `name`, `description`
+and `tools`: `stack-surveyor`, `flake-triage`, `test-designer`, `security-reviewer`,
+`compliance-reviewer`. Two — `codebase-cartographer` and `verifier` — also carry
+`model: haiku`.
+
+That split is deliberate, not partial coverage waiting to be finished. The two tiered
+agents are mechanical and low-stakes if occasionally imprecise: `codebase-cartographer`
+is explicitly told to over-include when unsure and its output is sanity-checked by a
+human during planning immediately after; `verifier` pastes real command output verbatim
+for a human to read, so a misjudgement doesn't silently propagate. The other five each
+state, in their own file, why getting them wrong is expensive: `stack-surveyor` exists
+because "confidently wrong is the expensive failure mode"; `flake-triage` classifies "the
+most valuable and most commonly misclassified outcome"; `test-designer` derives the case
+set everything downstream trusts; `security-reviewer` and `compliance-reviewer` are named
+directly in `governance/continuity-and-cost.md`'s model-tiering guidance ("design,
+planning, the council, and compliance review go to a capable [model]"). Do not add
+`model: haiku` to any of those five on the assumption the split was accidental — read the
+reasoning above first, and add a comparably specific reason if you believe a particular
+agent should move tiers.
+
+`model:` accepts an alias (`haiku`/`sonnet`/`opus`/`inherit`) — use the alias, not a
+dated full model ID, so the pin doesn't go stale as model names change. This is the only
+frontmatter field beyond `name`/`description`/`tools` that appears anywhere in this
+repo's agents; no `color` or other field is used.
+
 ---
 
 ## 2. The `hooks.json` schema
