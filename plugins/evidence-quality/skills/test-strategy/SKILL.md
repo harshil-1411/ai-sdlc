@@ -8,6 +8,19 @@ description: Design the test approach for a change — which layer each requirem
 Read `.evidence/context/stack.md` first for the real test frameworks and commands in
 this repository. Do not assume a stack.
 
+## Approach every requirement assuming it fails
+
+The happy path is the part that was already tried while the code was written. A test
+strategy exists to find everything else: the empty state nobody populated yet, the
+input nobody sanity-checked, the error message that leaks more than it should, the two
+actors who hit the same record at once. Design the case set the way a sceptical
+reviewer would, not the way the person who just finished building the feature would —
+assume it's broken until a specific case proves otherwise, not the reverse. Apply the
+`test-designer` agent to derive the actual case set per requirement — it enumerates
+negative, empty/error-state, concurrency, boundary, white-box and regulated-record
+cases explicitly, and states when a category genuinely doesn't apply rather than
+silently skipping it.
+
 ## Assign every requirement to a layer
 
 For each `REQ-<area>-<nn>`, decide the **lowest layer that can actually prove it**:
