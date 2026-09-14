@@ -252,6 +252,30 @@ the rest as they become relevant — each is its own `/plugin install`, not a bu
 Read every hook script before installing. They run on your machine with your
 permissions — that is the point, and it is also the risk. See [SECURITY.md](SECURITY.md).
 
+### Updating
+
+No plugin here ever sets a `version` field in its `plugin.json` (see
+`CONTRIBUTING.md` — tried and reverted twice), so Claude Code tracks the resolved
+git commit instead, and the update path is the standard Claude Code plugin-
+marketplace mechanism, not anything specific to this repo:
+
+```
+/plugin marketplace update <your-org>/evidence-chain
+/plugin update evidence-discovery@evidence-chain
+/plugin update evidence-sdlc@evidence-chain
+```
+
+Update each plugin you have installed the same way (`evidence-quality`,
+`evidence-compliance`, `evidence-integrations`). **Re-read the hook scripts again
+after updating**, the same way you did before installing — an update can change
+what a hook does or add a new one, and that's exactly the class of change
+[SECURITY.md](SECURITY.md) asks you to check for, not just at install time.
+
+To roll back, `/plugin uninstall <name>@evidence-chain` and reinstall from a
+specific marketplace commit, or pin the marketplace source to an older commit
+before re-adding it — standard Claude Code plugin-marketplace behaviour, not
+something this repo does differently.
+
 `cli/evidence` needs no install step of its own — it's a single Python 3 script,
 standard library only. `python3 cli/evidence doctor` is a reasonable first command to
 run in any repository, installed or not.
