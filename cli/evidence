@@ -25,6 +25,8 @@ CSV_COLUMNS = [
     "result", "evidence_link", "risk_tier", "revalidation",
 ]
 
+CSV_REQUIRED_COLUMN = "requirement_id"
+
 DEFAULT_TRACKER_PATTERN = r"[A-Z][A-Z0-9]+-[0-9]+"
 DEFAULT_REQ_PATTERN = r"REQ-[A-Za-z0-9]+-[0-9]+"
 DEFAULT_TEST_DIR_SEGMENTS = {"tests", "__tests__", "qa"}
@@ -160,6 +162,17 @@ def adapter_get(adapter, key, default):
     return adapter.get(key, default)
 
 
+def csv_header_ok(fieldnames):
+    """A traceability.csv is only usable if its header actually names the join
+    key every other check depends on. csv.DictReader does not raise on a
+    missing or wrong column -- it silently returns None for it -- so without
+    this check, a genuinely malformed file (wrong columns, a data row
+    mistaken for the header, no header at all) doesn't fail loudly. It
+    quietly manufactures rows like requirement_id="?" that render next to
+    real findings, indistinguishable from them."""
+    return bool(fieldnames) and CSV_REQUIRED_COLUMN in fieldnames
+
+
 # ---------------------------------------------------------------------------
 # doctor
 # ---------------------------------------------------------------------------
@@ -239,6 +252,19 @@ def cmd_doctor(root, args):
             ".evidence/context/ present", True, True,
             f"{len(present)}/{len(KNOWN_PROFILES)} profiles present" +
             (f"; missing: {', '.join(missing_profiles)}" if missing_profiles else ""),
+        ))
+
+    csv_path_doctor = root / "validation" / "traceability.csv"
+    if csv_path_doctor.exists():
+        text = read_text(csv_path_doctor) or ""
+        reader = csv.DictReader(io.StringIO(text))
+        header_ok = csv_header_ok(reader.fieldnames)
+        checks.append((
+            "validation/traceability.csv header is valid", header_ok, True,
+            "header contains requirement_id, parseable" if header_ok else
+            f"header does not contain 'requirement_id' (found: {reader.fieldnames}) -- "
+            "every downstream command will treat this file as unreadable, not as zero rows -- "
+            "fix the header by hand or regenerate it with `evidence export`",
         ))
 
     ask_count = 0
@@ -321,6 +347,8 @@ def build_graph(root, adapter):
         "skipped_files": 0,   # unreadable files encountered while scanning specs/tests
         "spec_files_scanned": 0,
         "test_source_desc": "",
+        "csv_malformed": False,
+        "duplicate_requirements": {},  # req_id -> [spec_file, spec_file, ...], every match
     }
 
     # Requirements live in an issue tracker this CLI has no network access to --
@@ -333,23 +361,29 @@ def build_graph(root, adapter):
         if not adapter:
             spec_files += sorted(p for p in root.glob("**/spec.md") if "intent" not in p.parts)
     graph["spec_files_scanned"] = len(spec_files)
+    req_id_occurrences = {}  # req_id -> [spec_file, ...], every match, incl. the first --
+                              # used only to detect a requirement ID reused across (or
+                              # repeated within) spec files; "requirements" below still
+                              # keeps the first occurrence as canonical, same as before.
     for spec in spec_files:
         text = read_text(spec)
         if text is None:
             graph["skipped_files"] += 1
             continue
+        spec_rel = str(spec.relative_to(root))
         for line in text.splitlines():
             m = req_pattern.search(line)
             if not m or "|" not in line:
                 continue
             req_id = m.group(0)
+            req_id_occurrences.setdefault(req_id, []).append(spec_rel)
             if req_id in graph["requirements"]:
                 continue
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             summary = cells[1] if len(cells) > 1 else ""
             spec_commit = None
             if is_git_repo(root):
-                log = run_git(root, "log", "--format=%H", "--follow", "--", str(spec.relative_to(root)))
+                log = run_git(root, "log", "--format=%H", "--follow", "--", spec_rel)
                 if log:
                     lines = [l for l in log.splitlines() if l]
                     if lines:
@@ -361,9 +395,18 @@ def build_graph(root, adapter):
                 if tm:
                     tracker_key = tm.group(0)
             graph["requirements"][req_id] = {
-                "summary": summary, "spec_file": str(spec.relative_to(root)),
+                "summary": summary, "spec_file": spec_rel,
                 "spec_commit": spec_commit, "tracker_key": tracker_key,
             }
+
+    # A requirement ID that shows up more than once -- reused across two
+    # different spec files, or repeated within one -- used to be silently
+    # dropped (only the first occurrence was ever kept, with no record that a
+    # second one existed). Surfaced now as its own gap category rather than
+    # silently discarded; see compute_gaps's DUPLICATE-ID.
+    graph["duplicate_requirements"] = {
+        rid: files for rid, files in req_id_occurrences.items() if len(files) > 1
+    }
 
     test_dir_segments = set(adapter_get(adapter, "test_dir_segments", DEFAULT_TEST_DIR_SEGMENTS))
     graph["test_source_desc"] = (
@@ -409,8 +452,16 @@ def build_graph(root, adapter):
     if csv_path.exists():
         text = read_text(csv_path) or ""
         reader = csv.DictReader(io.StringIO(text))
-        for row in reader:
-            graph["traceability_rows"].append(row)
+        if csv_header_ok(reader.fieldnames):
+            for row in reader:
+                graph["traceability_rows"].append(row)
+        else:
+            # Do NOT parse rows from a header that doesn't name the join key --
+            # csv.DictReader would silently manufacture rows with
+            # requirement_id=None for every column it can't find, which then
+            # renders as a fabricated "?" finding downstream (see doctor's
+            # header check, and assessment_basis_line's warning below).
+            graph["csv_malformed"] = True
 
     return graph
 
@@ -506,9 +557,13 @@ def cmd_scan(root, args):
     print(f"  of which carry a tracker key: {len(keyed)}")
     print()
 
-    print(f"validation/traceability.csv rows: {len(graph['traceability_rows'])}")
-    if not graph["traceability_rows"]:
-        print("  none -- run `evidence export` once requirements have evidence to cite")
+    if graph.get("csv_malformed"):
+        print("validation/traceability.csv: EXISTS BUT UNREADABLE -- header does not")
+        print("  contain 'requirement_id'. Its rows were not counted. Run `evidence doctor`.")
+    else:
+        print(f"validation/traceability.csv rows: {len(graph['traceability_rows'])}")
+        if not graph["traceability_rows"]:
+            print("  none -- run `evidence export` once requirements have evidence to cite")
     return 0
 
 
@@ -608,18 +663,41 @@ def compute_gaps(root, graph):
 
     unverified_result = sorted(rid for rid in structural_covered if rid not in result_recorded_for)
 
+    # A requirement ID that appeared more than once -- reused across two spec
+    # files, or repeated within one. The first occurrence is still the one
+    # tracked as canonical (unchanged behaviour); this reports the collision
+    # instead of silently dropping every occurrence after the first.
+    duplicate_ids = []
+    for rid, files in sorted(graph.get("duplicate_requirements", {}).items()):
+        seen = []
+        for f in files:
+            if f not in seen:
+                seen.append(f)
+        if len(seen) > 1:
+            duplicate_ids.append(
+                f"{rid}: defined in {', '.join(seen)} -- only "
+                f"{seen[0]}'s summary was kept as canonical, the rest were "
+                f"silently dropped before this check existed"
+            )
+        else:
+            duplicate_ids.append(
+                f"{rid}: appears {len(files)} times within {seen[0]} -- "
+                f"likely a copy-paste error in the requirements table"
+            )
+
     return {
         "NO COVERAGE": no_coverage,
         "ORPHANED": orphaned,
         "UNTRACED": untraced,
         "UNPROVEN": unproven,
         "UNVERIFIED-RESULT": unverified_result,
+        "DUPLICATE-ID": duplicate_ids,
     }
 
 
 def _print_gaps(label_prefix, gaps):
     any_no_coverage = False
-    for label in ["NO COVERAGE", "ORPHANED", "UNTRACED", "UNPROVEN", "UNVERIFIED-RESULT"]:
+    for label in ["NO COVERAGE", "ORPHANED", "UNTRACED", "UNPROVEN", "UNVERIFIED-RESULT", "DUPLICATE-ID"]:
         items = gaps[label]
         print(f"{label_prefix}{label} ({len(items)})")
         if not items:
@@ -641,11 +719,18 @@ def assessment_basis_line(root, graph):
         if graph["requirements_source"] == "tracker"
         else f"{graph['spec_files_scanned']} spec file(s)"
     )
-    return (
+    basis = (
         f"Assessment basis: {len(graph['requirements'])} requirements from {req_source}, "
         f"{len(graph['tests'])} tests parsed from {graph['test_source_desc'] or 'test-location conventions'}, "
         f"{graph['skipped_files']} unparseable file(s) skipped."
     )
+    if graph.get("csv_malformed"):
+        basis += (
+            " WARNING: validation/traceability.csv exists but its header does "
+            "not contain 'requirement_id' -- its rows were NOT read (treated "
+            "as unreadable, not as zero rows). Run `evidence doctor` for detail."
+        )
+    return basis
 
 
 def cmd_gaps(root, args):
@@ -750,13 +835,34 @@ def cmd_export(root, args):
     existing = {}
     order = []
     csv_path = root / "validation" / "traceability.csv"
+    existing_csv_malformed = False
     if csv_path.exists():
         text = read_text(csv_path) or ""
         reader = csv.DictReader(io.StringIO(text))
-        for row in reader:
-            rid = row.get("requirement_id", "")
-            existing[rid] = row
-            order.append(rid)
+        if csv_header_ok(reader.fieldnames):
+            for row in reader:
+                rid = row.get("requirement_id", "")
+                existing[rid] = row
+                order.append(rid)
+        else:
+            existing_csv_malformed = True
+
+    if existing_csv_malformed:
+        print(
+            f"WARNING: {csv_path.relative_to(root)} exists but its header does not "
+            "contain 'requirement_id' -- treating it as unreadable, not as zero "
+            "existing rows.",
+            file=sys.stderr,
+        )
+        if args.write:
+            print(
+                "Refusing to write: overwriting it now would silently destroy "
+                "whatever it currently holds and could not be verified. Fix the "
+                "header by hand, or move the file aside and re-run this command "
+                "to regenerate it from scratch.",
+                file=sys.stderr,
+            )
+            return 1
 
     touched = set(graph["requirements"])
     for req_id, info in graph["requirements"].items():

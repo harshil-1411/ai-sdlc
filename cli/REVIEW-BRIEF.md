@@ -116,9 +116,22 @@ computed in `gaps` is recomputed differently in `export` — both call the same
   `doctor` (a `try/except json.JSONDecodeError`). A malformed `.evidence/adapter.yml`
   (anything outside the flat-key/list subset) is NOT caught explicitly — it silently
   parses into whatever the line-based reader happens to produce, which may be wrong
-  without erroring. A malformed `validation/traceability.csv` (wrong column names,
-  missing header) is read via `csv.DictReader`, which does not raise on missing
-  columns — it just returns `None`/empty strings for them, silently.
+  without erroring. **A malformed `validation/traceability.csv` (wrong column names,
+  no header at all) is now caught explicitly** (`csv_header_ok`, checked in
+  `build_graph`, `cmd_doctor`, and `cmd_export`'s own re-read): this used to be a
+  live bug, not a hypothetical one — `csv.DictReader` silently returns `None` for a
+  missing column, which meant a completely garbage CSV produced a fabricated
+  `requirement_id="?"` finding indistinguishable from a real one. Found by direct
+  reproduction, fixed by refusing to parse rows from a header that doesn't contain
+  `requirement_id`, surfacing a loud warning (and a critical `doctor` failure)
+  instead, and having `export --write` refuse to run against it rather than risk
+  silently overwriting whatever it held.
+- **Duplicate requirement IDs**: a requirement ID reused across two `spec.md` files,
+  or repeated within one, used to be silently dropped after the first occurrence —
+  also a live bug, also found by direct reproduction. Now tracked via
+  `req_id_occurrences` in `build_graph` and surfaced as its own `DUPLICATE-ID` gap
+  category. The first occurrence is still the one kept as canonical (unchanged);
+  what changed is that the collision is now reported instead of silently erased.
 
 ## c) Where I am least confident
 
@@ -190,9 +203,15 @@ Named honestly, in descending order of how much I'd want a second opinion:
   or manual-and-documented, beyond it working correctly for the one adapter file
   actually written in this repository (`.evidence/adapter.example.yml`, which is
   entirely commented out as documentation, not a live adapter).
-- **Malformed-CSV handling** (`validation/traceability.csv` with a missing or
-  reordered header) has no test — `csv.DictReader`'s actual behaviour there was never
-  exercised deliberately.
+- **Malformed-CSV handling**: previously true (`csv.DictReader`'s actual behaviour
+  on a missing/wrong header was never exercised deliberately) — no longer accurate.
+  `csv_header_ok` is now exercised by fixtures 8 and 9 in
+  `cli/tests/test_cli_fixtures.sh` (malformed header must warn and must not
+  fabricate a finding; `export --write` must refuse to run against it). A CSV with
+  a merely **reordered** header (same columns, different order) was never broken —
+  `DictReader` is column-name-based, not positional — so that half of this item's
+  original phrasing was imprecise; only a header missing `requirement_id` entirely
+  is treated as malformed.
 
 REQ-CLI-04 through REQ-CLI-07 in `intent/2026-09-12-evidence-cli/spec.md` name exactly
 these gaps and are marked `[NEEDS VERIFICATION — manual only]` in that spec's proof

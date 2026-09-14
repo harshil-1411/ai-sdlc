@@ -214,6 +214,62 @@ git -C "$F7" add -A && git -C "$F7" -c user.email=t@t.com -c user.name=t commit 
 check_exit "Fixture 7: structural tie + recorded CSV result -> exit 0" "$F7" "gaps" 0
 check_contains "Fixture 7: UNVERIFIED-RESULT (0)" "$F7" "gaps" "UNVERIFIED-RESULT (0)"
 
+# ---- Fixture 8: a completely malformed traceability.csv (header doesn't name
+# requirement_id at all -- a data row mistaken for the header) must NOT be
+# silently parsed into a fabricated finding. Must warn loudly, and `export
+# --write` must refuse to run against it rather than risk overwriting it.
+F8="$SCRATCH/f8_malformed_csv"
+make_repo "$F8"
+mkdir -p "$F8/intent/2026-01-01-demo" "$F8/validation"
+cat > "$F8/intent/2026-01-01-demo/spec.md" <<'EOF'
+# Spec: Demo
+Tracker: FIX-1
+
+## Requirements
+| ID | Requirement | Source | Acceptance |
+| --- | --- | --- | --- |
+| REQ-FIX-07 | Something with a malformed CSV sitting next to it | intent.md | it works |
+EOF
+printf 'not,even,csv,columns\n1,2,3,4\n' > "$F8/validation/traceability.csv"
+git -C "$F8" add -A && git -C "$F8" -c user.email=t@t.com -c user.name=t commit -q -m "FIX-1: add spec + a malformed traceability.csv"
+check_exit "Fixture 8: malformed CSV -> gaps still exits 1 (real NO COVERAGE), not a crash" "$F8" "gaps" 1
+check_contains "Fixture 8: gaps warns about the malformed header" "$F8" "gaps" "WARNING: validation/traceability.csv exists but its header does not contain 'requirement_id'"
+check_contains "Fixture 8: doctor reports the header check as a critical FAIL" "$F8" "doctor" "[FAIL] validation/traceability.csv header is valid"
+check_exit "Fixture 8: export --write refuses rather than risk overwriting it" "$F8" "export --write" 1
+if grep -q "not,even,csv,columns" "$F8/validation/traceability.csv"; then
+  pass=$((pass + 1)); echo "PASS: Fixture 8: malformed CSV left untouched on disk after refused export --write"
+else
+  fail=$((fail + 1)); echo "FAIL: Fixture 8: malformed CSV was NOT left untouched -- export --write clobbered it"
+fi
+
+# ---- Fixture 9: the same requirement ID defined in two different spec.md
+# files must be surfaced as DUPLICATE-ID, not silently reduced to the first
+# occurrence with the second one discarded and unrecorded.
+F9="$SCRATCH/f9_duplicate_id"
+make_repo "$F9"
+mkdir -p "$F9/intent/2026-01-01-first" "$F9/intent/2026-02-01-second"
+cat > "$F9/intent/2026-01-01-first/spec.md" <<'EOF'
+# Spec: First
+Tracker: FIX-1
+
+## Requirements
+| ID | Requirement | Source | Acceptance |
+| --- | --- | --- | --- |
+| REQ-FIX-08 | The original definition of this ID | intent.md | it works |
+EOF
+cat > "$F9/intent/2026-02-01-second/spec.md" <<'EOF'
+# Spec: Second
+Tracker: FIX-1
+
+## Requirements
+| ID | Requirement | Source | Acceptance |
+| --- | --- | --- | --- |
+| REQ-FIX-08 | A completely different requirement reusing the same ID by mistake | intent.md | it works too |
+EOF
+git -C "$F9" add -A && git -C "$F9" -c user.email=t@t.com -c user.name=t commit -q -m "FIX-1: add two spec files that both define REQ-FIX-08"
+check_contains "Fixture 9: duplicate ID surfaced under DUPLICATE-ID" "$F9" "gaps" "REQ-FIX-08: defined in"
+check_contains "Fixture 9: both spec files named in the DUPLICATE-ID entry" "$F9" "gaps" "intent/2026-01-01-first/spec.md, intent/2026-02-01-second/spec.md"
+
 echo
 echo "==================================="
 echo "$pass passed, $fail failed"

@@ -29,8 +29,12 @@ or, if the file is executable and Python 3 is the `python3` on your PATH:
 Preflight. Checks the things every gate in this framework depends on: `jq` on
 PATH, every `plugins/*/scripts/*.sh` readable, every `hooks.json` parses and every
 script it references actually exists, `.evidence/context/` present and which
-profiles are missing, the count of unresolved `[ASK]` items, and whether any
-profile is stale (established/re-verified over ~6 months ago).
+profiles are missing, whether `validation/traceability.csv` (if present) has a
+header that actually names `requirement_id` — a wrong or missing header is not a
+warning, it is a critical failure, because every downstream command would
+otherwise silently treat that file as unreadable-but-present rather than telling
+you it's broken — the count of unresolved `[ASK]` items, and whether any profile
+is stale (established/re-verified over ~6 months ago).
 
 Exits non-zero if a critical check fails.
 
@@ -57,6 +61,25 @@ The question that ruins audits:
   alone that it passed. This does not block a release on its own (unlike
   `NO COVERAGE`) — it is the honest caveat on what "covered" actually means for a
   structural match, surfaced so nobody mistakes "tagged" for "proven."
+- `DUPLICATE-ID` — a requirement ID that appears more than once: reused across two
+  different `spec.md` files, or repeated within one (usually a copy-paste error in
+  the requirements table). The first occurrence found is still the one tracked as
+  canonical — this does not change — but every occurrence after it used to be
+  silently discarded with no record it had ever existed. This is purely
+  informational, like `UNVERIFIED-RESULT`; it does not block a release on its own,
+  but a genuine ID collision across two spec files means one of those requirements
+  is not being tracked at all under its intended identity, which is worth a human
+  actually looking at.
+
+A malformed `validation/traceability.csv` — a header that doesn't contain
+`requirement_id` at all (wrong columns, a data row mistaken for the header, no
+header) — is never silently parsed into rows. `evidence doctor` fails this
+loudly and critically; `scan`, `gaps` and `export` all print an explicit
+`WARNING:` naming the problem instead of quietly treating the file as having
+zero rows, which previously let a completely garbage CSV manufacture a
+fabricated `requirement_id="?"` finding rather than an error. `export --write`
+additionally refuses to run at all against a malformed existing CSV, rather than
+risk silently overwriting whatever the file actually held.
 
 A requirement counts as covered only when there is an explicit, structural link —
 a test whose name, tag, annotation, docstring or decorator (on the same line, or
@@ -150,6 +173,9 @@ UNPROVEN (0)
 UNVERIFIED-RESULT (0)
   none
 
+DUPLICATE-ID (0)
+  none
+
 RESULT: NO COVERAGE items exist -- this must block a release gate.
 ```
 
@@ -184,13 +210,18 @@ $ python3 cli/evidence export --format md
 
 ## Testing the CLI itself
 
-`cli/tests/test_cli_fixtures.sh` builds four disposable fixture repositories and
+`cli/tests/test_cli_fixtures.sh` builds disposable fixture repositories and
 asserts the exit code and output each must produce: a requirement with no test at
 all (exit 1, all uncovered), no requirements anywhere (exit 2), a requirement with
-a genuinely structurally-tagged test (exit 0), and the loose-match regression —a
+a genuinely structurally-tagged test (exit 0), the loose-match regression — a
 requirement ID merely co-located with the word "test" in the same file, with no
-structural link (must still be exit 1, not silently accepted as coverage). Run it
-with `bash cli/tests/test_cli_fixtures.sh`.
+structural link (must still be exit 1, not silently accepted as coverage) — a
+traceability.csv row corroborated against and not corroborated against its
+named file, a structural match with no recorded result (`UNVERIFIED-RESULT`), a
+completely malformed traceability.csv header (must warn, not fabricate a finding,
+and `export --write` must refuse rather than overwrite it), and a requirement ID
+reused across two spec files (must surface under `DUPLICATE-ID`, not silently
+keep only the first). Run it with `bash cli/tests/test_cli_fixtures.sh`.
 
 One honest, harmless side effect of that test script existing: it lives under
 `cli/tests/`, so `evidence scan` on this repository also scans it, and its
