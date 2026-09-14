@@ -16,6 +16,7 @@ that falls out of the process instead of being assembled at release time.
 ## Contents
 
 - [Overview](#overview)
+- [How it works](#how-it-works)
 - [The problem it addresses](#the-problem-it-addresses)
 - [Two design commitments](#two-design-commitments)
 - [Install](#install)
@@ -54,6 +55,39 @@ any team that has simply decided "an AI wrote it" should never become an excuse 
 compliance, integrations), a dependency-free CLI that derives a real traceability
 export instead of one assembled by hand at release time, and governance documents
 written to survive an actual audit conversation, not just a demo.
+
+## How it works
+
+Five things, in order, make up the mechanism. Each is explained in full further down —
+this ties them together in one place first.
+
+1. **Discovery runs first and writes facts, not assumptions.** `evidence-discovery`
+   reads the repository (never the README, never CLAUDE.md) and writes what it finds to
+   `.evidence/context/` — stack, deployment, toolchain, design system, compliance —
+   each line marked `[confirmed]`, `[inferred]`, or `[ASK]`. See
+   [Two design commitments](#two-design-commitments).
+2. **Every other plugin reads that profile instead of guessing.** `evidence-sdlc`,
+   `evidence-quality`, `evidence-compliance` and `evidence-integrations` all sit
+   downstream of `.evidence/context/` — none of them hardcodes a stack, a toolchain, or
+   a regulation. See [How the plugins fit together](#how-the-plugins-fit-together).
+3. **Skills make the standards likely; hooks make the non-negotiable ones certain.** A
+   skill shapes what the agent does while it works. A small set of hooks — deterministic
+   shell scripts, not model judgement — can deny a tool call outright: no edit without an
+   approved `plan.md`, no commit without a tracker key, no push to a protected branch, no
+   production deploy without a named release authorisation. See [The gates](#the-gates).
+4. **Every stage commits an artifact the next stage reads.** `intent.md` → `spec.md` →
+   `plan.md` → diff + tests → PR + review findings → release + evidence export. The
+   chain of commits is the audit trail; nothing is reconstructed by hand at release time.
+   See [The problem it addresses](#the-problem-it-addresses) below for the full six-stage
+   flow.
+5. **One tracker key threads all of it together, in both directions.** Requirement IDs,
+   branches, commits, PRs, test cases and evidence all carry the same key, and creating
+   a downstream artifact writes its ID back onto the tracker issue rather than only
+   pointing forward. See [Traceability](#traceability).
+
+`cli/evidence` is the check on all five: it reads a repository's actual commits, specs
+and tests and reports whether the chain those five pieces are supposed to produce is
+really there — see [The evidence CLI](#the-evidence-cli--testing-whether-any-of-this-is-actually-derivable).
 
 ## The problem it addresses
 
