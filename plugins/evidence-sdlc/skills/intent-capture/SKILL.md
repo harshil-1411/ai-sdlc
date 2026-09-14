@@ -41,6 +41,13 @@ Batch questions into one round where possible rather than interrogating turn by
 turn. Order them most-consequential first. A question you could have answered by
 reading a file is a question you should not have asked.
 
+**"Whatever you think" is not an answer.** If the originator declines to answer a
+genuinely essential question — "whatever you think," "you decide," "I don't know,
+you pick" — do not let that become an unstated assumption. Write your own best
+guess into the intent.md draft explicitly, in the open, and get their confirmation
+on that specific guess before treating it as settled. A shrug is not the same as
+a decision.
+
 ## Rules
 
 - **Do not design.** No API shapes, no table names, no component names. If the
