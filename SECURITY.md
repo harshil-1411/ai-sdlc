@@ -47,7 +47,11 @@ that shape what an agent does. That makes a few classes of issue especially rele
   file being independently executable. `evidence-sdlc`'s `preflight.sh` SessionStart
   hook additionally checks that `jq` resolves on PATH and that every gate script is at
   least readable, and says so loudly if not — but the `bash` wrapper is what removes the
-  underlying cause.
+  underlying cause. This claim is regression-tested, not just asserted: the "lost
+  execute bit" case in `plugins/evidence-sdlc/scripts/tests/gate-regression-tests.sh`
+  strips a scratch copy's execute bit, confirms direct invocation genuinely fails
+  (proving the stripped copy is real, not a no-op check), and confirms invoking it the
+  way every `hooks.json` entry actually does — via `bash <script>` — still denies.
 - **A missing `jq` is a second, distinct fail-open vector from the one above** — every
   gate script shells out to `jq` to read its input, and `preflight.sh` can only ever
   warn about this (a `SessionStart` hook cannot deny a future tool call). Each of the

@@ -1,5 +1,8 @@
 #!/bin/bash
-# Regression suite for the six gate scripts fixed in PILOT-7 through PILOT-12.
+# Regression suite for the six gate scripts. Originally the true/false-positive
+# fixes from PILOT-7 through PILOT-12; later extended with fail-closed-on-
+# missing-jq cases (PILOT-18) and the lost-execute-bit case (PILOT-31) that
+# proves the PILOT-3 bash-wrapper fix actually holds, not just once by hand.
 # Runs each script exactly as the Claude Code hook runtime does -- a JSON payload
 # on stdin -- and checks stdout for a deny decision. Isolated in a scratch
 # directory (with, where needed, its own throwaway git repo) so results do not
@@ -53,6 +56,32 @@ json_path() {
 }
 json_cmd() {
   python3 -c 'import json,sys; print(json.dumps({"tool_input": {"command": sys.argv[1]}}))' "$1"
+}
+
+# run_case_abspath is identical to run_case except it invokes a full, absolute
+# script path directly rather than resolving one relative to REPO_ROOT --
+# needed for the execute-bit case below, which runs against a scratch COPY of
+# a real script (with its execute bit deliberately stripped), never the real
+# file in this repository.
+run_case_abspath() {
+  local label="$1" script_abspath="$2" json="$3" expected="$4" workdir="$5" envs="${6:-}"
+  local out status got
+  out=$(cd "$workdir" && env $envs bash "$script_abspath" <<<"$json" 2>&1)
+  status=$?
+  got="allow"
+  if echo "$out" | grep -q '"permissionDecision": *"deny"'; then
+    got="deny"
+  elif [ "$status" -ne 0 ]; then
+    got="deny"
+  fi
+  if [ "$got" = "$expected" ]; then
+    pass=$((pass + 1))
+    echo "PASS: $label"
+  else
+    fail=$((fail + 1))
+    failures+=("$label (expected $expected, got $got)")
+    echo "FAIL: $label (expected $expected, got $got) -- output: $out"
+  fi
 }
 
 # ---- fresh, empty scratch dir with no plan.md anywhere ----
@@ -204,6 +233,51 @@ run_case "production-gate: jq missing -> deny (fail closed, not open)" \
 run_case "require-issue-key: jq missing -> deny (fail closed, not open)" \
   "plugins/evidence-quality/scripts/require-issue-key.sh" \
   "$(json_cmd "git commit -m 'no key here'")" deny "$PROTECTED_REPO" "PATH=$NOJQ_BIN"
+
+echo "=== lost execute bit (PILOT-3 fix) ==="
+# The claim SECURITY.md leads with: a hook script that loses its execute bit
+# on extraction -- Claude Code's own plugin zip does this, per SECURITY.md's
+# "Using this safely" section -- still runs and still denies, because every
+# hooks.json entry in this repo invokes it as `command: "bash",
+# args: ["<script>"]`, never as the script's own executable. Verified once by
+# hand during PILOT-3 (see plan.md's Risks section); never a repeatable case
+# until now -- raised in response to external review of this repository.
+EXECBIT_SCRIPT="$SCRATCH/gate-plan-exists-no-exec-bit.sh"
+cp "$REPO_ROOT/plugins/evidence-sdlc/scripts/gate-plan-exists.sh" "$EXECBIT_SCRIPT"
+chmod -x "$EXECBIT_SCRIPT"
+if [ -x "$EXECBIT_SCRIPT" ]; then
+  fail=$((fail + 1))
+  failures+=("execute-bit test setup -- chmod -x did not remove the execute bit on this filesystem")
+  echo "FAIL: execute-bit test setup -- chmod -x did not remove the execute bit on this filesystem; the case below would be meaningless, skipping it"
+else
+  pass=$((pass + 1))
+  echo "PASS: execute-bit test setup confirms the scratch copy is genuinely non-executable"
+
+  # Contrast case, not a claim about current hooks.json behaviour: direct
+  # invocation of a non-executable file fails with a permission error. This
+  # is the exact failure this repo's own runtime treats as a silent ALLOW
+  # (hook execution failures are non-blocking, per SECURITY.md) -- no
+  # hooks.json entry here invokes a script this way; this only demonstrates
+  # the failure mode the bash-wrapper fix actually addresses.
+  direct_out=$("$EXECBIT_SCRIPT" <<<'{}' 2>&1)
+  direct_status=$?
+  if [ "$direct_status" -ne 0 ] && echo "$direct_out" | grep -qi "permission denied"; then
+    pass=$((pass + 1))
+    echo "PASS: direct invocation of the non-executable copy fails with a permission error, confirming the failure mode PILOT-3's fix actually addresses"
+  else
+    fail=$((fail + 1))
+    failures+=("execute-bit contrast case (expected a permission-denied failure on direct invocation, got status=$direct_status: $direct_out)")
+    echo "FAIL: direct invocation of the non-executable copy did not fail as expected (status=$direct_status, output=$direct_out)"
+  fi
+
+  # The actual fix, and the case that matters: invoked the way every
+  # hooks.json entry in this repo actually invokes a script -- via
+  # `bash <script>` -- the gate still runs and still denies a genuine
+  # true-positive case, execute bit or no execute bit.
+  run_case_abspath "gate-plan-exists: execute bit stripped, invoked via bash (PILOT-3 fix) -> still denies" \
+    "$EXECBIT_SCRIPT" \
+    "$(json_path /repo/src/a.py)" deny "$EMPTY"
+fi
 
 echo
 echo "==================================="
