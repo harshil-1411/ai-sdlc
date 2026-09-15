@@ -1,3 +1,8 @@
 __pycache__/
 *.pyc
 .DS_Store
+# audit-log.sh's own local, append-only convenience record (PostToolUse hook
+# output) -- explicitly not the system of record per its own comment and
+# governance/records-retention.md ("git history and the telemetry export are
+# the audit trail; this is a convenience record for engineers").
+.claude/logs/
