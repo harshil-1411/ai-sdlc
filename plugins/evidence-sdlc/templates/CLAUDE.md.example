@@ -23,7 +23,10 @@
 - For UI work, screenshot and compare against the approved mock before reporting done.
 
 ## Things Claude gets wrong here
-- <add a line every time a mistake happens twice. This section is the highest-value
-  part of this file.>
+- <two paths in: Claude proposes a line here when the engineer corrects it on
+  something non-obvious mid-session, confirmed in the same review that approves the
+  rest of the diff (see codebase-grounded-planning's "While implementing" section) —
+  or add one by hand any time a mistake happens twice regardless. This section is the
+  highest-value part of this file.>
 - Do not bump dependency versions; the platform team owns them.
 - Do not add a second implementation of <core domain concept> — find the existing one.

@@ -67,6 +67,13 @@ is already claimed via the plan's own "Files claimed" section (see
   The PR review compares the diff against the plan; silent drift will be flagged.
 - Re-read `plan.md` before each new step in a long session. Do not work from memory
   of what you decided an hour ago.
+- If the engineer corrects you on something non-obvious — a wrong assumption about the
+  codebase, a convention you missed, a pattern you used incorrectly — note it as you go.
+  Before the plan is marked done, propose one line for `CLAUDE.md`'s "Things Claude gets
+  wrong here" section, worded plainly enough that the next session doesn't have to make
+  the same correction twice. This is a proposal, not a silent edit: the engineer confirms
+  it in the same review that approves the rest of the diff. A correction that is never
+  captured costs the same lesson again next session; capturing it costs one line, once.
 
 ## Stack facts come from the profile, never from assumption
 
