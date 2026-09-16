@@ -79,6 +79,18 @@ If the commit stage takes longer than ten minutes, people stop waiting for it an
 whole model degrades. Parallelise, shard, and push slow checks to nightly. Guard the
 commit stage's duration as a metric.
 
+**Scope the commit stage to what the change actually touches.** Running the full suite
+on every commit is what makes the ten-minute guardrail hard to hold as a codebase
+grows. Use whatever dependency-graph, coverage-mapping, or affected-target mechanism
+the project's own test runner or CI system already provides to run only the tests an
+impacted-analysis says the change could plausibly break at the commit stage, and
+reserve a full, unscoped run for the heavier gates that already exist for this
+(pull request, nightly, pre-release) — never for a Tier 3 change, and never as a
+substitute for the full run those gates already require. Impact analysis is a speed
+technique for the earliest, cheapest stage, not a narrower definition of what a
+release needs proven. If the project has no such mechanism, say so and name the gap
+rather than approximate one by hand.
+
 ## Rollback is a tested path
 
 Post-deploy checks that can trigger rollback are worthless if rollback has never been

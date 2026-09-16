@@ -21,14 +21,29 @@ and the traceability matrix has to be maintained by hand — which means it will
 
 - **One behaviour per test.** A test asserting five things tells you nothing useful when
   it fails.
-- **Deterministic data.** Tests that depend on data left behind by other tests are the
-  root of most flake. Each test sets up and tears down its own state.
 - **Address elements by role and accessible name** where the framework supports it, not
   by brittle structural selectors. This makes tests survive refactors and doubles as an
   accessibility check.
 - **No sleeps.** Wait for a condition, never for a duration.
 - **Isolate the layers.** End-to-end suites should be thin: the critical journeys only.
   Everything else belongs lower, where it is faster and more stable.
+
+## Test data
+
+- **Deterministic data.** Tests that depend on data left behind by other tests are the
+  root of most flake. Each test sets up and tears down its own state.
+- **Bulk synthetic data comes from a sample, never from production.** When a test needs
+  volume — thousands of rows, not a handful of fixtures — derive it from a small,
+  explicitly-approved sample using whatever generation tooling the project already has,
+  never from a copy of real production data. Keep provenance traceable: record which
+  sample a generated set came from and when, the same way any other test evidence names
+  its source rather than asserting a result.
+- **Do not trust a language model to generate PII-shaped fields.** AI-generated
+  synthetic data is specifically unreliable for fields like national ID numbers,
+  payment card numbers, or other checksum- or format-constrained PII — it can produce
+  invalid-looking values, or silently fail to generate anything for that field at all.
+  Use purpose-built synthetic-data tooling for those fields; do not paper over a gap
+  there with a plausible-looking string an agent invented.
 
 ## Results back to the test management system
 

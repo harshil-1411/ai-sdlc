@@ -43,23 +43,33 @@ For each `REQ-<area>-<nn>` in the spec, produce:
    (equivalence partitioning) — one representative case per class — then apply the
    boundary values at the edges between and around those classes. A boundary case
    with no named class behind it is a guess at where the edge is, not a derivation.
-6. **White-box cases** — the exception and error paths the implementation actually
+6. **Property-based cases** — where the requirement implies an invariant that should
+   hold across a wide input space, not just at the specific points someone thought to
+   try (e.g. "decoding a value always reverses encoding it," "the total after any
+   sequence of valid operations never goes negative," "sorting is idempotent"). State
+   the invariant explicitly, in one sentence. A property-based or generative testing
+   approach — whatever the project's own test framework supports — is the right tool
+   here, generating many inputs and checking the invariant holds, rather than hand-
+   picking a handful of example inputs and hoping they're representative. Not every
+   requirement has an invariant worth this treatment; say so explicitly when none exists
+   rather than manufacturing a hand-picked-examples case and calling it property-based.
+7. **White-box cases** — the exception and error paths the implementation actually
    has, and any internal state worth asserting on directly (not just the external
    result). Where the requirement involves a state machine (the spec's "State machine"
    diagram, per `templates/spec.md`), add explicit cases for every legal transition and
    at least one representative illegal transition per state.
-7. **Regulated-record cases**, where applicable — the audit event fires with correct
+8. **Regulated-record cases**, where applicable — the audit event fires with correct
    fields and ordering; authorisation is enforced server-side per role and per tenant;
    where approvals or signatures are involved, what is displayed and how it binds to
    the record both hold.
-8. **The layer** each should be proven at, choosing the lowest layer that can actually
+9. **The layer** each should be proven at, choosing the lowest layer that can actually
    prove it. If `plan.md` already carries a `test-strategy` layer for this requirement,
    read it and weight the categories above accordingly: white-box, boundary and
    concurrency cases matter most at unit/integration; a requirement assigned to
    manual/exploratory should lean on judgement and the regulated-walkthrough cases
    instead of manufacturing white-box cases nobody will run by hand.
-9. **Automated or manual**, with a reason. Manual is a legitimate answer for judgement
-   and for regulated walkthroughs where human attestation is part of the evidence.
+10. **Automated or manual**, with a reason. Manual is a legitimate answer for judgement
+    and for regulated walkthroughs where human attestation is part of the evidence.
 
 Not every category applies to every requirement — a pure calculation has no empty
 state, a single-actor batch job may have no real concurrency case. Say "not
