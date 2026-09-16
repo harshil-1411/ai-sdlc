@@ -8,16 +8,16 @@ section explains the fail-open threat model these scripts operate under (hook ex
 failures are treated as **allow** by the runtime, which is why every hook below is
 invoked as `bash ${CLAUDE_PLUGIN_ROOT}/scripts/<script>.sh` rather than relying on the
 script's own execute bit). This document does not repeat that framing beyond what's
-needed for context — it exists to enumerate, for all 11 scripts referenced by the three
+needed for context — it exists to enumerate, for all 12 scripts referenced by the three
 `hooks.json` files, exactly what event triggers each one, what it reads, its decision
 logic including edge cases actually present in the code, any bypass/environment
 variable, and the literal message a reader will see.
 
-Three of the eleven scripts are advisory only (`require-repo-profile`,
-`check-test-plan-rows`, `audit-log`, plus `preflight` and `session-context` which also
-never deny) — they add context or log, but cannot block a tool call. The remaining six
-can return `permissionDecision: "deny"` (or, in `production-gate`'s case, exit 2) and
-stop the tool call.
+Six of the twelve scripts are advisory only (`require-repo-profile`,
+`check-test-plan-rows`, `audit-log`, `preflight`, `session-context`, and
+`template-sensor`) — they add context, log, or note a possible gap, but cannot block a
+tool call. The remaining six can return `permissionDecision: "deny"` (or, in
+`production-gate`'s case, exit 2) and stop the tool call.
 
 ---
 

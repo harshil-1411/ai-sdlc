@@ -75,6 +75,8 @@ this ties them together in one place first.
    shell scripts, not model judgement — can deny a tool call outright: no edit without an
    approved `plan.md`, no commit without a tracker key, no push to a protected branch, no
    production deploy without a named release authorisation. See [The gates](#the-gates).
+   A second, distinct hook category — [Sensors](#sensors) — runs alongside the gates but
+   can only inform, never deny.
 4. **Every stage commits an artifact the next stage reads.** `intent.md` → `spec.md` →
    `plan.md` → diff + tests → PR + review findings → release + evidence export. The
    chain of commits is the audit trail; nothing is reconstructed by hand at release time.
@@ -349,7 +351,10 @@ and `scripts/` (the deterministic gates, plus `preflight.sh` — checks jq/scrip
 hooks.json health at session start — and `scripts/tests/`, the regression suite for
 the gate scripts themselves); `templates/` (intent / spec / plan / REVIEW / DoR-DoD /
 `CLAUDE.md` — `spec.md`'s own Diagrams section now carries the guidance the former
-`architecture-diagrams` skill gave).
+`architecture-diagrams` skill gave). `CLAUDE.md`'s own "Things Claude gets wrong here"
+section accumulates two ways: by hand, or proposed by the agent when the engineer
+corrects it mid-session and confirmed at the same review that approves the rest of
+the diff — see `codebase-grounded-planning`'s "While implementing" section.
 
 ### `plugins/evidence-quality` — testing and the traceability chain
 
@@ -459,6 +464,18 @@ flowchart TD
     style D6 fill:#fbe6e6,stroke:#c05050
     style ALLOW fill:#e7f5ec,stroke:#4a9163
 ```
+
+### Sensors
+
+Gates deny; sensors can only inform. `template-sensor.sh` runs on the same
+`Edit`/`Write`/`MultiEdit` events as the gates above, but it is structurally
+incapable of denying a tool call — if it can't run at all (no `jq`, an unreadable
+file, a path it doesn't recognise), it degrades to complete silence rather than
+failing closed, because there is nothing to protect by blocking here. It checks
+whether a just-written `spec.md`'s "Areas of concern" section, or a `plan.md`'s
+"Files claimed" section, is still the unfilled template placeholder, and says so as
+`additionalContext` if it is — operationalizing two rules that used to be prose only.
+See [`docs/gates-reference.md`](docs/gates-reference.md) for its exact decision logic.
 
 ## Running parallel sessions safely
 
@@ -582,14 +599,20 @@ trusting a description of one.
 evidence doctor   # preflight: jq on PATH, gate scripts readable, hooks.json sane,
                   # profile presence, unresolved [ASK] count, profile staleness
 evidence scan     # build the graph: tracker keys -> requirements -> tests -> commits
-evidence gaps     # NO COVERAGE / ORPHANED / UNTRACED / UNPROVEN / UNVERIFIED-RESULT, exit 0/1/2 -- see below
+evidence gaps     # NO COVERAGE / ORPHANED / UNTRACED / UNPROVEN / UNVERIFIED-RESULT
+                  # / DUPLICATE-ID, exit 0/1/2 -- see below
 evidence export   # write the traceability matrix, --format csv|md, append-safe
 ```
 
 `UNVERIFIED-RESULT` is the fifth category: a requirement whose only evidence is a
 structural test tie, with no `validation/traceability.csv` row anywhere recording
 whether that test actually passed — informational, not a blocking gap, but the honest
-caveat that "structurally linked" is not the same claim as "proven to pass."
+caveat that "structurally linked" is not the same claim as "proven to pass." `DUPLICATE-ID`
+is the sixth: a requirement ID reused across two spec files, or repeated within one —
+the first occurrence is still tracked as canonical, but every occurrence after it used
+to be silently discarded with no record it had ever existed. Also informational, not
+a blocking gap, but a genuine ID collision means one of those requirements isn't
+tracked under its intended identity at all.
 
 A requirement counts as covered only when there is a genuine structural link — a test
 declaration or explicit tag next to the requirement ID, or a `validation/traceability.csv`
@@ -643,7 +666,7 @@ matters.
 
 ## Examples
 
-Seven worked scenarios in [`examples/scenarios/`](examples/scenarios/), each a full
+Eight worked scenarios in [`examples/scenarios/`](examples/scenarios/), each a full
 walkthrough — which skill fires at each stage, what it produces, which gate checks
 it, and why — rather than a description in the abstract:
 
@@ -656,6 +679,7 @@ it, and why — rather than a description in the abstract:
 | [`third-party-integration`](examples/scenarios/third-party-integration/README.md) | Calling an external API — where security review ends and integration review begins |
 | [`standalone-cli-audit`](examples/scenarios/standalone-cli-audit/README.md) | Using just `cli/evidence` on a repository that uses no part of this framework at all |
 | [`qa-evidence-profile`](examples/scenarios/qa-evidence-profile/README.md) | The evidence profile and per-layer test-case design made concrete for one regulated requirement — what each case's evidence actually is, and where it lands |
+| [`sensor-and-learning-loop`](examples/scenarios/sensor-and-learning-loop/README.md) | The sensor catches an unfilled "Areas of concern" stub before review; a mid-session correction becomes a durable `CLAUDE.md` line instead of being forgotten by the next session |
 
 See [`examples/README.md`](examples/README.md) for the full index, including the
 optional skills kept there (not installed by default).

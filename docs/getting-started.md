@@ -200,10 +200,18 @@ judgment call, and they can outright deny a tool call. From the README's
   where release authorization would be needed.
 - **`require-repo-profile`** (evidence-discovery) is advisory, not a deny — it
   makes every session start aware of whether `.evidence/context/` exists yet.
+- **`template-sensor`** (evidence-sdlc) is also advisory, not a deny — a different
+  kind of hook from the six above (see [Sensors](../README.md#sensors)). It fires
+  right when you write `spec.md` or `plan.md` in step 6, and notes if "Areas of
+  concern" or "Files claimed" still look like the unfilled template placeholder.
+  Nothing is blocked; it's the same kind of nudge `require-repo-profile` gives you,
+  just later in the flow.
 
 None of these ask permission first; they act on the tool call as it happens. If one
 denies something, the denial message tells you what's missing (a plan, a ticket
-key, an authorization) — that's the gate working, not a bug to route around.
+key, an authorization) — that's the gate working, not a bug to route around. The two
+advisory ones never deny anything at all — they just make sure you see a gap before
+a reviewer has to find it for you.
 
 ## 8. Run the CLI against what you just produced
 
