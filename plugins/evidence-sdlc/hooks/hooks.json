@@ -59,6 +59,12 @@
             "command": "bash",
             "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/audit-log.sh"],
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/template-sensor.sh"],
+            "timeout": 15
           }
         ]
       }

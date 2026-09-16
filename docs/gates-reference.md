@@ -121,9 +121,19 @@ stop the tool call.
 | --- | --- |
 | Registered under | `PostToolUse`, matcher `Edit\|Write\|MultiEdit`, `async: true` |
 | Input read | `tool_input.file_path` or `tool_input.path` (defaults to the literal string `"unknown"` if absent); `session_id`; `$USER` from the environment |
-| Decision logic | Never allows or denies anything — it runs after the tool call has already happened (`PostToolUse`) and is fire-and-forget (`async: true`). It creates `.claude/logs/` if needed and appends one tab-separated line per edit: UTC timestamp, session ID, `$USER` (or `"unknown"`), and the file path. Comment: this is "a convenience record for engineers; the OpenTelemetry export and git history remain the systems of record" — i.e. it is explicitly not the authoritative audit trail. |
+| Decision logic | Never allows or denies anything — it runs after the tool call has already happened (`PostToolUse`) and is fire-and-forget (`async: true`). It creates `.claude/logs/` if needed and appends one tab-separated line per edit: UTC timestamp, session ID, `$USER` (or `"unknown"`), and the file path — to a **per-session shard**, `.claude/logs/agent-edits-<sanitized-session-id>.tsv`, not one shared file. The session ID is sanitized (non-alphanumeric/`-`/`_` characters replaced) before use in the filename, and a missing or empty session ID falls back to `agent-edits-unknown.tsv`. Sharding this way means two concurrent sessions or worktrees never append to the same file and can never interleave or corrupt each other's lines; a reader wanting the full picture globs `agent-edits-*.tsv` and merge-sorts by timestamp. Comment: this is "a convenience record for engineers; the OpenTelemetry export and git history remain the systems of record" — i.e. it is explicitly not the authoritative audit trail. |
 | Env var / bypass | None; nothing to bypass since it never blocks. |
 | Message text | None — it produces no hook output at all (just the log line on disk). |
+
+### `template-sensor.sh`
+
+| Field | Detail |
+| --- | --- |
+| Registered under | `PostToolUse`, matcher `Edit\|Write\|MultiEdit`, same group as `audit-log.sh` |
+| Input read | `tool_input.file_path` or `tool_input.path`; the file's own current content, read from disk after the edit has landed |
+| Decision logic | Advisory only — this is a **sensor**, not a gate: it can never deny anything, and unlike every deny-capable gate in this repo it deliberately does **not** fail closed when `jq` is missing (there is nothing to protect here, so it degrades to complete silence instead). Only acts on a path whose basename is `spec.md`, is `plan.md`, or is `plan/<TRACKER-KEY>.md` (recognised by checking whether the immediate parent directory is literally named `plan`, since the basename alone is the tracker key, not `plan.md`). For a `spec.md` match, it extracts the body between the `## Areas of concern` heading and the next `## ` heading; for a `plan.md`/`plan/<KEY>.md` match, the same for `## Files claimed`. If that body is empty, whitespace-only, or is still wrapped in the template's own `<...>` placeholder bracket convention, it emits an `additionalContext` note naming the file and the rule it operationalizes (`spec-and-design`'s "this section being empty is suspicious" rule, or `codebase-grounded-planning`'s "Files claimed" requirement). Any other path, a missing file, or a filled-in section: exits 0 with no output at all. |
+| Env var / bypass | None — nothing to bypass, since it never blocks. |
+| Message text | *"&lt;path&gt;'s "## &lt;section&gt;" section is missing or still looks like the unfilled template placeholder. This operationalizes &lt;rule reference&gt;. Advisory only -- nothing was blocked."* |
 
 ### `preflight.sh`
 
@@ -159,6 +169,7 @@ stop the tool call.
 | `block-test-weakening.sh` | evidence-sdlc | PreToolUse (Edit\|Write\|MultiEdit) | `FIX_TASK=1` (must be set for this gate to activate at all; when active, denies edits to test files/dirs) |
 | `block-protected-branch-push.sh` | evidence-sdlc | PreToolUse (Bash, `git push *`) | None — no bypass; relies on real server-side branch protection as the actual control |
 | `production-gate.sh` | evidence-sdlc | PreToolUse (Bash, `*deploy*`) | `RELEASE_APPROVAL` (allows deploy commands whose command line contains the whole word "prod"/"production"); uses stderr + `exit 2`, not `permissionDecision` |
-| `audit-log.sh` | evidence-sdlc | PostToolUse (Edit\|Write\|MultiEdit, async) | None (never blocks; writes to `.claude/logs/agent-edits.tsv`) |
+| `audit-log.sh` | evidence-sdlc | PostToolUse (Edit\|Write\|MultiEdit, async) | None (never blocks; writes to a per-session shard, `.claude/logs/agent-edits-<session-id>.tsv`) |
+| `template-sensor.sh` | evidence-sdlc | PostToolUse (Edit\|Write\|MultiEdit) | None (advisory only, never blocks; deliberately does not fail closed on missing `jq` since it has nothing to protect) |
 | `preflight.sh` | evidence-sdlc | SessionStart | None (advisory only; never sets `permissionDecision` even on failure) |
 | `session-context.sh` | evidence-sdlc | SessionStart | None (advisory only; reads `CHANGE_TICKET` for display, not enforcement) |
