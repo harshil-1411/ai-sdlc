@@ -7,6 +7,12 @@ description: Classify a change into a risk tier and apply the matching Definitio
 
 Nine mandatory gates on every change is the process weight we are trying to remove.
 The point of AI-native SDLC is not more gates — it is gates that land where the risk is.
+This is not a hypothetical failure mode: Birgitta Böckeler's widely-read critique of
+spec-driven development names verbose-markdown fatigue from ceremony applied to every
+change, regardless of its actual risk, as a real cause of adoption failure — the same
+mechanism that undermined Model-Driven Development a generation earlier. Risk tiering
+is this framework's deliberate answer to that specific failure, not an incidental
+feature of it.
 
 ## Tiers
 
@@ -26,6 +32,18 @@ existing tests.
 
 **When in doubt, tier up.** A Tier 2 change that was really Tier 3 is the failure mode
 that matters. Say which tier you chose and why, in one line, in the spec.
+
+**An override may narrow scope or supply a missing credential; it may never weaken a
+tier's ceiling.** This framework's gate scripts already carry several environment-
+variable overrides — `CHANGE_TICKET`, `RELEASE_APPROVAL`, `FIX_TASK`,
+`EVIDENCE_SOURCE_GLOB` among them. Each is legitimate because it supplies the specific
+thing a gate is checking for (an accountability record, an authorisation, an explicit
+fix-task declaration) or narrows which paths are in scope — none of them, and no future
+override, may be used to make a change execute at a lower tier's ceremony than the risk
+it actually carries requires. `CHANGE_TICKET` lets a change-controlled edit proceed
+because the accountability record now exists; it does not exempt the change from
+needing one. Hold every new gate or override to this rule: it can make a requirement
+satisfiable, never optional.
 
 ## What each tier requires
 
