@@ -10,6 +10,7 @@ unfalsifiable.
 | --- | --- | --- | --- |
 | Lead time: idea to committed requirement | Jira / current process | | |
 | Lead time: requirement to merged PR | Jira + git | | |
+| Architecture/design decision lead time (a question raised in `spec.md`'s "Areas of concern," or the genuinely-close-decision rule firing in `spec-and-design`, to a recorded decision or an explicit stated non-decision-yet) | `spec.md`/`plan.md` timestamps + git history | | |
 | Review time per PR (open to approval) | PR metadata | | |
 | Rework cycles per change | PR metadata | | |
 | First-pass CI success rate | CI | | |
@@ -19,6 +20,10 @@ unfalsifiable.
 | Validation package assembly effort per release | QA/RA time records | | |
 | Regression suite execution effort per release | QA time records | | |
 | Cost per merged change | Finance + CI | | |
+
+Track architecture/design decision lead time separately from PR review time — the two
+diverge independently. Fast code review does not mean fast design approval, and a slow
+design-approval step bottlenecks everything downstream of it even when CI is fast.
 
 ## Guardrail metrics — watch these harder than the velocity ones
 

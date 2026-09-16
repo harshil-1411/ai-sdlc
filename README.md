@@ -723,6 +723,10 @@ failure rate are the classic failure of these programmes.
 - Defects caught before merge vs. escaping to production
 - **Review depth** — review time per change, plus a quarterly spot-audit of whether
   approvals were substantiated. This is the only honest check on approval theatre
+- **Architecture/design decision lead time** — time from a design question being
+  raised to a recorded decision, tracked separately from general PR review time. The
+  two move independently: fast CI says nothing about how long a `spec.md` sat waiting
+  on a design call
 - **Evidence assembly time at release.** If the chain is working this collapses from a
   project to running `evidence export`. Usually the clearest number to show leadership
 
