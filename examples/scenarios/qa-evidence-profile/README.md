@@ -41,17 +41,27 @@ to be one generic list; it isn't anymore. Reading `test-strategy`'s layer table,
 | SIG-03-F01 | Happy path | Integration | Owner re-opens a rejected review; new state is `reopened`, prior rejection intact |
 | SIG-03-N01 | Negative — wrong role | Integration | A non-owner reviewer's re-open attempt is denied server-side, per role and tenant |
 | SIG-03-N02 | Negative — wrong state | Integration | Re-opening an already-**signed** (not merely rejected) record is refused |
+| SIG-03-E01 | Empty / error state | Integration | Re-opening a record with **no prior rejection at all** (never reviewed) is refused with a specific error naming why — "nothing to re-open" — not a generic failure a support ticket has to decode |
+| SIG-03-C01 | Concurrency / misuse | Integration | Two reviewers submit re-open on the same rejected record within the same request window; exactly one succeeds, the second gets an explicit "already re-opened by \<reviewer\>" response — never two conflicting `reopened` states from a race |
 | SIG-03-W01 | White-box — state transition | Unit | `rejected → reopened` is a legal transition; `signed → reopened` is not — both asserted directly against the state machine, not just the API's response |
 | SIG-03-B01 | Boundary / equivalence | Integration | One representative case per input class (valid: `rejected`; invalid: `signed`, `draft`, `archived`) at the state-check boundary, not a guess at where the edge is |
+| SIG-03-P01 | Property-based | Integration | Invariant: across any sequence of reject/re-open/sign operations, the audit trail never loses the original rejection entry. Generated sequences (reject→reopen→reject→reopen→sign, and permutations neither the engineer nor a hand-picked example set would have thought to try), not a handful of chosen examples |
 | SIG-03-S01 | Security — tenant isolation | Security | The re-open endpoint is tenant-scoped; cross-tenant record IDs are rejected |
 | SIG-03-A01 | Regulated-record — audit trail | Integration | The audit trail shows both the original rejection and the supersession event, in order, neither rewritten |
 | SIG-03-M01 | Manual — regulated walkthrough | Manual (L3) | A QA reviewer performs the full reopen-and-resign flow end to end; human attestation is itself part of the evidence |
 
-Six of these are exactly what a generic happy/negative/boundary list would have
-produced before this batch of work. `SIG-03-W01` and the equivalence-partition
-structure behind `SIG-03-B01` are not — they exist because `test-designer` now
-asks, explicitly, whether a state machine is involved before falling back to a
-one-size-fits-all case list.
+Six of these are what a generic happy/negative/boundary list would have produced
+before this batch of work started. The other five are not, and each exists for a
+specific, named reason: `SIG-03-E01` and `SIG-03-C01` exist because `test-designer`
+now asks explicitly what happens with nothing to act on and what happens when two
+actors act at once, categories a happy/negative/boundary pass has no slot for at
+all. `SIG-03-W01` and the equivalence-partition structure behind `SIG-03-B01` exist
+because `test-designer` asks whether a state machine is involved before falling
+back to a one-size-fits-all case list. `SIG-03-P01` exists because the audit-trail
+requirement is actually an invariant — true after *any* sequence of operations, not
+just the ones someone remembered to write down by hand — and a hand-picked example
+set can prove the invariant held for the examples chosen without proving it holds
+in general.
 
 **4 · Test — where each case's evidence actually lands.** This is the part the
 framework used to leave undefined:
@@ -102,7 +112,8 @@ case needs, only that the ceiling is high.
 - [`test-strategy`](../../../plugins/evidence-quality/skills/test-strategy/SKILL.md) —
   the "Evidence produced" and "Coverage is interpreted, not generated" sections
 - [`test-designer`](../../../plugins/evidence-quality/agents/test-designer.md) —
-  the white-box/equivalence-partitioning categories this scenario's case table uses
+  the empty-state, concurrency, boundary/equivalence-partitioning, property-based
+  and white-box categories this scenario's case table uses
 - [`evidence-package`](../../../plugins/evidence-compliance/skills/evidence-package/SKILL.md) —
   "Step 0 — read or set the evidence profile," the L0-L3 table and screenshot
   requirements this scenario's Step 4 follows

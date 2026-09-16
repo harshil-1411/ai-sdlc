@@ -67,3 +67,6 @@ with risk**, and this story genuinely doesn't carry much.
 - [`codebase-grounded-planning`](../../../plugins/evidence-sdlc/skills/codebase-grounded-planning/SKILL.md)
 - [Scenario: a regulated change](../regulated-change-tier3/README.md) — the same six
   stages, all the ceremony this one skipped
+- [Scenario: the sensor catches a stub, and the correction becomes a
+  rule](../sensor-and-learning-loop/README.md) — the two advisory mechanisms running
+  quietly underneath a session like this one

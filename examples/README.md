@@ -13,7 +13,7 @@ Two kinds of thing live here, for two different reasons:
   is real but occasional enough that most repositories shouldn't pay its
   trigger-space cost by default.
 
-## scenarios/ — seven worked examples
+## scenarios/ — eight worked examples
 
 | Scenario | What it shows |
 | --- | --- |
@@ -24,6 +24,7 @@ Two kinds of thing live here, for two different reasons:
 | [`third-party-integration`](scenarios/third-party-integration/README.md) | Calling an external e-signature API — where security review ends and integration review begins |
 | [`standalone-cli-audit`](scenarios/standalone-cli-audit/README.md) | Using just `cli/evidence` on a repository that doesn't use this framework, or any framework, at all |
 | [`qa-evidence-profile`](scenarios/qa-evidence-profile/README.md) | The evidence profile and per-layer test-case design made concrete: what `test-designer` actually produces for one regulated requirement, and where each case's evidence lands |
+| [`sensor-and-learning-loop`](scenarios/sensor-and-learning-loop/README.md) | Two advisory-only mechanisms working together: the sensor that catches an unfilled spec section, and the learning loop that turns a mid-session correction into a durable `CLAUDE.md` rule |
 
 ## skills/decision-council
 
