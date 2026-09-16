@@ -48,6 +48,30 @@ material). The team runs `decision-council`'s **Lite** variant (four passes, one
 session) — full council would be reserved for something even more consequential, per
 that skill's own guidance not to let it become a ritual.
 
+The spec states the comparison's evidence explicitly, not just its conclusion:
+- **Evidence tier and support.** "HSM-backed keys keep signing material
+  non-exportable" rests on **Tier 2** (the HSM vendor's FIPS 140-2 conformance
+  spec) — **supported**, not asserted. "Application-managed keys are adequate if
+  encrypted at rest" rests on **Tier 4** (an unattributed industry best-practice
+  claim someone remembered from a prior job) — **weakly supported**: nobody could
+  point to a source for it when asked directly, which is exactly why this
+  decision escalated to decision-council instead of being picked silently.
+- **Reversibility line, named across its four factors:** reversibility — low,
+  once signed records exist under one key model, migrating them to the other
+  means re-signing or accepting a mixed-model audit trail, either of which is its
+  own Tier 3 change; coupling — the signing interface is designed key-model-
+  agnostic specifically to keep this factor from being worse than it has to be;
+  portability — HSM vendor lock-in is real (proprietary key-ceremony tooling),
+  application-managed has none; switching cost — re-provisioning and
+  re-attesting every signer is a multi-week operational exercise either
+  direction, not a config change.
+- **Review trigger:** revisit this decision if transaction volume grows enough to
+  require a second region and the HSM vendor's per-region licensing changes the
+  cost comparison materially, or if the vendor's FIPS conformance certification
+  lapses before renewal — either event reopens a decision that was otherwise
+  closed, rather than leaving it to be rediscovered by accident during an
+  unrelated audit.
+
 **3 · Build.** `codebase-grounded-planning`'s plan.md gets **both** a named technical
 lead's sign-off and the product owner's, per Tier 3's Definition of Ready. The plan
 touches `migrations/` (a new `signature` table) — `protect-validated-paths` requires a

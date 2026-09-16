@@ -55,11 +55,22 @@ simpler for a first pass — they just let `validation/traceability.csv` be the
 source of truth directly, hand-populating a handful of rows for their highest-risk
 requirements first rather than trying to cover everything on day one.
 
-**`evidence gaps`**, run against that partial CSV, reports honestly: some rows show
-`NO COVERAGE` because the test file named doesn't actually contain the case ID the
-CSV claims — exactly the same corroboration check this framework applies to its own
-traceability data (see this repo's own `cli/README.md` worked example). That is the
-finding worth having *before* the auditor visit, not during it.
+**`evidence gaps`**, run against that partial CSV, reports honestly across all six
+categories, not just the one they expected. Some rows show `NO COVERAGE` because the
+test file named doesn't actually contain the case ID the CSV claims — exactly the
+same corroboration check this framework applies to its own traceability data (see
+this repo's own `cli/README.md` worked example). A `DUPLICATE-ID` entry turns up too:
+`PROJ-4021` was reused across two exported requirement rows — a copy-paste from an
+older ticket nobody caught, from back before anyone was checking for this — and only
+the first is being tracked under that key; the second has effectively had no
+identity at all until this run surfaced it. And a clutch of `UNVERIFIED-RESULT`
+entries show up for the team's own automated tests: they're genuinely tagged to the
+right requirement IDs in code, but nobody ever recorded a pass/fail result against
+them anywhere the CLI can check, because results lived in a CI dashboard nobody
+exported. None of these three categories are `NO COVERAGE` — they don't block
+anything on their own — but each is a specific, named gap the team can now describe
+to the auditor instead of discovering it live in the room. That is the finding worth
+having *before* the auditor visit, not during it.
 
 **`evidence export --format md`** produces a document the platform team can actually
 hand to their QA lead ahead of the audit — see
