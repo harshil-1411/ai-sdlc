@@ -84,4 +84,6 @@ justification for anything new>
 named policy owner who must decide. Do not leave this empty by default.>
 
 ## Rejected alternatives
-<What was considered and why it lost. Link the ADR if a council was convened.>
+<What was considered and why it lost. Link the ADR if a council was convened. For
+a genuinely close decision, name the review trigger — the condition under which
+this should be revisited.>

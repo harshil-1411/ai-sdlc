@@ -49,8 +49,13 @@ weakest claim made by another seat and says why.
 - Where they genuinely conflict, and what the conflict is *about* — usually a
   difference in what each seat is optimizing for, which is a decision for a human.
 - A recommendation with its assumptions stated.
-- **The reversibility line**: is this a one-way door? If yes, say so first.
-- What to measure to find out early if the call was wrong.
+- **The reversibility line**: is this a one-way door? Name what it depends on — how
+  reversible the choice is, how much coupling it introduces between things that were
+  previously separate, how portable the result stays if you need to move away later,
+  and what switching away would cost. If yes, say so first.
+- What to measure to find out early if the call was wrong, including a review
+  trigger — a named condition, not a vague "monitor it," under which this decision
+  gets revisited.
 
 **Step 5 — Write it down.** Commit the synthesis as an ADR at
 `docs/decisions/<yyyy-mm-dd>-<slug>.md`. The ADR is what a future session reads;

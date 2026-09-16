@@ -70,6 +70,32 @@ documentation rather than code.
 An unmarked claim asserts that you checked it. Do not make that assertion loosely.
 A reviewer should be able to find every unchecked claim by searching the file.
 
+### For a consequential claim, name the evidence tier too
+
+A [NEEDS VERIFICATION] tag says a claim is unchecked; it does not say how strong
+the evidence behind it actually is, or would be. For anything of real consequence
+— a security, compliance, cost, or resilience claim, not a cosmetic detail — name
+which tier backs it:
+
+| Tier | Backed by |
+| --- | --- |
+| 1 | A regulation, an internal policy, or this system's own telemetry |
+| 2 | Vendor documentation or a published benchmark |
+| 3 | A reference architecture |
+| 4 | A general best practice, unattributed |
+| 5 | Inference alone — no external source |
+
+Pair the tier with a support classification: **supported** (the tier-appropriate
+source directly confirms the claim), **conditionally supported** (confirms it under
+a stated assumption), **weakly supported** (the source is suggestive, not
+conclusive), **unverified** (no source checked yet), or **contradicted** (a source
+says otherwise, and this claim needs to change or the source needs to be argued
+against explicitly, not ignored).
+
+A consequential claim rated Tier 4 or 5, or classified weakly supported or
+contradicted, is not a detail to tag and move past — route it to **Areas of
+concern** with a named owner, the same as any other unresolved conflict.
+
 ## Rules
 
 - Where a standard exists, cite it rather than restating your own version.
@@ -88,12 +114,22 @@ A reviewer should be able to find every unchecked claim by searching the file.
     fits or breaks, and its cost to reverse later.
   - **State a recommendation with reasoning** — which approach and why, not just
     a list of options with no opinion.
-  - **State the reversibility line explicitly** — is this actually a one-way door,
-    and if so, say that plainly rather than let it read as a routine choice.
+  - **State the reversibility line explicitly, and name what it actually depends
+    on** — is this a one-way door, and why: how reversible is it, how tightly
+    coupled does it make things that were previously separate, how portable does
+    the result stay if you need to move away from it later, and what would it
+    cost to switch away. Naming these four is what makes "reversibility" a
+    judgement a reviewer can check, not a word.
+  - **State a review trigger** — a named condition under which this decision
+    should be revisited, not treated as settled forever: a traffic threshold, a
+    vendor pricing or deprecation event, a compliance-scope change. A decision
+    with no review trigger reads as permanent even when it was only ever the
+    right call under today's constraints.
   - **Write the comparison into `spec.md`'s "Rejected alternatives" section** —
     the rejected approach and the reasoning that decided against it, not a
-    one-line "considered and lost." This is the record a later reviewer or an
-    inspector reads; the reasoning has to survive without you in the room.
+    one-line "considered and lost," and the review trigger alongside it. This is
+    the record a later reviewer or an inspector reads; the reasoning has to
+    survive without you in the room.
 
   This only fires under the condition already named above — genuinely close and
   expensive to reverse. It is not a new step for every Tier 2+ spec, and does not
