@@ -102,6 +102,14 @@ Going faster without addressing those just moves the queue to QA and security, a
 regulated shop it produces a human approval gate that has quietly become fiction. An
 auditor probing an approval nobody read is a worse outcome than not using AI at all.
 
+Two named failure modes sit on either side of this. Hand an agent the whole problem and
+expect it to work end-to-end unsupervised, and it works for a prototype and nothing that
+has to be reviewed and proven. Keep an agent on such a short leash that it only executes
+narrow, pre-approved tasks, and the review-and-evidence cost above never actually goes
+away — it just stays exactly where it was. Evidence Chain is neither: plan-mode
+discipline and human approval at every stage, with deterministic gates instead of the
+model's own judgement for anything that must never be skipped.
+
 Evidence Chain's answer: **each stage ends by committing an artifact the next stage
 reads, and the controls run at the moment the agent acts.** The chain of commits is then
 the audit trail.
@@ -592,6 +600,15 @@ that must never render the same: `0` (assessed, clean), `1` (assessed, gaps foun
 `.evidence/adapter.example.yml`) tells it where a repository that doesn't use this
 framework's own layout keeps its requirements, tests and tracker keys, so it can run
 against repositories this framework never touched.
+
+Where this sits on the spec-driven-development maturity ladder (Martin Fowler and
+Birgitta Böckeler's framing: spec-first → spec-anchored → spec-as-source): Evidence
+Chain is deliberately **spec-anchored**, not spec-as-source. `spec.md` persists next to
+the code and gets updated when implementation departs from the plan — it does not go
+stale after the first coding pass, the way a spec-first artifact does — but nothing here
+generates code from `spec.md` deterministically, and a human still writes and owns the
+actual diff. The traceability chain and the review model both assume a human-authored
+change with a spec behind it, not spec text compiled into code.
 
 Full docs, a worked example against this repository's own real (and honestly imperfect)
 traceability data, and the exit-code table: [`cli/README.md`](cli/README.md). Before
