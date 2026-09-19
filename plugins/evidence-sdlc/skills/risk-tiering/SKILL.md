@@ -30,6 +30,15 @@ visible in a way that generates support load.
 dependency patch within an approved range, test additions, refactors fully covered by
 existing tests.
 
+**Technical debt raises the tier; it never lowers it.** Before settling on a tier from
+the definitions above, check whether the area being touched already carries
+accumulated debt: a documented workaround, a prior incident referenced in git history
+or a known-issues doc (if one exists), or test coverage that is thin relative to the
+rest of the codebase. If any of those signals is present, raise the effective tier by
+one notch — Tier 1 becomes Tier 2, Tier 2 becomes Tier 3. As with the override rule
+below, this may never weaken a tier's ceiling in the other direction: debt can only
+push a change up, never down, and never past Tier 3.
+
 **When in doubt, tier up.** A Tier 2 change that was really Tier 3 is the failure mode
 that matters. Say which tier you chose and why, in one line, in the spec.
 
@@ -79,6 +88,25 @@ impact recorded, ADR stored if a design decision was made, QA/RA sign-off attach
 No schema, data model, API contract or architecture is produced without a stated
 tier. If asked to design something directly, state the tier first, in one line,
 with the reason. A design for a regulated record is Tier 3 by definition.
+
+This still applies when something else blocks you from producing the design
+itself — most commonly `spec-and-design`'s or `codebase-grounded-planning`'s
+stop-if-no-stack-profile precondition. The tier statement must be the literal
+first line of your entire response — before a heading, before "Stopped at...",
+before acknowledging the stop, before anything else — using what you already
+know from the request (the entity involved, whether it looks regulated, who is
+affected). Write it in exactly this form, as its own line, nothing above it:
+
+`Tier: <1|2|3> — <one-line reason>.`
+
+Only after that line do you explain a stop, ask clarifying questions, or write
+anything else. Do not fold the tier into a bullet list, do not bury it under a
+"What I need from you" or numbered-questions section, and do not leave it as
+an open question ("this decides whether it's Tier 2 or 3") — commit to a tier
+now on the information available, and say plainly if a fact you're missing
+could raise it later. A stopped response that states the tier anywhere other
+than as its first line is treated the same as not stating it at all — a
+correct-but-buried tier is still an incomplete application of this skill.
 
 ## Review-depth honesty
 

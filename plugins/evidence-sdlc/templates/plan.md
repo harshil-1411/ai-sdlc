@@ -20,6 +20,12 @@ proceeding — see codebase-grounded-planning's "Concurrent sessions" section.>
 3.
 <Mark which steps are independent — those can run in parallel worktrees.>
 
+## Mid-flight checkpoint (Tier 2/3)
+<Name which numbered step above is marked `CHECKPOINT` — the point where execution
+stops and re-confirms the work so far against spec.md before continuing (see
+codebase-grounded-planning's "While implementing" section). Required for Tier 2/3.
+Write `N/A — Tier 1` when this plan is Tier 1.>
+
 ## Reuse decisions
 <What existing module/endpoint/component this extends, and why anything new is new.>
 

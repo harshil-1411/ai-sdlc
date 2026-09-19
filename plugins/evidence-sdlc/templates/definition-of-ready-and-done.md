@@ -34,9 +34,16 @@ exists to remove.
 | Traceability rows updated | ○ | ○ | ● |
 | Revalidation call recorded | ○ | ○ | ● |
 | ADR stored (if a design decision was made) | ○ | ○ | ● |
+| Eval case added under `evals/` (if a new skill was introduced) | ○ | ○ | ○ |
 | QA/RA sign-off attached | ○ | ○ | ● |
 
 ● required   ○ not required
 
 **Do not** enforce Done with an agent's own assertion. Each ● is evidenced by a link:
 a CI run, a PR approval, a commit, a signed record.
+
+A new skill is not Done without at least one eval case under its plugin's `evals/`
+directory — see `evals/README.md`'s `case.yaml`/`prompt.md`/`graders/` convention.
+The row above shows `○` at every tier because it is conditional on introducing a new
+skill, not on tier, the same way the ADR row is conditional on a design decision
+having been made.

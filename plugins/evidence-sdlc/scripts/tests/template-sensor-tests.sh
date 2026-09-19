@@ -111,6 +111,92 @@ cat > "$F7/plan/TRACE-99.md" <<'EOF'
 EOF
 run_case "namespaced plan/<KEY>.md with real content -> silent" "$F7/plan/TRACE-99.md" silent
 
+echo "=== plan.md: mid-flight checkpoint (Tier 2/3) ==="
+F10="$SCRATCH/f10"; mkdir -p "$F10"
+cat > "$F10/spec.md" <<'EOF'
+# Spec: Something
+Tracker: X-1   From: intent/x/intent.md   Risk tier: 2
+EOF
+cat > "$F10/plan.md" <<'EOF'
+## Files claimed
+- src/orders.py
+
+## Order of work
+1. Do the thing.
+2. **[CHECKPOINT]** Re-confirm scope against spec.md before continuing.
+3. Finish the thing.
+EOF
+run_case "Tier 2 plan.md WITH a CHECKPOINT step -> silent" "$F10/plan.md" silent
+
+F11="$SCRATCH/f11"; mkdir -p "$F11"
+cat > "$F11/spec.md" <<'EOF'
+# Spec: Something else
+Tracker: X-2   From: intent/x/intent.md   Risk tier: 3
+EOF
+cat > "$F11/plan.md" <<'EOF'
+## Files claimed
+- src/orders.py
+
+## Order of work
+1. Do the thing.
+2. Finish the thing.
+EOF
+run_case "Tier 3 plan.md with NO CHECKPOINT step -> finding" "$F11/plan.md" finding
+
+F12="$SCRATCH/f12"; mkdir -p "$F12"
+cat > "$F12/spec.md" <<'EOF'
+# Spec: Routine
+Tracker: X-3   From: intent/x/intent.md   Risk tier: 1
+EOF
+cat > "$F12/plan.md" <<'EOF'
+## Files claimed
+- src/orders.py
+
+## Order of work
+1. Do the thing.
+2. Finish the thing.
+EOF
+run_case "Tier 1 plan.md with no CHECKPOINT step -> silent (not required)" "$F12/plan.md" silent
+
+F13="$SCRATCH/f13"; mkdir -p "$F13"
+cat > "$F13/plan.md" <<'EOF'
+## Files claimed
+- src/orders.py
+
+## Order of work
+1. Do the thing.
+2. Finish the thing.
+EOF
+run_case "plan.md with no sibling spec.md at all -> silent (nothing to check tier against)" "$F13/plan.md" silent
+
+echo "=== SKILL.md: eval case exists ==="
+F14="$SCRATCH/f14"; mkdir -p "$F14/plugins/widgets/skills/frobnicate" "$F14/plugins/widgets/evals/frobnicate-fires-on-request"
+cat > "$F14/plugins/widgets/skills/frobnicate/SKILL.md" <<'EOF'
+---
+name: frobnicate
+description: Frobnicate things.
+---
+EOF
+run_case "new SKILL.md WITH a matching eval case dir -> silent" "$F14/plugins/widgets/skills/frobnicate/SKILL.md" silent
+
+F15="$SCRATCH/f15"; mkdir -p "$F15/plugins/widgets/skills/frobnicate"
+cat > "$F15/plugins/widgets/skills/frobnicate/SKILL.md" <<'EOF'
+---
+name: frobnicate
+description: Frobnicate things.
+---
+EOF
+run_case "new SKILL.md with NO evals/ directory at all -> finding" "$F15/plugins/widgets/skills/frobnicate/SKILL.md" finding
+
+F16="$SCRATCH/f16"; mkdir -p "$F16/plugins/widgets/skills/frobnicate" "$F16/plugins/widgets/evals/unrelated-case"
+cat > "$F16/plugins/widgets/skills/frobnicate/SKILL.md" <<'EOF'
+---
+name: frobnicate
+description: Frobnicate things.
+---
+EOF
+run_case "new SKILL.md with evals/ present but no matching case -> finding" "$F16/plugins/widgets/skills/frobnicate/SKILL.md" finding
+
 echo "=== unrelated files must never fire ==="
 F8="$SCRATCH/f8"; mkdir -p "$F8"
 echo "# Hello" > "$F8/README.md"

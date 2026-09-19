@@ -118,6 +118,16 @@ Other conventions worth carrying over, seen repeatedly:
   number of skills is a cost." Adding a new skill directory should be the exception, not
   the default extension mechanism.
 
+### Eval coverage
+
+A new skill is not Done until at least one eval case exists for it under its plugin's
+`evals/` directory — see `definition-of-ready-and-done.md`'s "Eval case added under
+`evals/`" row. Follow the convention already established in every plugin's
+`evals/README.md`: at minimum a `trigger` case (the skill fires when it should) and a
+`non-trigger` case (it doesn't fire when it shouldn't), plus a `behavior` case
+whenever the skill has a non-obvious rule worth pinning down. Each case is a directory
+with `prompt.md`, `case.yaml`, and an optional `graders/`, run via `claude plugin eval`.
+
 ### Agent frontmatter
 
 Agents (`plugins/*/agents/*.md`) are a distinct file kind from `SKILL.md` — they carry a

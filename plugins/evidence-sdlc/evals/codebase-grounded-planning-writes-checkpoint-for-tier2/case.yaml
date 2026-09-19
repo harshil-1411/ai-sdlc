@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: codebase-grounded-planning-writes-checkpoint-for-tier2
+tags: [behavior, codebase-grounded-planning, scaffold, needs-write]
+context:
+  scaffold_script: fixture.sh

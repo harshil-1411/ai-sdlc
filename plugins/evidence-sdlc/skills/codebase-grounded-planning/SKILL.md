@@ -67,6 +67,11 @@ is already claimed via the plan's own "Files claimed" section (see
   The PR review compares the diff against the plan; silent drift will be flagged.
 - Re-read `plan.md` before each new step in a long session. Do not work from memory
   of what you decided an hour ago.
+- For Tier 2/3 work, when execution reaches the step marked `CHECKPOINT` in `plan.md`'s
+  "Order of work," stop before continuing. Re-confirm that the work done so far still
+  matches `spec.md`'s requirements and the plan's stated scope. If it has drifted,
+  record that the same way plan drift is already recorded above, before going on to the
+  next step.
 - If the engineer corrects you on something non-obvious — a wrong assumption about the
   codebase, a convention you missed, a pattern you used incorrectly — note it as you go.
   Before the plan is marked done, propose one line for `CLAUDE.md`'s "Things Claude gets
