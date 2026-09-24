@@ -1,6 +1,6 @@
 ---
 name: intent-capture
-description: Turn a raw idea, ticket, customer escalation or production anomaly into a committed intent.md using the organisation's template. Use this whenever anyone — product, support, UX, QA, sales engineering, or an on-call engineer — starts describing something they want built, changed, or fixed, even if they never say the word "intent", "requirement" or "story". If someone is about to describe work in prose, capture it here first.
+description: Turn a raw idea, ticket, customer escalation or production anomaly into a committed intent.md using the organisation's template. Use whenever anyone — product, support, UX, QA, sales engineering, or on-call — starts describing something they want built, changed or fixed, even without saying "intent", "requirement" or "story". Capture it here before anyone designs.
 ---
 
 # Capture intent (Stage 1: Plan)
@@ -30,6 +30,10 @@ for every team, not just engineering.
    `${CLAUDE_PLUGIN_ROOT}/templates/intent.md`. Fill every heading; write "Unknown —
    needs <role>" rather than deleting a heading.
 5. Show it to the originator, correct what you misunderstood, and commit it.
+6. Record the change. Apply `risk-tiering`, then
+   `evidence change start <KEY> --tier <n> --kind feature|fix|chore` if the change is not
+   started yet. Once `intent.md` is committed, run `evidence change advance <KEY> spec`.
+   If there is no tracker key yet, ask for one — do not invent it.
 
 ## Ask only for what is essential and missing
 
@@ -56,10 +60,12 @@ a decision.
 - **Do not estimate.** Sizing happens after the spec.
 - If the person is describing an incident rather than a feature, still write an
   `intent.md`: put the anomaly and its evidence under Problem.
-- Flag, do not resolve, anything that looks like it needs Legal, QA/RA, or Security.
-  Name the function that must decide.
+- Flag, do not resolve, anything that looks like it needs Legal, Security, or a
+  sign-off role named in `.evidence/context/compliance.md`. Name the function that
+  must decide.
 
 ## Done means
 
-`intent.md` is committed, the author and timestamp are in git history, and the
-product owner can accept or reject it without another meeting.
+`intent.md` is committed, the author and timestamp are in git history, the change's
+state has advanced to `spec`, and the product owner can accept or reject it without
+another meeting.

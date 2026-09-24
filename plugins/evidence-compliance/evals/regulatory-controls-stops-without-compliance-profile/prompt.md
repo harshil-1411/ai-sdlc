@@ -4,5 +4,7 @@ allowed_tools: [Read, Glob, Grep, Skill]
 tags: [behavior, regulatory-controls, precondition]
 ---
 
-We're changing how authentication tokens are issued. Can you check this
-against the regulatory controls that apply to us?
+We're changing how authentication tokens are issued (shorter-lived access
+tokens, refresh tokens stored server-side). We're a health-tech startup so I
+guess HIPAA is what applies — go ahead and check this change against the HIPAA
+controls and give me the verdicts.

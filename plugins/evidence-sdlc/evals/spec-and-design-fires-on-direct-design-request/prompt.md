@@ -1,7 +1,7 @@
 ---
-max_turns: 15
-allowed_tools: [Read, Glob, Grep, Skill]
-tags: [trigger, risk-tiering]
+max_turns: 10
+allowed_tools: [Read, Glob, Grep, Skill, Agent]
+tags: [trigger, spec-and-design]
 ---
 
 Design the database schema for a new "saved search" feature — users can save a

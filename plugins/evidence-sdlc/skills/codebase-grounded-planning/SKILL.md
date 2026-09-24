@@ -1,6 +1,6 @@
 ---
 name: codebase-grounded-planning
-description: Build an implementation plan.md that is grounded in what the repository actually contains — real files, real existing APIs, real test locations — instead of a plausible-sounding plan. Use this at the start of every implementation session, whenever someone says "plan this", "how would we build this", "break this down", or asks for tasks, subtasks, or a work breakdown, and whenever a session is about to start editing code without an approved plan on disk.
+description: Write or revise plan.md grounded in what the repository actually contains — real files, APIs and test locations — with enforced "Files claimed" globs and human-only approval. Use at the start of every implementation session, when asked to "write the plan", "plan this", "how would we build this", "break this down", to mark a plan approved, for tasks or a work breakdown, or when a session is about to edit code without an approved plan.
 ---
 
 # Codebase-grounded planning (Stage 3: Build)
@@ -19,21 +19,26 @@ depends on, that is also a stop — ask the human.
 The single biggest failure mode of AI-assisted development here is a beautiful
 plan that assumes an architecture we don't have. This skill exists to stop that.
 
+## The change record
+
+Every change has a state file, `.evidence/changes/<KEY>/state.json`. If it does not
+exist yet (a Tier 1 change starts here), apply `risk-tiering` and run:
+
+`evidence change start <KEY> --tier <n> --kind feature|fix|chore`
+
+`evidence change status <KEY>` shows the stage, which artifacts the tier still needs,
+and who can unblock it. Read it before planning and again before asking for approval.
+
 ## Concurrent sessions
 
-Before planning, check for other active work: other worktrees, other `plan/` files,
-and open branches touching the same paths. If another plan claims a file this plan
-needs, STOP and say so — silent concurrent edits to one module is how two correct
-changes produce one broken merge.
+Before planning, check for other active work: `evidence change list`, other worktrees,
+and open branches touching the same paths. `evidence change start` and the engine
+report overlap with other active changes' "Files claimed". If another change claims a
+path this plan needs, STOP and say so — silent concurrent edits to one module is how two
+correct changes produce one broken merge.
 
 Changes that touch the same regulated path must not run concurrently. Sequence them
 and say why.
-
-Use `plan/<TRACKER-KEY>.md` (not bare `plan.md`) whenever more than one session might
-be planning against this repository at once — it is what lets `gate-plan-exists`
-tell one session's plan apart from another's, and lets a concurrent session see what
-is already claimed via the plan's own "Files claimed" section (see
-`templates/plan.md`).
 
 ## Sequence — do not reorder
 
@@ -57,14 +62,29 @@ is already claimed via the plan's own "Files claimed" section (see
    its automated test. `REQ-...` with no named test is an incomplete plan.
 7. **State the risks.** What could this break, which step is riskiest, and what did
    you consider and reject.
-8. Write to `plan.md` (or `plan/<TRACKER-KEY>.md` — see "Concurrent sessions" above)
-   using `${CLAUDE_PLUGIN_ROOT}/templates/plan.md`, including the "Files claimed"
-   section, then get the engineer's approval before implementing.
+8. **Write the plan** to `intent/<yyyy-mm-dd>-<slug>/plan.md` (next to its spec) or
+   `plan/<KEY>.md`, using `${CLAUDE_PLUGIN_ROOT}/templates/plan.md`. The header carries
+   `Risk tier: <n> — <reason>`, matching state.json.
+9. **Claim files as globs.** "Files claimed" lists repo-relative globs covering every
+   path the plan touches, tests and docs included. Claims are enforced: after approval,
+   an edit outside them is denied. Claim what you need and no more — a claim of `**` is
+   not a plan.
+10. **Ask a human to approve.** Stop and ask the engineer to run
+    `/evidence-sdlc:approve <KEY> <plan-sha>` (or `evidence approve <KEY>` in their own terminal, or to
+    approve through GitHub). Approval binds to the plan's hash. You never approve,
+    never write an approval file, and never write "Approved by" into the plan. Do not
+    edit source until `evidence change status <KEY>` shows the change approved.
 
 ## While implementing
 
 - If the implementation departs from the plan, update `plan.md` **in the same commit**.
   The PR review compares the diff against the plan; silent drift will be flagged.
+  Editing an approved plan voids the approval — say so and ask the human to approve the
+  revised plan before continuing.
+- If an edit is denied as outside "Files claimed", do not route around it. Either the
+  plan was wrong (revise it, and get it re-approved) or the edit is out of scope.
+- Every commit message carries the tracker key and an `Agent-Session: <session id>`
+  trailer.
 - Re-read `plan.md` before each new step in a long session. Do not work from memory
   of what you decided an hour ago.
 - For Tier 2/3 work, when execution reaches the step marked `CHECKPOINT` in `plan.md`'s
@@ -97,6 +117,6 @@ component requires a written justification naming what was considered.
 
 ## Done means
 
-`plan.md` (or `plan/<TRACKER-KEY>.md`) is committed, every path in it exists, every
-requirement has a named test, "Files claimed" is filled in, and an engineer who has
-never seen your session could implement it from the file alone.
+The plan is committed, every path in it exists, every requirement has a named test,
+"Files claimed" globs cover exactly the work, a human has approved it, and an engineer
+who has never seen your session could implement it from the file alone.

@@ -1,5 +1,25 @@
 {
   "name": "evidence-compliance",
+  "version": "2.0.0",
   "description": "Regulatory controls for regulated records and the derivation of validation deliverables from the artifact chain.",
-  "author": { "name": "Suparn Bector", "email": "suparnbector@gmail.com" }
+  "author": {
+    "name": "Suparn Bector",
+    "email": "suparn.bector@msbdocs.com"
+  },
+  "homepage": "https://github.com/REPLACE-WITH-YOUR-ORG/evidence-chain#readme",
+  "repository": "https://github.com/REPLACE-WITH-YOUR-ORG/evidence-chain",
+  "license": "MIT",
+  "keywords": [
+    "compliance",
+    "soc2",
+    "iso27001",
+    "nist-ssdf",
+    "part-11",
+    "validation",
+    "regulated"
+  ],
+  "dependencies": [
+    "evidence-sdlc",
+    "evidence-discovery"
+  ]
 }

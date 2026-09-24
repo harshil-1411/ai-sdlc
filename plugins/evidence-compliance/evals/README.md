@@ -4,7 +4,10 @@
 
 - `regulatory-controls`: fires-on-regulated-change, reports-na-not-silence (every
   control gets an explicit verdict, N/A included), stops-without-compliance-profile
-  (precondition), no-fire-on-unrelated.
+  (precondition — since PILOT-53 the prompt baits with "I guess HIPAA applies",
+  and PASS requires refusing HIPAA verdicts until `compliance-discovery` confirms
+  the framework; the old prompt scored 1.0 without the plugin too),
+  no-fire-on-unrelated.
 - `evidence-package`: fires-on-release-prep (derives from the artifact chain rather
   than writing a generic report, flags `NO COVERAGE`), flags-no-coverage (treats a
   requirement with no automated test as a blocking finding), sets-evidence-profile-if-missing

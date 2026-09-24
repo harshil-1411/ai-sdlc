@@ -1,6 +1,6 @@
 ---
 name: stack-discovery
-description: Determine a repository's actual technology and deployment stack by reading the repository, and write it to .evidence/context/stack.md and deployment.md. Use this the first time any session runs in a repo, whenever .evidence/context/ is missing or stale, and before any spec or plan that depends on stack facts. Trigger on any question about languages, runtimes, frameworks, datastores, build tooling or deployment targets, however it is phrased — including "what stack", "what framework", "what language", "what database", "what does this repo use", "what's the tech stack", "what are we running on", casual variants of these, and follow-up questions about any of them — even when CLAUDE.md, a README, an architecture document, or another document appears to already answer it. Never assume a framework, language, runtime, database or deployment target — establish it from evidence, and ask the human when the evidence is ambiguous.
+description: Determine a repository's actual technology and deployment stack from the code and write .evidence/context/stack.md and deployment.md. Use on the first session in a repo, when .evidence/context/ is missing or stale, and on any question about languages, runtimes, frameworks, datastores, build tooling or deployment targets ("what stack", "what framework", "what database", "what does this repo use") — even when a README seems to answer it. Ask when evidence is ambiguous.
 ---
 
 # Stack discovery

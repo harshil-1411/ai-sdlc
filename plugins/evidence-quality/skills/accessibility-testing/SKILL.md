@@ -1,6 +1,6 @@
 ---
 name: accessibility-testing
-description: Test user interfaces against the team's accessibility conformance target (for example WCAG 2.2 AA) by combining automated scanning with the manual keyboard, screen-reader, zoom/reflow and contrast checks automation cannot make, and record the results as evidence. Use this whenever someone asks about accessibility, a11y, WCAG, Section 508, EN 301 549, the European Accessibility Act, screen readers, keyboard navigation, colour contrast, axe or Lighthouse accessibility scores, a VPAT or accessibility conformance report, or when a change adds or modifies UI. Read the conformance target and tools from the repository profile — never assume them.
+description: Test UIs against the team's accessibility target (for example WCAG 2.2 AA) by combining automated scans with manual keyboard, screen-reader, zoom/reflow and contrast checks, recorded as evidence. Use on accessibility, a11y, WCAG, Section 508, EN 301 549, screen readers, keyboard navigation, colour contrast, axe or Lighthouse scores, a VPAT or conformance report. Read the target and tools from the profile — never assume them.
 ---
 
 # Accessibility testing

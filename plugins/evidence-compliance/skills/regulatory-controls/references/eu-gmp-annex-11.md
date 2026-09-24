@@ -2,8 +2,9 @@
 
 > Scope: computerised systems used as part of GMP-regulated activities in the EU.
 > Complements Part 11 rather than duplicating it; where both apply, run both.
-> Source: drafted from the public annex. Owner: <name>. Last reviewed: <date>.
-> **Not an authoritative interpretation.**
+> Source: drafted from the public annex.
+> Owner: UNASSIGNED — the adopting organisation must assign a named owner before relying on this set (evidence doctor warns while unassigned).
+> Last reviewed: never by an adopter; drafted 2026-09-24. **Not an authoritative interpretation.**
 
 ## Controls
 

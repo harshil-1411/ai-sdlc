@@ -2,8 +2,9 @@
 
 > Scope: systems that store, process or transmit cardholder data, and systems connected
 > to them. **Scope reduction is the primary control** — the cheapest way to satisfy this
-> is to not handle card data. Source: drafted from public descriptions. Owner: <name>.
-> Last reviewed: <date>. **Not an authoritative interpretation.**
+> is to not handle card data. Source: drafted from public descriptions.
+> Owner: UNASSIGNED — the adopting organisation must assign a named owner before relying on this set (evidence doctor warns while unassigned).
+> Last reviewed: never by an adopter; drafted 2026-09-24. **Not an authoritative interpretation.**
 
 ## Controls
 

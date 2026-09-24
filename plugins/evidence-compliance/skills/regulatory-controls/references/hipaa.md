@@ -3,7 +3,8 @@
 > Scope: safeguards for ePHI where the organisation is a covered entity or business
 > associate. The Privacy and Breach Notification rules are largely organisational and are
 > not covered here. Source: drafted from public descriptions of the Security Rule.
-> Owner: <name>. Last reviewed: <date>. **Not an authoritative interpretation.**
+> Owner: UNASSIGNED — the adopting organisation must assign a named owner before relying on this set (evidence doctor warns while unassigned).
+> Last reviewed: never by an adopter; drafted 2026-09-24. **Not an authoritative interpretation.**
 
 ## Controls
 

@@ -1,6 +1,6 @@
 ---
 name: static-analysis
-description: Configure and maintain static code analysis — linting, formatting, type checking, complexity and duplication checks, and SAST rule sets — with a baseline-and-ratchet policy so new code is clean while existing debt shrinks, and with suppression and rule-change discipline. Use this whenever someone sets up or changes a linter, formatter, type checker, SonarQube/Semgrep/CodeQL or similar configuration, asks to introduce static analysis to an existing codebase, wants to disable, relax or ignore a rule, adds a lint/eslint/noqa/nolint suppression, or asks why a static check is failing. Read the tools and their commands from the repository profile — never assume them.
+description: Configure and maintain static analysis — linting, formatting, type checking, complexity and duplication checks, SAST rule sets — with a baseline-and-ratchet policy and suppression discipline. Use when someone sets up or changes a linter, formatter, type checker, SonarQube/Semgrep/CodeQL, wants to disable or relax a rule, adds an eslint/noqa/nolint suppression, or asks why a static check fails. Read tools from the profile — never assume them.
 ---
 
 # Static analysis

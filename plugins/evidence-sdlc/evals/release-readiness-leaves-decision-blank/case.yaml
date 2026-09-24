@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: release-readiness-leaves-decision-blank
+tags: [behavior, release-readiness, scaffold]
+context:
+  scaffold_script: fixture.sh

@@ -1,6 +1,6 @@
 ---
 name: toolchain-discovery
-description: Establish which delivery tools a team actually uses — issue tracking, test management, source hosting, CI, support desk, cloud account, design system — and determine for each whether the agent can connect via MCP, CLI, REST, or not at all. Use this during repository onboarding, whenever a workflow needs a tool the session cannot currently reach, whenever someone asks whether Claude can talk to a given system, and before designing any cross-tool automation. Trigger on plain questions too: "can you access our Jira/GitHub/CI", "are we connected to X", "what's our tracker", "do we have a test management tool", "what CI do we use" — even when a README or onboarding doc appears to already say. Establish connectivity as fact, not assumption.
+description: Establish which delivery tools a team actually uses — tracker, test management, source hosting, CI, support desk, cloud account — and whether the agent can reach each via MCP, CLI, REST or not at all. Use at onboarding, when a workflow needs a tool the session cannot reach, and on "can you access our Jira/GitHub/CI", "are we connected to X", "what's our tracker", "what CI do we use". Establish connectivity as fact, not assumption.
 ---
 
 # Toolchain discovery and connectivity

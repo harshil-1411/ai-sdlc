@@ -1,6 +1,6 @@
 ---
 name: security-testing
-description: Plan, run and triage security testing — dependency/SCA scanning, secret scanning, container and infrastructure-as-code scanning, DAST, fuzzing and penetration testing — and apply one findings policy (severity, fix time, suppression with owner and expiry, baseline vs new) to security findings from any source, SAST included. Use this whenever someone asks for vulnerability scanning, a CVE or dependency alert, "is this dependency safe", secret detection, container or Terraform scanning, DAST or OWASP ZAP/Burp scanning, fuzz testing, pen-test preparation or retest, or wants to suppress, ignore or accept a security finding. Complements secure-api-review, which reviews design and code; this skill tests the running system and its supply chain. Read tools, targets and policy from the repository profile — never assume them.
+description: Plan, run and triage security testing of the running system and supply chain — dependency/SCA, secret, container and IaC scanning, DAST, fuzzing, penetration testing — under one findings policy (severity, fix time, suppression with owner and expiry). Use on vulnerability scans, CVE or dependency alerts, OWASP ZAP/Burp, fuzzing, pen-test prep or retest, or a request to suppress or accept a security finding. Read tools and policy from the profile.
 ---
 
 # Security testing

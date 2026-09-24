@@ -1,6 +1,6 @@
 ---
 name: test-strategy-discovery
-description: Establish the team's agreed test strategy — which test types are in scope, the non-functional targets, environments, browser/device matrix, who runs manual testing and UAT, the security-testing cadence, entry and exit criteria — by reading the repository first and then interviewing the humans only for what the repository cannot answer. Writes .evidence/context/test-strategy.md so every testing skill reads an agreed strategy instead of a default. Use this during repository onboarding alongside stack and toolchain discovery, whenever .evidence/context/test-strategy.md is missing or stale, and before the first test plan in a repository. Trigger on plain questions too: "what's our test strategy", "what testing should we be doing", "do we need performance/load/security testing", "set up our QA approach", "which browsers do we support", "who does UAT" — even when a test plan document appears to already answer it.
+description: Establish the team's agreed test strategy — test types in scope, non-functional targets, environments, browser/device matrix, who runs manual testing and UAT, entry and exit criteria — from the repository first, then the humans, and write .evidence/context/test-strategy.md. Use at onboarding, when that file is missing or stale, and on "what's our test strategy", "set up our QA approach", "which browsers do we support", "who does UAT".
 ---
 
 # Test strategy discovery

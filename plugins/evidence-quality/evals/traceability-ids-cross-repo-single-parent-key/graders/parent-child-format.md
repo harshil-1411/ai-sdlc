@@ -2,17 +2,31 @@
 type: llm
 ---
 
-PASS if the response says each repository's branch/commits/PR should carry
-both the parent key (`PLAT-100`) and its own child key, written as
-`PLAT-100/CHILD`, and that the requirement ID is allocated once against the
-parent and referenced (not re-numbered) from the second repository. Judge
-substance only, not length or hedging: a response that also correctly flags
-`.evidence/context/toolchain.md` is missing and that the concrete child keys
-aren't known yet is giving the right, honest answer, not failing to answer —
-grade whether the PARENT/CHILD structure and the allocate-once rule are
-stated, not whether the response resolved every placeholder.
+The traceability-ids skill's cross-repository rules go beyond "use a parent
+ticket": each repo carries `PARENT/CHILD`; requirement IDs are allocated once
+against the parent; the parent issue records which repositories participate,
+and a participating repo with no linked child chain is an incomplete change
+(a release finding, like `NO COVERAGE`); and the integration test that proves
+the cross-repo behaviour lives in ONE named repository declared on the parent
+— "both sides tested their half" is not proof the whole works.
 
-FAIL only if the response actually has each repository invent its own
-independent requirement ID, actually never names the `PARENT/CHILD` key
-format anywhere in the response, or actually suggests either repo can use
-just its own key with no parent reference.
+PASS only if the response, anywhere in the reply (judge substance, not length,
+hedging or placement — flagging that `.evidence/context/toolchain.md` is
+missing or that the concrete child keys aren't known yet is fine):
+- says each repository's branch/commits/PR carry both the parent key and its
+  own child key, written as `PLAT-100/<CHILD>`;
+- says the requirement ID is allocated once against the parent and referenced,
+  not re-numbered, from the second repository;
+- says the integration test exercising the crossing between the two repos is
+  owned by one named repository, declared on the parent issue (not "each
+  repo tests its half"); and
+- says the parent issue records the participating repositories, and/or that
+  a participating repo without a linked child chain is an incomplete change /
+  release finding.
+
+FAIL if the response has each repo invent its own requirement ID, never names
+the `PARENT/CHILD` format, lets either repo use only its own key, relies on
+each repo testing its own half as proof of the cross-repo requirement, or
+omits both the participating-repos record and the missing-child-chain rule.
+Presenting invented child keys as the real keys to use (rather than as
+examples or `[ASK]`) is also a FAIL.

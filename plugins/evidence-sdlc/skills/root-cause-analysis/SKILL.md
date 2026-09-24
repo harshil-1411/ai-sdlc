@@ -1,6 +1,6 @@
 ---
 name: root-cause-analysis
-description: Trace a defect to its actual root cause from evidence, rather than proposing a plausible-sounding fix. Use this whenever someone says "this is broken", "why is this failing", "debug this", "investigate this error", "production issue", "it works locally but not in X", pastes a stack trace or error log, or reports any unexpected behaviour. Refuse to theorise until the essential facts are established or explicitly marked unavailable.
+description: Trace a defect to its root cause from evidence — reproduction, git history and bisect, a causal chain, and a sweep for the same defect elsewhere — instead of a plausible fix. Use when someone says "this is broken", "why is this failing", "debug this", "production issue", "it works locally but not in X", pastes a stack trace or error log, or reports unexpected behaviour. Refuse to theorise until the facts are established.
 ---
 
 # Root cause analysis
@@ -40,19 +40,50 @@ challenge, not buried in prose.
 
 ## Reproduce before fixing
 
-Write a failing test that demonstrates the bug, and confirm it fails **for the
-expected reason** — step through why it fails and check that reason matches the bug,
-not an unrelated setup error or a typo in the test itself. Commit that test on its
-own, before any fix. Then set `FIX_TASK=1` for the rest of the session — from that
-point the `block-test-weakening` hook denies edits to that test, so the fix has to
-make the test pass rather than the test being loosened to fit whatever the fix does.
+1. Start the fix as a change: `evidence change start <KEY> --tier <n> --kind fix`
+   (apply `risk-tiering` for the tier).
+2. Write a failing test that demonstrates the bug, and confirm it fails **for the
+   expected reason** — step through why it fails and check that reason matches the bug,
+   not an unrelated setup error or a typo in the test itself.
+3. Commit that test on its own, before any fix, then run
+   `evidence change advance <KEY> failing-test`. From then on the engine denies edits to
+   and deletion of every test file that existed before the fix, so the fix has to make
+   the test pass rather than a test being loosened to fit whatever the fix does. New test
+   files are still allowed. (`FIX_TASK=1` is deprecated; it is still honoured but does
+   not replace the change record.)
 
-## Root cause vs. trigger
+## Find when and how it entered
+
+Use history before theory:
+
+- `git log -S '<suspect string>' --oneline -- <path>` and `git log -L <start>,<end>:<file>`
+  to find the commits that introduced or changed the suspect code.
+- If a known-good commit exists, bisect with the failing test:
+  `git bisect start <bad> <good>` then `git bisect run <command that runs only the
+  failing test>`, and `git bisect reset` when done. Report the first bad commit and
+  read its diff and message — the intent behind it is often the root cause.
+- If bisect is impossible (no good commit, test cannot run on old revisions), say so
+  and why.
+
+## Causal chain
 
 The trigger is the specific input, timing, or event that made the defect surface. The
-root cause is the underlying condition that made it possible at all. Report both —
-fixing only the trigger (e.g. rejecting the one input that happened to expose it)
-without fixing the root cause leaves the same defect reachable a different way.
+root cause is the underlying condition that made it possible at all. Write the chain
+explicitly, one link per line, each with its evidence:
+
+`Trigger → Mechanism (each step the fault propagated through) → Root cause`
+
+Stop the chain where a change would prevent the whole class of failure, not just this
+instance. Fixing only the trigger (e.g. rejecting the one input that happened to expose
+it) leaves the same defect reachable a different way.
+
+## Sibling-defect sweep
+
+A root cause is a pattern, and patterns repeat. Before proposing the fix, search for the
+same pattern elsewhere — grep for the faulty call, the missing check, the copied block,
+the same misuse of an API. List every sibling found with its path and whether it is
+reachable. Fix siblings in this change only if the plan claims them; otherwise raise
+each as its own tracker issue.
 
 ## Regulated records
 
@@ -65,5 +96,7 @@ introduced it, and not by whether it was caught before release.
 
 Report the finding as a table:
 
-| Symptom | Trigger | Root cause | Evidence for that conclusion | Assumptions | Edge cases this also affects | Proposed fix | Test that proves it |
-| --- | --- | --- | --- | --- | --- | --- | --- |
+| Symptom | Trigger | Root cause | Introducing commit | Evidence for that conclusion | Assumptions | Sibling defects | Proposed fix | Test that proves it |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+
+Follow the table with the causal chain.

@@ -1,8 +1,25 @@
 {
   "name": "evidence-sdlc",
-  "description": "The Evidence Chain control plane: skills that encode our standards, subagents that verify work, and hooks that make the non-negotiable gates deterministic.",
+  "version": "2.0.0",
+  "description": "The Evidence Chain control plane: a fail-closed gate engine (plan approval, claims, tier floors, change control, test protection, secrets, protected pushes and releases), lifecycle state, human-only approval, a hash-chained audit log, the `evidence` CLI, review agents and skills.",
   "author": {
     "name": "Suparn Bector",
-    "email": "suparnbector@gmail.com"
-  }
+    "email": "suparn.bector@msbdocs.com"
+  },
+  "homepage": "https://github.com/REPLACE-WITH-YOUR-ORG/evidence-chain#readme",
+  "repository": "https://github.com/REPLACE-WITH-YOUR-ORG/evidence-chain",
+  "license": "MIT",
+  "keywords": [
+    "sdlc",
+    "governance",
+    "hooks",
+    "gates",
+    "traceability",
+    "risk-tiering",
+    "security-review",
+    "audit"
+  ],
+  "dependencies": [
+    "evidence-discovery"
+  ]
 }

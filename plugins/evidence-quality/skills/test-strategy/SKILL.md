@@ -1,6 +1,6 @@
 ---
 name: test-strategy
-description: Design the test approach for a change — which layer each requirement is proven at, what is automated versus manual, and what evidence each produces. Use this during spec and plan, whenever someone asks how something will be tested, whenever a requirement has no named test, and before any test case or automated test is written. Read the repository profile for the actual test frameworks rather than assuming any.
+description: Design the test approach for a change — which layer proves each requirement, what is automated versus manual, and what evidence each produces. Use during spec and plan, whenever someone asks how something will be tested, whenever a requirement has no named test, and before any test is written. Read the repository profile for the actual test frameworks rather than assuming any.
 ---
 
 # Test strategy

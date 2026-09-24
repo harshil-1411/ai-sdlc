@@ -1,6 +1,6 @@
 ---
 name: testrail-authoring
-description: Author manual test cases into the team's test management system in its required format, carrying the traceability identifier, and link them back to the tracker issue. Use this whenever manual test cases are needed for a change, whenever someone asks for test cases to be written or updated, when a regression suite needs extending, and when a release test run is being prepared. Read the tool's field requirements from the profile before writing anything.
+description: Author manual test cases into the team's test management system in its required format, carrying the traceability identifier, and link them to the tracker issue. Use when manual test cases are needed for a change, when someone asks for test cases to be written or updated, when a regression suite needs extending, and when a release test run is prepared. Read the tool's field requirements from the profile first.
 ---
 
 # Authoring manual test cases

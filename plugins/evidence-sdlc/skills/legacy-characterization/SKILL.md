@@ -1,6 +1,6 @@
 ---
 name: legacy-characterization
-description: Generate characterization tests that pin down what existing untested code actually does, before anything changes it. Use this before any modification to a module with thin test coverage, before any refactor or framework upgrade, whenever someone says a piece of code is scary, risky, legacy, or nobody understands it, and as the first workstream when onboarding an old repository into the AI-SDLC. Do this before features, not after.
+description: Write characterization tests that pin down what existing untested code actually does before anything changes it, choosing modules by churn, incident history and the team's fear list. Use before modifying a thinly tested module, before a refactor or framework upgrade, when someone calls code scary, risky, legacy or not understood, and when onboarding an old repository.
 ---
 
 # Legacy characterization
@@ -18,8 +18,17 @@ building a tripwire, not a specification.
 
 ## Procedure
 
-1. **Pick the module by fear, not by coverage percentage.** Ask the team which files
-   they avoid touching. That list is the backlog.
+1. **Rank candidates by fear, churn and incidents — not by coverage percentage.**
+   Combine three signals:
+   - **Fear list** — ask the team which files they avoid touching.
+   - **Churn** — files changed most often in the last year:
+     `git log --since=12.months --format= --name-only | sort | uniq -c | sort -rn | head -30`
+   - **Incident signal** — files most often touched by fixes:
+     `git log --since=12.months -i --grep=fix --grep=bug --grep=hotfix --format= --name-only | sort | uniq -c | sort -rn | head -30`,
+     plus files named in incident or postmortem records if the tracker is reachable.
+
+   Rank files that appear on two or more lists first. Present the ranked list with the
+   counts behind each entry and let the team confirm the order. That list is the backlog.
 2. **Map it first** with the `codebase-cartographer` agent: entry points, callers,
    side effects, external dependencies, data it reads and writes.
 3. **Enumerate observable behaviour.** For each entry point: inputs, outputs, thrown
@@ -47,6 +56,7 @@ the deviation runbook, and are exactly what this catches.
 
 - Do not refactor while characterizing. Two changes at once and you cannot tell which
   broke it.
-- Do not delete a characterization test to make a change pass. The
-  `block-test-weakening` hook denies this during fix tasks; do not route around it.
+- Do not delete a characterization test to make a change pass. Once a `fix` change
+  passes its `failing-test` stage the engine denies edits to pre-existing tests; do not
+  route around it.
 - Coverage percentage is not the goal. Covering the paths people are afraid of is.

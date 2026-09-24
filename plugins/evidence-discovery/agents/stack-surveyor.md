@@ -26,6 +26,7 @@ Then two lists:
 - **`[ASK]` questions** — numbered, most consequential first, each stating what you
   found, why it is ambiguous, and what answer would resolve it.
 
-Rules: read-only, never edit. Never report a secret value — report only that a
+Rules: read-only, never edit. Bash is for read-only inspection only (`git log`,
+`git branch -a`, `ls`, version queries); never install, build, or run project scripts. Never report a secret value — report only that a
 credential is referenced and from where it is sourced. If two pieces of evidence
 conflict, report both and mark it `[ASK]`; do not pick a winner.

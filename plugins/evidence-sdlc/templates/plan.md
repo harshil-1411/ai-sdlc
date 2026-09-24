@@ -1,15 +1,20 @@
 # Plan: <short title>
-Tracker: <KEY>   From: spec.md   Approved by: <engineer>   Date: <yyyy-mm-dd>
+Tracker: <KEY>   From: spec.md   Date: <yyyy-mm-dd>
+Risk tier: <1|2|3> — <one-line reason; name any policy tier floor that applies>
+
+Approval is not written in this file. A human records it with `/evidence-sdlc:approve <KEY> <plan-sha>`
+(or `evidence approve <KEY>` in their own terminal, or an approving review in GitHub
+mode); it binds to this file's hash, so any edit after approval voids it.
 
 Any claim below not confirmed from a file, a command, or a named person is marked
 inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
 
 ## Files claimed
-<Every path this plan is going to touch, so a concurrent session in another
-worktree can see it is already spoken for before it starts. Same list as "Files
-that change" below, checked here BEFORE work starts. If another plan/<key>.md
-already claims one of these paths, stop and sequence the two changes instead of
-proceeding — see codebase-grounded-planning's "Concurrent sessions" section.>
+<One glob per line, repo-relative (e.g. `src/billing/**`, `tests/billing/test_invoice.py`).
+These are enforced: once approved, an edit outside these globs is denied. Claim what
+the plan touches — tests and docs included — and no more. `evidence change start`
+reports overlap with other active changes' claims; if it does, stop and sequence the
+two changes — see codebase-grounded-planning's "Concurrent sessions" section.>
 
 ## Files that change
 <Real, verified paths only. New files: the directory must already exist.>

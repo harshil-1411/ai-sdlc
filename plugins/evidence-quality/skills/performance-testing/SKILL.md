@@ -1,6 +1,6 @@
 ---
 name: performance-testing
-description: Design, run and interpret performance tests — load, stress, soak, spike, and capacity/scalability — against numeric targets agreed in the spec, with a workload model, a recorded baseline and pass/fail criteria fixed before the run. Use this whenever someone asks for load testing, stress testing, soak or endurance testing, spike testing, capacity planning, "can this handle N users", "how many requests per second", latency or throughput requirements, a performance regression, or a slow endpoint that needs proving fixed. Also use when a spec contains a latency, throughput or concurrency requirement. Read the tool (k6, JMeter, Gatling, Locust or whatever the repository uses) from the repository profile — never assume one.
+description: Design, run and interpret load, stress, soak, spike and capacity tests against numeric targets from the spec, with a workload model, a baseline and pass/fail criteria fixed before the run. Use on load testing, "can this handle N users", requests per second, latency or throughput requirements, a performance regression, or a slow endpoint to prove fixed. Read the tool (k6, JMeter, Gatling, Locust or other) from the profile — never assume one.
 ---
 
 # Performance testing

@@ -2,8 +2,9 @@
 
 > Scope: FDA-regulated electronic records and signatures used under a predicate rule.
 > Not covered: the predicate rule itself, or system validation as a whole — Part 11 sits
-> on top of those. Source: drafted from the public regulation text. Owner: <name>.
-> Last reviewed: <date>. **Not an authoritative interpretation.**
+> on top of those. Source: drafted from the public regulation text.
+> Owner: UNASSIGNED — the adopting organisation must assign a named owner before relying on this set (evidence doctor warns while unassigned).
+> Last reviewed: never by an adopter; drafted 2026-09-24. **Not an authoritative interpretation.**
 
 ## Controls
 

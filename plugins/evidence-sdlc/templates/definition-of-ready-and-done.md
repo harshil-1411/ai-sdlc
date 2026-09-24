@@ -4,22 +4,30 @@ Apply the `risk-tiering` skill first. Ceremony scales with risk; it does not app
 uniformly. A nine-gate DoR on every change recreates the process weight this framework
 exists to remove.
 
+The tier is recorded once, in `.evidence/changes/<KEY>/state.json` (via
+`evidence change start <KEY> --tier <n>`) and as a `Risk tier: <n>` line in spec.md and
+plan.md. `evidence change status <KEY>` shows which rows below are still missing.
+
+Where a row says "per compliance.md", the frameworks, controls and sign-off roles come
+from `.evidence/context/compliance.md`. If it names none, the row is N/A with that
+reason; if it is missing, the row is an `[ASK]`, not a skip.
+
 ## Ready
 
 | Item | T1 | T2 | T3 |
 | --- | --- | --- | --- |
 | Problem and affected users stated | ● | ● | ● |
 | Acceptance stated in verifiable terms | ● | ● | ● |
-| Approved `plan.md` on disk | ● | ● | ● |
-| `intent.md` committed | ○ | ● | ● |
+| `plan.md` on disk, approved by a human (`/evidence-sdlc:approve`) | ● | ● | ● |
+| `intent.md` committed | ○ | ○ | ● |
 | `spec.md` with requirement IDs | ○ | ● | ● |
 | API / data model impact understood | ○ | ● | ● |
 | Test scenarios identified | ○ | ● | ● |
-| Part 11 control impact assessed | ○ | ○ | ● |
+| Regulatory control impact assessed (frameworks per compliance.md) | ○ | ○ | ● |
 | Validation package impact assessed | ○ | ○ | ● |
 | Security impact assessed | ○ | ○ | ● |
 | Rollback plan named | ○ | ○ | ● |
-| QA/RA aware | ○ | ○ | ● |
+| Sign-off roles per compliance.md aware | ○ | ○ | ● |
 
 ## Done
 
@@ -28,14 +36,16 @@ exists to remove.
 | Merged via PR, code owner approved | ● | ● | ● |
 | Build, tests, lint green with output attached | ● | ● | ● |
 | Diff matches `plan.md` (or plan updated in the same commit) | ● | ● | ● |
-| Security review pass clean | ○ | ● | ● |
+| `security-reviewer` run recorded, pass clean | ○ | ● | ● |
+| `verifier` run recorded | ● | ● | ● |
+| `code-reviewer` run recorded | ○ | ○ | ● |
 | Docs and release note updated | ○ | ● | ● |
 | Compliance review pass clean | ○ | ○ | ● |
 | Traceability rows updated | ○ | ○ | ● |
 | Revalidation call recorded | ○ | ○ | ● |
-| ADR stored (if a design decision was made) | ○ | ○ | ● |
+| ADR in `.evidence/decisions/` for each lasting design decision, linked from spec.md | ○ | ○ | ● |
 | Eval case added under `evals/` (if a new skill was introduced) | ○ | ○ | ○ |
-| QA/RA sign-off attached | ○ | ○ | ● |
+| Sign-offs required by compliance.md attached | ○ | ○ | ● |
 
 ● required   ○ not required
 

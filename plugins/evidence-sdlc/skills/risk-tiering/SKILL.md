@@ -1,18 +1,12 @@
 ---
 name: risk-tiering
-description: Classify a change into a risk tier and apply the matching Definition of Ready, review depth, and Definition of Done, so process weight lands where the risk is. Use this at the start of every intent, spec and plan, whenever someone asks how much process a change needs, whenever a Definition of Ready or Done is being checked, and whenever review is being assigned. Also trigger on direct design requests with no process vocabulary at all — "design the schema", "design the data model", "design the API", "how should we structure...", "what should the table look like", "model this", "what fields do we need", "sketch the design" — a tier must be stated before that design work proceeds. Apply it before proposing any gate, so routine work is not buried in ceremony.
+description: Classify a change into risk tier 1, 2 or 3, record it, and apply the matching Definition of Ready, review depth and Definition of Done so ceremony lands where the risk is. Use at the start of every intent, spec and plan, when someone asks "what tier is this", "how much process does this need", "what review does this need", or checks a Definition of Ready or Done, and before proposing any gate.
 ---
 
 # Risk tiering
 
-Nine mandatory gates on every change is the process weight we are trying to remove.
-The point of AI-native SDLC is not more gates — it is gates that land where the risk is.
-This is not a hypothetical failure mode: Birgitta Böckeler's widely-read critique of
-spec-driven development names verbose-markdown fatigue from ceremony applied to every
-change, regardless of its actual risk, as a real cause of adoption failure — the same
-mechanism that undermined Model-Driven Development a generation earlier. Risk tiering
-is this framework's deliberate answer to that specific failure, not an incidental
-feature of it.
+Process weight lands where the risk is. Routine work is not buried in ceremony;
+regulated work does not skip it.
 
 ## Tiers
 
@@ -39,49 +33,75 @@ one notch — Tier 1 becomes Tier 2, Tier 2 becomes Tier 3. As with the override
 below, this may never weaken a tier's ceiling in the other direction: debt can only
 push a change up, never down, and never past Tier 3.
 
+**Policy tier floors are a minimum, not a suggestion.** The repository policy maps
+paths to a minimum tier (for example `**/auth/**` and `**/migrations/**`). Check the
+paths the change will touch against those floors before choosing. An edit to a path
+whose floor is above the change's recorded tier is denied.
+
 **When in doubt, tier up.** A Tier 2 change that was really Tier 3 is the failure mode
-that matters. Say which tier you chose and why, in one line, in the spec.
+that matters.
+
+## Record the tier
+
+State the tier as `Risk tier: <n> — <reason>` (n is 1, 2 or 3). This one notation is
+used everywhere: the first line of your response when you classify, and a header line in
+`spec.md` and `plan.md`. Then record it in the change's state:
+
+`evidence change start <KEY> --tier <n> --kind feature|fix|chore`
+
+`.evidence/changes/<KEY>/state.json` is the record the gates read; the `Risk tier:`
+lines must agree with it. If the tier later needs raising — new paths hit a policy floor,
+or the work turned out riskier — say so and ask a human to run
+`evidence change set-tier <KEY> <n>`. Never lower a recorded tier yourself, and never
+work around a floor denial by moving the edit to an unfloored path.
 
 **An override may narrow scope or supply a missing credential; it may never weaken a
-tier's ceiling.** This framework's gate scripts already carry several environment-
-variable overrides — `CHANGE_TICKET`, `RELEASE_APPROVAL`, `FIX_TASK`,
-`EVIDENCE_SOURCE_GLOB` among them. Each is legitimate because it supplies the specific
-thing a gate is checking for (an accountability record, an authorisation, an explicit
-fix-task declaration) or narrows which paths are in scope — none of them, and no future
-override, may be used to make a change execute at a lower tier's ceremony than the risk
-it actually carries requires. `CHANGE_TICKET` lets a change-controlled edit proceed
-because the accountability record now exists; it does not exempt the change from
-needing one. Hold every new gate or override to this rule: it can make a requirement
-satisfiable, never optional.
+tier's ceiling.** The gates accept a few human-supplied values — `CHANGE_TICKET`,
+`RELEASE_APPROVAL`, `EVIDENCE_ACTIVE_CHANGE`, `EVIDENCE_SOURCE_GLOB` among them. Each is
+legitimate because it supplies the specific thing a gate checks for (an accountability
+record, an authorisation, which change is active) or narrows which paths are in scope.
+None of them may make a change run at a lower tier's ceremony than its risk requires.
+`CHANGE_TICKET` lets a change-controlled edit proceed because the accountability record
+now exists; it does not exempt the change from needing one. The agent never supplies
+these values itself. Hold every new gate or override to this rule: it can make a
+requirement satisfiable, never optional.
 
 ## What each tier requires
 
+The artifact rows match what `evidence change status` checks: Tier 1 needs a plan,
+Tier 2 a spec and a plan, Tier 3 an intent, a spec and a plan.
+
 | | Tier 1 | Tier 2 | Tier 3 |
 | --- | --- | --- | --- |
-| `intent.md` | Optional (ticket suffices) | Required | Required |
+| `intent.md` | Optional (ticket suffices) | Optional (ticket suffices) | Required |
 | `spec.md` | Not required | Required | Required + areas of concern routed to named owners |
-| `plan.md` | Required (all tiers — the hook enforces it) | Required | Required, plus rejected alternatives |
+| `plan.md` | Required (all tiers — the engine enforces it) | Required | Required, plus rejected alternatives |
+| Plan approval | Human, via `/evidence-sdlc:approve` | Human, via `/evidence-sdlc:approve` | Human, via `/evidence-sdlc:approve` |
 | regulatory control table | No | Only if regulated-adjacent | Full table, every control given a verdict |
 | Validation impact assessment | No | Statement of "no impact" with reason | Full, with revalidation call |
 | Security review pass | Automated only | Automated + `security-reviewer` agent | Both + named Security owner sign-off |
-| Compliance review pass | No | No | `compliance-reviewer` agent + QA/RA sign-off |
+| Compliance review pass | No | No | `compliance-reviewer` agent + sign-off by the roles `compliance.md` names |
+| Review agent runs recorded (before `verified`; push checks them at Tier 2+) | `verifier` | `verifier`, `security-reviewer` | `verifier`, `security-reviewer`, `code-reviewer` |
 | Human review depth | Code owner reviews the summary and spot-checks | Code owner reads the full diff | Code owner reads the full diff **and** a second reviewer independently examines the regulated portion |
-| Decision council | No | Only for one-way doors | For any architecture or data-model choice |
-| Auto-accept mode | Permitted | Permitted with tests covering the path | Not permitted — per-change review |
+| ADR in `.evidence/decisions/` | No | For one-way doors | For any architecture or data-model choice |
+| Auto-accept mode | Permitted | Permitted with tests covering the path | Not permitted — the engine denies edits under auto-accept modes |
 
 ## Definition of Ready (tiered)
 
 Tier 1: problem stated, acceptance stated, plan on disk.
 Tier 2: the above, plus API/data impact understood and test scenarios identified.
-Tier 3: the above, plus Part 11 impact assessed, validation impact assessed, security
-impact assessed, rollback plan named, and QA/RA aware.
+Tier 3: the above, plus regulatory control impact assessed for each framework in
+`.evidence/context/compliance.md`, validation impact assessed, security impact assessed,
+rollback plan named, and the sign-off roles compliance.md names made aware. If
+compliance.md is missing, that is an `[ASK]`, not an assumption.
 
 ## Definition of Done (tiered)
 
 Tier 1: merged, tests pass, lint clean.
 Tier 2: the above, plus security pass clean, docs updated, release note entry.
 Tier 3: the above, plus compliance pass clean, traceability rows updated, validation
-impact recorded, ADR stored if a design decision was made, QA/RA sign-off attached.
+impact recorded, an ADR in `.evidence/decisions/` for each lasting design decision, and
+the sign-offs compliance.md requires attached.
 
 ## State the tier before any design work
 
@@ -97,7 +117,7 @@ before acknowledging the stop, before anything else — using what you already
 know from the request (the entity involved, whether it looks regulated, who is
 affected). Write it in exactly this form, as its own line, nothing above it:
 
-`Tier: <1|2|3> — <one-line reason>.`
+`Risk tier: <1|2|3> — <one-line reason>.`
 
 Only after that line do you explain a stop, ask clarifying questions, or write
 anything else. Do not fold the tier into a bullet list, do not bury it under a
@@ -114,3 +134,7 @@ Human approval on a change nobody read is worse than no AI at all — it convert
 control into a fiction, and that is what an inspector will probe. If you are asked to
 approve a Tier 3 change and have not read the regulated portion of the diff, say so
 rather than approving. That refusal is the control working.
+
+Plan approval is never the agent's to give. Ask the human to run `/evidence-sdlc:approve <KEY> <plan-sha>`
+(or `evidence approve <KEY>` in their own terminal); never write an approval file or an
+"Approved by" line yourself.

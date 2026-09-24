@@ -1,5 +1,6 @@
 # Spec: <short title>
-Tracker: <KEY>   From: intent/<...>/intent.md   Risk tier: 1 | 2 | 3
+Tracker: <KEY>   From: intent/<...>/intent.md
+Risk tier: <1|2|3> — <one-line reason; name any policy tier floor that applies>
 
 Any claim below not confirmed from a file, a command, or a named person is marked
 inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
@@ -83,7 +84,16 @@ justification for anything new>
 <Every conflict between standards, every unsatisfiable constraint, each with the
 named policy owner who must decide. Do not leave this empty by default.>
 
+## Architecture decisions
+<Every decision with lasting consequence has an ADR at `.evidence/decisions/NNNN-<slug>.md`
+(template: `templates/adr.md`, drafted by the `architect` agent). List each ADR this spec
+creates, supersedes or relies on, and any conflict with an existing one. "None — no
+decision here outlives this change" is a valid answer.>
+
+| ADR | Created / Supersedes / Relies on | Status |
+| --- | --- | --- |
+
 ## Rejected alternatives
-<What was considered and why it lost. Link the ADR if a council was convened. For
-a genuinely close decision, name the review trigger — the condition under which
-this should be revisited.>
+<What was considered and why it lost. Link the ADR that records it. For a genuinely
+close decision, name the review trigger — the condition under which this should be
+revisited.>

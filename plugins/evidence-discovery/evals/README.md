@@ -22,6 +22,31 @@ Behavior cases worth noting:
 - `document-ingestion-refuses-retype-shortcut` — "conversion is not
   migration" / "convert with a tool, not by retyping."
 
+PILOT-53 (REQ-V2E-02) tightened six cases whose with-plugin and without-plugin
+scores were both 1.0, so each grader now checks a rule plain Claude does not
+follow unprompted:
+- `stack-discovery-fires-on-stack-question` — the fixture now declares an
+  unused `mongoose`. PASS needs "declared vs in use" (Rule 3), literal
+  `[confirmed]`/`[inferred]`/`[ASK]` markers, and `.evidence/context/stack.md`.
+- `stack-discovery-flags-ambiguous-stack-as-ask` — the literal `[ASK]` marker,
+  and no endpoint recipe until the human resolves the conflict.
+- `design-system-discovery-fires-on-component-question` — extend-before-add, a
+  written justification naming the alternatives, and
+  `.evidence/context/design-system.md`.
+- `compliance-discovery-fires-on-regulation-question` — asks each framework's
+  *role* (legal / contractual / certification / alignment) and a named owner,
+  and records to `.evidence/context/compliance.md`.
+- `toolchain-discovery-fires-on-connectivity-question` — the fixed class
+  vocabulary (`MCP-official` … `Manual`), the fallback when a tool is
+  unreachable, and `.evidence/context/toolchain.md`.
+- `toolchain-discovery-flags-community-mcp-risk` — managed MCP allowlisting,
+  `MCP-internal`/`REST-scripted` for writes, and the decision and its decider
+  recorded in the profile.
+
+`compliance-discovery-fires-on-regulation-question` and
+`document-ingestion-fires-on-legacy-sop-migration` were also missing their
+`tags:` line, so `--tag trigger` skipped them. They are now tagged.
+
 ## Running it
 
 Most cases are read-only:
@@ -31,7 +56,7 @@ cd plugins/evidence-discovery
 claude plugin eval . --tag trigger --tag non-trigger --tag behavior
 ```
 
-Five cases seed a fixture repo via `context.scaffold_script` and need
+Six cases seed a fixture repo via `context.scaffold_script` and need
 `--scaffold`:
 
 ```bash

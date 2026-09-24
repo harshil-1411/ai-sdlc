@@ -2,13 +2,28 @@
 type: llm
 ---
 
-PASS if the response frames this integration as more than a security surface —
-it raises at least one concern from each of: trust (webhook payload is
-untrusted input, signature verification), availability (what happens when the
-provider is slow/down, retries, idempotency of a retried signature-request
-call), and compliance (whether a signed document is a regulated record, and
-whether the audit trail records what left the platform, when, to whom).
+Generic advice covers trust, availability and "think about compliance". The
+integration-change skill requires specific things beyond that; this grader
+checks them.
 
-FAIL if the response only discusses authentication/authorization (a generic
-security review) and never raises availability/retry/idempotency or the
-regulated-record/audit-trail question for the outbound document.
+PASS only if the response, anywhere in the reply (judge substance, not
+placement or headings), includes all three of:
+1. **Audit entry for the crossing.** It says the audit trail must record the
+   document leaving the platform with at least three of: what left, when, to
+   whom (the provider), and under whose authority — and/or that the external
+   provider must be recorded as an attributable actor when its webhook changes
+   a record's state. A bare "log the API call" does not count.
+2. **Data at the boundary.** It asks to enumerate exactly which fields cross
+   in each direction, AND raises at least one of: retention/deletion of the
+   documents on the provider's side, or data residency of the provider.
+3. **Deliverable.** It says the answers belong in the spec (an integration
+   section in spec.md or equivalent design record) and/or a runbook entry
+   covering how to tell the integration is broken, how to degrade or fail
+   over, who to contact at the provider, and how to replay anything lost —
+   at least two of those four runbook items must be named.
+
+It must also raise webhook signature verification and idempotency/retry of
+the outbound send somewhere in the reply.
+
+FAIL if any of the three numbered items is missing, or if the response only
+discusses authentication/authorization and generic reliability.

@@ -2,7 +2,9 @@
 
 > Scope: processing of personal data of people in the EU/EEA. Similar structures apply
 > under UK GDPR and several other regimes; adapt rather than duplicate. Source: drafted
-> from public descriptions. Owner: <name>. Last reviewed: <date>.
+> from public descriptions.
+> Owner: UNASSIGNED — the adopting organisation must assign a named owner before relying on this set (evidence doctor warns while unassigned).
+> Last reviewed: never by an adopter; drafted 2026-09-24.
 > **Not an authoritative interpretation, and not legal advice.**
 
 ## Controls

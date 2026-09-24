@@ -1,6 +1,6 @@
 ---
 name: evidence-package
-description: Derive the compliance evidence deliverables a project owes — traceability matrices, change-impact assessments, validation or qualification records, audit evidence — from the committed artifact chain instead of assembling them by hand at release. Use this whenever a change is specced or merged, whenever a release is prepared, whenever anyone mentions traceability, revalidation, an audit, a certification, or evidence for a customer, and whenever a control is claimed without a pointer behind it.
+description: Derive the compliance evidence a project owes — traceability matrix, change-impact assessment, validation or qualification records, audit evidence packs — from the committed artifact chain instead of assembling it by hand. Use when a change is merged, when a validation or evidence package is assembled for a release or audit, when someone mentions traceability, revalidation or evidence for a customer, and whenever a control is claimed without a pointer behind it.
 ---
 
 # Evidence package

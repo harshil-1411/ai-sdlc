@@ -1,6 +1,6 @@
 ---
 name: spec-and-design
-description: Produce a reviewable requirements-and-design spec.md from an accepted intent.md, with the organisation security, compliance, UX and API standards applied while the spec is written and every conflict flagged. Use this whenever an intent has been accepted, whenever someone asks for a design, a solution approach, an API design, or a technical approach document, and before any implementation planning begins. Also trigger on direct design requests that use no process vocabulary at all — "design the schema", "design the data model", "design the API", "how should we structure...", "what should the table look like", "model this", "what fields do we need", "sketch the design" — those are still design work and still need a spec, not just an answer. Do not let work jump from intent straight to code.
+description: Produce a reviewable requirements-and-design spec.md, with ADRs for lasting decisions, from an accepted intent, applying security, compliance, UX and API standards and flagging every conflict. Use when an intent is accepted, when someone asks for a design, solution approach or technical approach, and on direct design requests — "design the schema", "design the data model", "design the API", "what should the table look like", "what fields do we need". Never jump from intent to code.
 ---
 
 # Requirements and design (Stage 2: Design)
@@ -30,6 +30,10 @@ one session. The product owner reviews the output; they do not write it.
   exists before proposing anything new. Duplicated core-domain logic is a recurring and
   expensive mistake in long-lived products.
 - The tracker issue key. Apply the `traceability-ids` skill; the spec header carries it.
+- The risk tier. Apply `risk-tiering`; the spec header carries `Risk tier: <n> — <reason>`
+  and it must match `.evidence/changes/<KEY>/state.json`. If no change is started yet
+  (a Tier 2 change starts here), run `evidence change start <KEY> --tier <n> --kind <kind>`.
+- The existing architecture decisions in `.evidence/decisions/`.
 
 ## What the spec must contain
 
@@ -52,6 +56,16 @@ Use `${CLAUDE_PLUGIN_ROOT}/templates/spec.md`. Non-negotiable sections:
   pull in opposite directions, or where you could not satisfy a standard, goes
   here with the policy owner named. This section being empty is suspicious — say
   so if it is.
+
+## Architecture decisions (ADRs)
+
+Any decision with lasting consequence — costly to reverse, constraining future work, or
+changing an earlier decision — gets an ADR at `.evidence/decisions/NNNN-<slug>.md`.
+Dispatch the `architect` agent with the proposed design. It checks the design against
+existing ADRs, reports conflicts, and returns a draft from
+`${CLAUDE_PLUGIN_ROOT}/templates/adr.md`. Write that draft to the path it names, list it
+in the spec's "Architecture decisions" table, and route every reported conflict to
+"Areas of concern". An ADR is written `Proposed`; only its named deciders accept it.
 
 ## Integrations
 
@@ -99,10 +113,10 @@ concern** with a named owner, the same as any other unresolved conflict.
 ## Rules
 
 - Where a standard exists, cite it rather than restating your own version.
-- If the change is high-risk (touches signing, audit trail, authentication,
-  tenant isolation, key material, or a validated workflow), say so in a
-  `Risk classification:` line at the top. High-risk specs need a named technical
-  lead as well as the product owner before they progress.
+- The tier line is the spec's only risk notation — `Risk tier: <n> — <reason>` in the
+  header, per `risk-tiering`. Do not add a second classification line. For Tier 3,
+  every area of concern is routed to a named owner, and the review depth in
+  `risk-tiering`'s table applies.
 - If the decision between two designs is genuinely close and expensive to reverse,
   stop and say so rather than picking silently. `decision-council` (optional, not
   installed by default — see `examples/skills/decision-council/`) is the
@@ -125,7 +139,8 @@ concern** with a named owner, the same as any other unresolved conflict.
     vendor pricing or deprecation event, a compliance-scope change. A decision
     with no review trigger reads as permanent even when it was only ever the
     right call under today's constraints.
-  - **Write the comparison into `spec.md`'s "Rejected alternatives" section** —
+  - **Write the comparison into `spec.md`'s "Rejected alternatives" section and an
+    ADR** (via the `architect` agent) —
     the rejected approach and the reasoning that decided against it, not a
     one-line "considered and lost," and the review trigger alongside it. This is
     the record a later reviewer or an inspector reads; the reasoning has to
@@ -137,5 +152,7 @@ concern** with a named owner, the same as any other unresolved conflict.
 
 ## Done means
 
-`spec.md` is committed next to `intent.md`, every requirement has an ID, and the
-areas of concern are routed to named owners.
+`spec.md` is committed next to `intent.md`, every requirement has an ID, every lasting
+decision has an ADR, and the areas of concern are routed to named owners. Then run
+`evidence change advance <KEY> plan`; `evidence change status <KEY>` names anything the
+tier still requires.

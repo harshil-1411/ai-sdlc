@@ -15,6 +15,22 @@ invent a target, `security-testing` requiring owner and expiry on a suppression,
 tool on the team's behalf, and `accessibility-testing` refusing a conformance
 claim from an automated scan alone.
 
+PILOT-53 rewrote six cases whose with-plugin and without-plugin scores were
+equal, so each now scores a rule plain Claude does not state unprompted:
+`continuous-testing-blocks-vs-informs` (rejects a findings-count gate and an
+aggregate coverage gate, and keeps contract tests blocking),
+`continuous-testing-fires-on-pipeline-design` (per-stage evidence reachable
+from the tracker key, plus a commit-stage budget, impact scoping, rehearsed
+rollback or signed test summary report), `test-strategy-fires-on-spec-review`
+(the plan-table row with a test case ID and an evidence-artifact pointer, and
+audit-event fields/order), `test-strategy-tier3-manual-attestation` (manual
+row needs a test case ID, plus signature-display and record-binding checks),
+`testrail-authoring-fires-with-recorded-write-access` (uses the profile's
+`custom_tracker_key` / `custom_automation_status` fields and carries Tier 3
+attestation fields), and `traceability-ids-cross-repo-single-parent-key`
+(cross-repo integration test owned by one repo declared on the parent, and
+the participating-repos / missing-child-chain rule).
+
 ## Running it
 
 Read-only cases need no extra grants:
@@ -24,8 +40,11 @@ cd plugins/evidence-quality
 claude plugin eval . --tag trigger --tag non-trigger --tag behavior
 ```
 
-One case seeds a fixture toolchain profile (TestRail fields + a recorded
-write decision) via `context.scaffold_script`, so it needs `--scaffold`:
+Two cases seed fixtures via `context.scaffold_script`, so they need
+`--scaffold`: `testrail-authoring-fires-with-recorded-write-access` (a toolchain
+profile with TestRail fields and a recorded write decision) and
+`test-automation-tags-for-traceability` (a test file to extend, which also needs
+`Write`):
 
 ```bash
 claude plugin eval . --tag scaffold --scaffold
@@ -34,7 +53,7 @@ claude plugin eval . --tag scaffold --scaffold
 To run everything in one pass:
 
 ```bash
-claude plugin eval . --scaffold
+claude plugin eval . --scaffold --allow-tools Write
 ```
 
 To iterate on one case cheaply:

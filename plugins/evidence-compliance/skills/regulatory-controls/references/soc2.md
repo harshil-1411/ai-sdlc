@@ -2,8 +2,9 @@
 
 > Scope: the criteria an auditor tests for a SOC 2 report. Security is always in scope;
 > Availability, Confidentiality, Processing Integrity and Privacy are opt-in. Record which
-> you carry. Source: drafted from public descriptions of the criteria. Owner: <name>.
-> Last reviewed: <date>. **Not an authoritative interpretation.**
+> you carry. Source: drafted from public descriptions of the criteria.
+> Owner: UNASSIGNED — the adopting organisation must assign a named owner before relying on this set (evidence doctor warns while unassigned).
+> Last reviewed: never by an adopter; drafted 2026-09-24. **Not an authoritative interpretation.**
 
 ## Controls relevant to a code change
 

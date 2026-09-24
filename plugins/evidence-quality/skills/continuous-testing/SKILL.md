@@ -1,6 +1,6 @@
 ---
 name: continuous-testing
-description: Design and maintain the continuous integration and continuous testing pipeline — which checks run at which stage, what blocks, what is evidence, and how results reach the tracker and test management system. Use this when designing or changing a pipeline, when someone asks what runs when, when a stage is slow or noisy, and when release evidence needs to be produced. Read the CI system and environments from the repository profile.
+description: Design and maintain the CI and continuous testing pipeline — which checks run at which stage, what blocks, what is evidence, and how results reach the tracker and test management system. Use when designing or changing a pipeline, when someone asks what runs when, or when a stage is slow or noisy. Read the CI system and environments from the repository profile.
 ---
 
 # Continuous integration and continuous testing

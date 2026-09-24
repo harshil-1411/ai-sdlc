@@ -1,6 +1,6 @@
 ---
 name: traceability-ids
-description: Enforce the single traceability identifier that links tracker issue, requirement, test case, branch, commit, pull request and evidence into one auditable chain. Use this whenever a branch is created, a commit is written, a PR is opened, a test case is authored, or a traceability matrix is produced — and whenever anyone asks how a change is traced. Never produce any of these artifacts without the identifier.
+description: Enforce the single traceability identifier linking tracker issue, requirement, test case, branch, commit, pull request and evidence into one auditable chain. Use whenever a branch is created, a commit is written, a PR is opened, a test case is authored, or a traceability matrix is produced — and whenever anyone asks how a change is traced. Never produce any of these without the identifier.
 ---
 
 # The traceability chain

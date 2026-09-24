@@ -1,6 +1,6 @@
 ---
 name: e2e-ui-testing
-description: Design, write and stabilise end-to-end browser UI tests — critical-journey selection, locators, waiting, test data and auth-state isolation, failure artifacts as evidence, parallelism and sharding, cross-browser and device coverage, visual regression, and localisation checks — using whatever browser automation tool the repository actually uses (Playwright, Selenium/WebDriver, Cypress or another). Use this whenever someone asks to write, fix, speed up or organise E2E or UI tests, set up Playwright, Selenium or Cypress, add cross-browser or mobile-viewport coverage, add screenshot or visual regression tests, or test the UI in another language or locale. Read the tool from the repository profile — never assume one.
+description: Design, write and stabilise end-to-end browser UI tests — journey selection, locators, waits, test data and auth-state isolation, failure artifacts, sharding, cross-browser and viewport coverage, visual regression, locale checks — with the tool the repository uses (Playwright, Selenium, Cypress or other). Use when asked to write, fix or speed up E2E or UI tests, or add cross-browser or visual regression tests. Read the tool from the profile.
 ---
 
 # End-to-end UI testing

@@ -7,7 +7,8 @@ cat > package.json <<'EOF'
   "version": "1.0.0",
   "dependencies": {
     "express": "^4.19.0",
-    "pg": "^8.11.0"
+    "pg": "^8.11.0",
+    "mongoose": "^8.2.0"
   },
   "devDependencies": {
     "vitest": "^1.4.0"

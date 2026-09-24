@@ -1,6 +1,6 @@
 ---
 name: design-system-discovery
-description: Establish what design system, component library, and UI conventions a repository actually uses, and record them so UI work extends the system instead of inventing parallel components. Use this during repository onboarding, before any UI or frontend planning, whenever a new component is proposed, and whenever someone asks what the design conventions are. Trigger on plain questions too: "what component library do we use", "what UI kit", "what CSS framework", "do we have a design system" — even when a README or style guide appears to already answer it. Do not assume a component library — find it.
+description: Establish which design system, component library and UI conventions a repository actually uses, and record them so UI work extends the system instead of inventing parallel components. Use at onboarding, before UI or frontend planning, when a new component is proposed, and on questions like "what component library do we use", "what UI kit", "what CSS framework", "do we have a design system" — even when a style guide seems to answer it.
 ---
 
 # Design system discovery

@@ -1,6 +1,6 @@
 ---
 name: regulatory-controls
-description: Apply the regulatory and standards control set that actually applies to this project to a design, a code change, or a review, and report a verdict with evidence for every control. Use this whenever work touches a regulated record, audit trail, authentication, access control, retention, consent, personal data, payment data, health data, or record export — and whenever anyone mentions compliance, an audit, an inspection, a certification, or a named framework. Read the applicable frameworks from the compliance profile; never assume which one applies.
+description: Apply the control sets that actually apply to this project (read from the compliance profile, never assumed) to a design, code change or review, with a verdict and evidence for every control. Use when work touches a regulated record, audit trail, access control, retention, consent, personal, payment or health data, or record export, and whenever someone names a framework, an inspection or a certification.
 ---
 
 # Regulatory controls
@@ -39,7 +39,27 @@ frameworks are a stricter restatement of them:
 
 Load the reference file(s) named in the profile and work through every control. Common
 sets ship in `references/`; see `references/README.md` for adding your own, which is
-expected rather than exceptional.
+expected rather than exceptional. Shipped sets:
+
+| File | Framework |
+| --- | --- |
+| `21-cfr-part-11.md` | FDA 21 CFR Part 11 — electronic records and signatures |
+| `eu-gmp-annex-11.md` | EU GMP Annex 11 — computerised systems |
+| `iec-62304.md` | IEC 62304 — medical device software lifecycle |
+| `iso-13485.md` | ISO 13485 — medical device quality management |
+| `soc2.md` | SOC 2 — trust services criteria |
+| `hipaa.md` | HIPAA Security Rule — ePHI |
+| `pci-dss.md` | PCI DSS — payment card data |
+| `gdpr.md` | GDPR — EU personal data protection |
+| `iso-27001.md` | ISO/IEC 27001:2022 — Annex A development and change controls |
+| `nist-ssdf.md` | NIST SP 800-218 v1.1 — Secure Software Development Framework |
+
+**Check the set's owner line before using it.** If the file contains `Owner: UNASSIGNED`,
+tell the human explicitly — in the report, not buried in it — that the control set has no
+named owner and has never been reviewed by their organisation, so the verdicts rest on an
+unreviewed interpretation. Do not stop the review over it, and do not fill in an owner
+yourself; naming one is a human decision. (`evidence doctor` reports the same condition
+as a WARN.)
 
 ## Step 4 — report
 
@@ -53,6 +73,8 @@ Rules for this table:
 - **"Not applicable" is a legitimate verdict**; silence is not. Every control gets a row.
 - **"Looks correct" is not verification.** Verified means you found the check and it ran.
 - Any **Not met** is a blocking finding. State plainly what would clear it.
+- If the control set's owner is `UNASSIGNED`, say so at the top of that framework's
+  table.
 
 ## Boundaries
 

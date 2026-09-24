@@ -3,16 +3,26 @@ type: llm
 focus: { source: file, path: '.evidence/test-cases/FIX-221-tenant-isolation.md' }
 ---
 
-PASS if the authored case(s): have a title describing the behaviour under
-test (e.g. "a user cannot open a record belonging to another tenant") rather
-than just a feature name, have explicit preconditions and one action per
-step, have a specific/observable expected result (not "no error"), carry the
-supplied tracker key `FIX-221` in the traceability field/mention and
-reference REQ-AUTH-09 in the body, and set priority from the Tier 3 risk tier
-rather than an arbitrary guess.
+The fixture's `.evidence/context/toolchain.md` records the TestRail template
+("Test Case (Steps)") and the required custom fields `custom_tracker_key` and
+`custom_automation_status` (Automated / Manual / To Automate). The
+testrail-authoring skill says to read those before writing, and requires Tier 3
+manual cases to carry attestation content.
 
-FAIL if the case has no explicit steps/expected results, has a vague expected
-result like "no error" or "works correctly", or omits the tracker key /
-requirement reference entirely. Since the prompt supplies FIX-221 directly,
-a placeholder like `FIX-<TBD>` is a FAIL here — that discipline is correct
-only when the key is genuinely missing, and this case gives it one.
+PASS only if the authored case file:
+- has a title describing the behaviour under test (e.g. "a user cannot open
+  a record belonging to another tenant"), not just a feature name;
+- has explicit preconditions and one action per step, each with a specific,
+  observable expected result (not "no error" / "works correctly");
+- sets the profile's tracker-key field to the supplied key —
+  `custom_tracker_key` = `FIX-221` (a placeholder like `FIX-<TBD>` is a FAIL,
+  since the key was supplied) — and sets `custom_automation_status` to
+  `Manual` (or another allowed value), and references REQ-AUTH-09 in the body;
+- sets priority from the Tier 3 risk tier; and
+- includes attestation fields for the Tier 3 result — tester name, timestamp
+  and execution method (screenshot/video reference) — to be filled at
+  execution, left blank rather than pre-filled with a result.
+
+FAIL if any of these is missing, if field names are invented instead of the
+profile's `custom_tracker_key` / `custom_automation_status`, or if the case
+records a result as already passed.

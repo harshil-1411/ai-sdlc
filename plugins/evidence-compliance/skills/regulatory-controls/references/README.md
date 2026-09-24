@@ -21,6 +21,13 @@ before you rely on it, and expect to edit it.
 | `hipaa.md` | US protected health information | Healthcare, health tech |
 | `pci-dss.md` | Payment card data | Anything handling card data |
 | `gdpr.md` | EU personal data protection | Anything with EU personal data |
+| `iso-27001.md` | ISO/IEC 27001:2022 Annex A (development and change controls) | Any organisation holding or pursuing ISO 27001 certification |
+| `nist-ssdf.md` | NIST SP 800-218 v1.1 Secure Software Development Framework | Software sold to US federal agencies; secure-development attestation |
+
+Every shipped set carries `Owner: UNASSIGNED` until the adopting organisation names an
+owner. `evidence doctor` warns while that token is present, and the `regulatory-controls`
+skill surfaces it to the human whenever the set is used. Replace it with a named owner
+and a real review date once your compliance owner has reviewed the set.
 
 ## Writing your own
 
@@ -28,7 +35,8 @@ Most organisations need one. Follow the same shape:
 
 ```markdown
 # <Framework name>
-> Scope, and what it does not cover. Source of this interpretation. Owner. Last reviewed.
+> Scope, and what it does not cover. Source of this interpretation.
+> Owner: <named person> (or `Owner: UNASSIGNED` until one is named). Last reviewed: <date>.
 
 ## Controls
 | ID | Control | What to check in a change | Typical evidence |

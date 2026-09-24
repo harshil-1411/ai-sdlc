@@ -1,6 +1,6 @@
 ---
 name: test-automation
-description: Write, structure and maintain automated tests using whatever framework the repository actually uses, tagged so that a run maps back to tracker issues and manual test cases. Use this whenever automated tests are being written or repaired, whenever a manual case is being automated, whenever a test is flaky, and whenever someone asks how test results reach the test management system. Read the framework from the repository profile — never assume one.
+description: Write, structure and repair automated tests in the framework the repository actually uses, tagged so a run maps back to tracker issues and manual test cases. Use when automated tests are written or fixed, when a manual case is automated, when a test is flaky, and when someone asks how test results reach the test management system. Read the framework from the repository profile — never assume one.
 ---
 
 # Test automation

@@ -1,6 +1,6 @@
 ---
 name: schema-migration
-description: Design and review data-model migrations safely — expand/contract phasing, backfill verification, tested rollback, and the regulated-record integrity checks a normal code review misses. Use whenever anyone says "migration", "alter the schema", "add a column", "change the data model", "backfill", "rename a field", "drop a table", "reindex", and on any edit under a migrations directory. Migrations are the highest-consequence change type in most systems — hard to test, expensive to reverse, and they touch record integrity directly.
+description: Design and review data-model migrations safely — expand/contract phasing, backfill verification, tested rollback, and regulated-record integrity checks a normal review misses. Use when anyone says "migration", "alter the schema", "add a column", "backfill", "rename a field", "drop a table", "reindex", and on any edit under a migrations directory. Migrations are hard to test and expensive to reverse.
 ---
 
 # Schema migration
