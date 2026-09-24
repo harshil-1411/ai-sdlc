@@ -137,6 +137,317 @@ def signed_terminal_tests():
         shutil.rmtree(d)
 
 
+VR_KEY = "v" * 40
+VR_PLAN = PLAN.replace("- `tests/**`", "- `tests/**`\n- `plan/ABC-7.md`")
+
+
+def vr_git(d, cmd, env=None):
+    e = dict(ENV)
+    e.update(env or {})
+    return subprocess.run(cmd, shell=True, cwd=d, env=e, check=True, capture_output=True, text=True).stdout.strip()
+
+
+class Signed:
+    """Build signed records in-process with the fixture key, then restore the environment."""
+
+    def __enter__(self):
+        sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+        import importlib, signing, state
+        self.saved = os.environ.get("EVIDENCE_SIGNING_KEY")
+        os.environ["EVIDENCE_SIGNING_KEY"] = VR_KEY
+        importlib.reload(signing)
+        self.st, self.signing = state, signing
+        return self
+
+    def __exit__(self, *a):
+        import importlib
+        if self.saved is None:
+            os.environ.pop("EVIDENCE_SIGNING_KEY", None)
+        else:
+            os.environ["EVIDENCE_SIGNING_KEY"] = self.saved
+        importlib.reload(self.signing)
+
+
+def vr_commit(d, msg, session="s1", trailer=None, audit=True):
+    """Commit everything with `msg`; unless told otherwise, append to the session log first and add the trailer."""
+    if audit and session:
+        with Signed() as s:
+            s.st.audit_append(d, session, {"event": "tool", "key": "ABC-7", "msg": msg})
+    body = msg + "\n\n" + (trailer if trailer is not None else f"Agent-Session: {session}")
+    open(os.path.join(d, ".git", "MSG"), "w").write(body + "\n")
+    vr_git(d, "git add -A && git commit -q --allow-empty -F .git/MSG")
+    return vr_git(d, "git rev-parse HEAD")
+
+
+def vr_state(d, key="ABC-7", stage="implementing", **extra):
+    with Signed() as s:
+        s.st.save_state(d, key, dict({"key": key, "tier": 1, "kind": "feature", "stage": stage}, **extra))
+
+
+def vr_approval(d, key="ABC-7", plan="plan/ABC-7.md"):
+    with Signed() as s:
+        rec = s.signing.sign({"key": key, "plan_path": plan, "plan_sha256": s.st.sha256_file(os.path.join(d, plan)),
+                              "approver": "lead", "method": "github", "approved_at": "2026-09-25T00:00:00Z"})
+        s.st.write_file(d, f".evidence/changes/{key}/approval.json", json.dumps(rec, indent=2, sort_keys=True) + "\n")
+
+
+def vr_fixture(codeowners="* @lead\n", base_extra=None):
+    """main: CODEOWNERS, src/app.py, README.md; feature/ABC-7-login: an approved plan, signed state, an audit log,
+    and one claimed code change -- the shape of a clean PR. Returns (dir, base sha, head sha)."""
+    d = os.path.realpath(tempfile.mkdtemp(prefix="evidence-vr-"))
+    vr_git(d, "git init -q -b main")
+    os.makedirs(os.path.join(d, ".github"))
+    os.makedirs(os.path.join(d, "src"))
+    open(os.path.join(d, ".github", "CODEOWNERS"), "w").write(codeowners)
+    open(os.path.join(d, "src", "app.py"), "w").write("v = 0\n")
+    open(os.path.join(d, "README.md"), "w").write("readme\n")
+    if base_extra:
+        base_extra(d)
+    vr_git(d, "git add -A && git commit -q -m 'ABC-0: base'")
+    base = vr_git(d, "git rev-parse HEAD")
+    vr_git(d, "git checkout -q -b feature/ABC-7-login")
+    os.makedirs(os.path.join(d, "plan"), exist_ok=True)
+    open(os.path.join(d, "plan", "ABC-7.md"), "w").write(VR_PLAN)
+    vr_state(d)
+    vr_approval(d)
+    vr_commit(d, "ABC-7: plan")
+    open(os.path.join(d, "src", "app.py"), "w").write("v = 1\n")
+    head = vr_commit(d, "ABC-7: implement")
+    return d, base, head
+
+
+def vr_run(d, base, head, reviews=None, env=None, event=None, author="dev", ref="feature/ABC-7-login", pull_ref=True,
+           org=None, event_name="pull_request_target", args=()):
+    """Run `evidence verify-range` as the base-branch workflow would: event file, token, key, a stub gh."""
+    reviews = reviews if reviews is not None else [{"user": {"login": "lead"}, "state": "APPROVED", "commit_id": head}]
+    pr = {"number": 5, "base": {"sha": base, "ref": "main"}, "head": {"sha": head, "ref": ref}, "user": {"login": author}}
+    ev = event if event is not None else {"pull_request": pr}
+    tmp = tempfile.mkdtemp(prefix="evidence-vr-ev-")
+    for name, obj in (("event.json", ev), ("reviews.json", reviews), ("pull.json", pr)):
+        json.dump(obj, open(os.path.join(tmp, name), "w"))
+    gh = os.path.join(tmp, "gh")
+    open(gh, "w").write("#!/bin/sh\n"
+                        f"echo \"$@\" >> {tmp}/gh.log\n"
+                        "case \"$*\" in\n"
+                        f"  *pulls/5/reviews*) cat {tmp}/reviews.json;;\n"
+                        f"  *pulls/5*) cat {tmp}/pull.json;;\n"
+                        "  *) exit 1;;\n"
+                        "esac\n")
+    os.chmod(gh, 0o755)
+    if pull_ref and head:
+        vr_git(d, f"git update-ref refs/pull/5/head {pull_ref if isinstance(pull_ref, str) else head}")
+    e = {"EVIDENCE_SIGNING_KEY": VR_KEY, "GH_TOKEN": "t", "GITHUB_REPOSITORY": "o/r", "GITHUB_EVENT_PATH": os.path.join(tmp, "event.json"),
+         "GITHUB_EVENT_NAME": event_name, "EVIDENCE_GH": gh, "GITHUB_ACTIONS": "true"}
+    if org:
+        json.dump(org, open(os.path.join(tmp, "org.json"), "w"))
+        e["EVIDENCE_ORG_POLICY"] = os.path.join(tmp, "org.json")
+    e.update(env or {})
+    e = {k: v for k, v in e.items() if v is not None}
+    r = run(["verify-range"] + list(args), d, env=e)
+    shutil.rmtree(tmp)
+    return r
+
+
+def vr_expect(label, r, rule):
+    out = (r.stdout + r.stderr).lower()
+    if rule is None:
+        check(f"REQ-IMH-19 passes: {label}", r.returncode == 0, r.stdout[-600:] + r.stderr[-600:])
+    else:
+        check(f"REQ-IMH-19 rule {rule} fails: {label}", r.returncode != 0 and f"rule {rule}" in out and "traceback" not in out,
+              (r.returncode, r.stdout[-600:] + r.stderr[-600:]))
+
+
+def verify_range_tests():
+    """PILOT-58 REQ-IMH-19: `evidence verify-range` per ADR-0004 rules 0-7, on fixture repositories."""
+    def case(label, rule, mutate=None, fixture=None, **kw):
+        d, base, head = (fixture or vr_fixture)()
+        if mutate:
+            got = mutate(d, base, head)
+            if isinstance(got, dict):
+                kw = dict(got, **kw)
+                base, head = kw.pop("base", base), kw.pop("head", head)
+            elif got:
+                head = got
+        vr_expect(label, vr_run(d, base, head, **kw), rule)
+        shutil.rmtree(d)
+
+    def w(d, rel, text):
+        os.makedirs(os.path.dirname(os.path.join(d, rel)) or d, exist_ok=True)
+        open(os.path.join(d, rel), "w").write(text)
+
+    case("a clean branch", None)
+    # rule 0: fail closed on bad input
+    case("empty base SHA", 0, lambda d, b, h: {"base": ""})
+    case("non-hex head SHA", 0, lambda d, b, h: {"head": "zz" * 20, "pull_ref": False})
+    case("no signing key (verify would return None)", 0, env={"EVIDENCE_SIGNING_KEY": None})
+    case("a signing key under 32 characters", 0, env={"EVIDENCE_SIGNING_KEY": "short-key"})
+    case("no GitHub token", 0, env={"GH_TOKEN": None, "GITHUB_TOKEN": None})
+    case("fetched PR head differs from the event head", 0, lambda d, b, h: {"pull_ref": b})
+    # rule 1: change and approval
+    case("head branch without a key", 1, ref="feature/login")
+    case("head branch with two keys", 1, ref="feature/ABC-7-ABC-8")
+
+    def released_at_base(d):
+        vr_state(d, stage="released")
+    case("a replayed key whose change is released at the base", 1, fixture=lambda: vr_fixture(base_extra=released_at_base))
+
+    def release_head(d, b, h):
+        vr_state(d, stage="released")
+        return vr_commit(d, "ABC-7: release")
+    case("the change is released at the head", 1, release_head)
+
+    def no_key(d, b, h):
+        w(d, "src/app.py", "v = 2\n")
+        return vr_commit(d, "tidy up")
+    case("a commit without the change key", 1, no_key)
+
+    def no_trailer(d, b, h):
+        w(d, "src/app.py", "v = 2\n")
+        return vr_commit(d, "ABC-7: more", trailer="")
+    case("a commit with neither trailer", 1, no_trailer)
+    case("an approving review on a stale SHA", 1,
+         lambda d, b, h: {"reviews": [{"user": {"login": "lead"}, "state": "APPROVED", "commit_id": vr_git(d, "git rev-parse HEAD~1")}]})
+    case("approval only by the PR author", 1, author="lead")
+    case("approval by a non-owner of a changed path", 1, fixture=lambda: vr_fixture(codeowners="* @lead\n/src/ @other\n"))
+    case("a team code owner", 1, fixture=lambda: vr_fixture(codeowners="* @org/team\n"))
+
+    def plan_edited(d, b, h):
+        w(d, "plan/ABC-7.md", VR_PLAN + "\n3. One more step added after approval.\n")
+        return vr_commit(d, "ABC-7: edit plan")
+    case("the plan hash differs from approval.json", 1, plan_edited)
+    # rule 2: paths
+    def evil_merge(d, b, h):
+        vr_git(d, f"git checkout -q -b side {b}")
+        w(d, "src/side.py", "s = 1\n")
+        vr_git(d, "git add -A && git commit -q -m 'ABC-7: side' -m 'Agent-Session: s1'")
+        vr_git(d, "git checkout -q feature/ABC-7-login && git merge -q --no-ff --no-commit side")
+        w(d, "docs/evil.md", "not claimed\n")
+        return vr_commit(d, "ABC-7: merge side")
+    case("an evil merge adding an unclaimed path", 2, evil_merge)
+    for kind, fn in (("A", lambda d: w(d, "docs/new.md", "x\n")),
+                     ("M", lambda d: w(d, "README.md", "changed\n")),
+                     ("D", lambda d: os.remove(os.path.join(d, "README.md"))),
+                     ("T", lambda d: (os.remove(os.path.join(d, "README.md")), os.symlink("src/app.py", os.path.join(d, "README.md")))),
+                     ("R", lambda d: (os.makedirs(os.path.join(d, "lib")), os.rename(os.path.join(d, "src", "app.py"),
+                                                                                     os.path.join(d, "lib", "app.py"))))):
+        case(f"an unclaimed {kind} path", 2, lambda d, b, h, fn=fn: (fn(d), vr_commit(d, f"ABC-7: unclaimed"))[1])
+    # rule 3: secrets and blob size
+    secret = "AK" + "IA" + "QWERTYUIOPASDFGH"
+
+    def secret_added_removed(d, b, h):
+        w(d, "src/cfg.py", f"key = '{secret}'\n")
+        vr_commit(d, "ABC-7: add config")
+        os.remove(os.path.join(d, "src", "cfg.py"))
+        return vr_commit(d, "ABC-7: remove config")
+    case("a secret added then removed", 3, secret_added_removed)
+
+    def big_blob(d, b, h):
+        with open(os.path.join(d, "src", "big.bin"), "wb") as f:
+            f.write(os.urandom(2 * 1024 * 1024))
+        return vr_commit(d, "ABC-7: big")
+    case("an oversize blob not on the allow-list", 3, big_blob, org={"verify_range_blob_cap_mb": 1})
+    # rule 4: audit logs
+    log = os.path.join(".evidence", "audit", "s1.jsonl")
+
+    def truncate_log(d, b, h):
+        lines = open(os.path.join(d, log)).read().splitlines(True)
+        open(os.path.join(d, log), "w").write("".join(lines[:-1]))
+        w(d, "src/app.py", "v = 3\n")
+        return vr_commit(d, "ABC-7: truncate", audit=False)
+    case("an audit log truncated in a later commit", 4, truncate_log)
+
+    def omitted(d, b, h):
+        w(d, "src/app.py", "v = 3\n")
+        return vr_commit(d, "ABC-7: other session", session="s2", audit=False)
+    case("a named session's log is omitted", 4, omitted)
+
+    def base_log(d):
+        with Signed() as s:
+            s.st.audit_append(d, "old", {"event": "tool", "key": "ABC-0"})
+    case("an audit log that exists at the base is deleted", 4,
+         lambda d, b, h: (os.remove(os.path.join(d, ".evidence", "audit", "old.jsonl")), vr_commit(d, "ABC-7: drop log"))[1],
+         fixture=lambda: vr_fixture(base_extra=base_log))
+    case("an audit log that exists at the base is type-changed", 4,
+         lambda d, b, h: (os.remove(os.path.join(d, ".evidence", "audit", "old.jsonl")),
+                          os.symlink("s1.jsonl", os.path.join(d, ".evidence", "audit", "old.jsonl")),
+                          vr_commit(d, "ABC-7: link log"))[2],
+         fixture=lambda: vr_fixture(base_extra=base_log))
+    # rule 5: change records
+    vpath = ".evidence/changes/ABC-7/violations.json"
+
+    def violations(d, entries):
+        with Signed() as s:
+            s.st.write_violations(os.path.join(d, vpath), entries, d)
+
+    def rollback(d, b, h):
+        violations(d, [{"path": "src/x", "rule": "unclaimed", "open": True}])
+        vr_commit(d, "ABC-7: violation")
+        violations(d, [])
+        return vr_commit(d, "ABC-7: rollback")
+    case("an open violation rolled back", 5, rollback)
+
+    def closed_unsigned(d, b, h):
+        violations(d, [{"path": "src/x", "rule": "unclaimed", "open": True}])
+        vr_commit(d, "ABC-7: violation")
+        violations(d, [{"path": "src/x", "rule": "unclaimed", "open": False}])
+        return vr_commit(d, "ABC-7: close")
+    case("a violation closed without a signed clear", 5, closed_unsigned)
+
+    def regress(d, b, h):
+        vr_state(d, stage="approved")
+        return vr_commit(d, "ABC-7: regress")
+    case("the state stage moves backwards", 5, regress)
+
+    def bad_sig(d, b, h):
+        p = os.path.join(d, ".evidence", "changes", "ABC-7", "state.json")
+        rec = json.load(open(p))
+        rec["tier"] = 2
+        json.dump(rec, open(p, "w"))
+        return vr_commit(d, "ABC-7: tier")
+    case("a state record at the head with an invalid signature", 5, bad_sig)
+
+    def other_change(d):
+        vr_state(d, key="ABC-3")
+    case("another change's record edited other than by release or clear", 5,
+         lambda d, b, h: (vr_state(d, key="ABC-3", stage="implementing", note="edited"), vr_commit(d, "ABC-7: touch ABC-3"))[1],
+         fixture=lambda: vr_fixture(base_extra=other_change))
+    # passing shapes
+    def main_moved(d, b, h):
+        vr_git(d, "git checkout -q main")
+        w(d, "docs/other.md", "main moved\n")
+        vr_git(d, "git add -A && git commit -q -m 'ABC-9: elsewhere'")
+        nb = vr_git(d, "git rev-parse HEAD")
+        vr_git(d, "git checkout -q feature/ABC-7-login")
+        return {"base": nb}
+    case("a clean branch after main moved", None, main_moved)
+
+    def update_branch(d, b, h):
+        got = main_moved(d, b, h)
+        vr_git(d, "git merge -q --no-ff -m \"Merge branch 'main' into feature/ABC-7-login\" main")
+        return dict(got, head=vr_git(d, "git rev-parse HEAD"))
+    case("a clean \"Update branch\" merge of main", None, update_branch)
+
+    def human(d, b, h):
+        w(d, "src/app.py", "v = 4\n")
+        return vr_commit(d, "ABC-7: human fix", trailer="Human-Commit: lead", audit=False)
+    case("a human commit with a Human-Commit: trailer and the key", None, human)
+
+    def dispatch(d, b, h):
+        return {"event": {"inputs": {"pr": "5"}}, "event_name": "workflow_dispatch"}
+    case("a workflow_dispatch re-run with the PR number", None, dispatch)
+    # rule 7: push report mode
+    d, base, head = vr_fixture()
+    w(d, "docs/new.md", "x\n")
+    head = vr_commit(d, "ABC-7: unclaimed")
+    r = vr_run(d, base, head, event={"before": base, "after": head}, event_name="push", args=["--push-report"])
+    check("REQ-IMH-19 push mode reports a failure and never blocks",
+          r.returncode == 0 and "docs/new.md" in r.stdout and "rule 2" in r.stdout.lower(), r.stdout[-500:] + r.stderr[-300:])
+    r = vr_run(d, base, head, event={"before": "0" * 40, "after": head}, event_name="push", args=["--push-report"])
+    check("REQ-IMH-19 push mode skips an all-zero `before` with a note",
+          r.returncode == 0 and "skip" in (r.stdout + r.stderr).lower(), r.stdout[-300:] + r.stderr[-300:])
+    shutil.rmtree(d)
+
+
 def main():
     d = repo()
     r = run(["change", "start", "ABC-7", "--tier", "1", "--kind", "feature"], d)
@@ -247,6 +558,7 @@ def main():
     check("REQ-V2A-01 github mode with no allowed approvers refuses", r.returncode != 0 and "allowed_approvers" in r.stderr, r.stderr)
     shutil.rmtree(d)
     signed_terminal_tests()
+    verify_range_tests()
     print(f"\n{res['pass']} passed, {res['fail']} failed")
     if os.environ.get("JUNIT_OUT"):
         from xml.sax.saxutils import escape, quoteattr

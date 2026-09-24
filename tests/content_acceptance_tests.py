@@ -308,6 +308,72 @@ sdlc_cases = [os.path.basename(d) for d in glob.glob(P("plugins", "evidence-sdlc
 check("REQ-V2E-03 eval cases exist for release-readiness and the new agents",
       all(any(c.startswith(p) for c in sdlc_cases) for p in ("release-readiness-", "architect-", "code-reviewer-", "release-manager-", "docs-writer-")))
 
+# ------------------------------------------------------------ PILOT-58
+vr = read(".github", "workflows", "verify-range.yml")
+
+
+def run_blocks(yml):
+    """The text of every `run:` step (inline or block scalar)."""
+    out, lines = [], yml.splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*)(?:-\s+)?run:\s*(.*)$", line)
+        if not m:
+            continue
+        ind, body = len(m.group(1)), [m.group(2)]
+        for nxt in lines[i + 1:]:
+            if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= ind:
+                break
+            body.append(nxt)
+        out.append("\n".join(body))
+    return out
+
+
+runs = run_blocks(vr)
+perms = re.search(r"^permissions:\s*\n((?:\s+.*\n)+)", vr, re.M)
+check("REQ-IMH-21 verify-range.yml runs on pull_request_target (opened, synchronize, reopened), workflow_dispatch with a "
+      "PR number, and push to main",
+      re.search(r"pull_request_target:\s*\n\s+types:\s*\[\s*opened,\s*synchronize,\s*reopened\s*\]", vr)
+      and re.search(r"workflow_dispatch:\s*\n\s+inputs:\s*\n\s+pr:", vr)
+      and re.search(r"push:\s*\n\s+branches:\s*\[\s*main\s*\]", vr), vr[:400])
+check("REQ-IMH-21 checks out only the base, full depth, without persisted credentials",
+      re.search(r"uses:\s*actions/checkout@", vr) and re.search(r"ref:\s*\$\{\{\s*github\.event\.pull_request\.base\.sha", vr)
+      and not re.search(r"ref:\s*\$\{\{[^}]*head", vr) and re.search(r"fetch-depth:\s*0\b", vr)
+      and re.search(r"persist-credentials:\s*false", vr), vr[:400])
+check("REQ-IMH-21 fetches refs/pull/<n>/head from env and checks it equals the event head",
+      any(re.search(r"refs/pull/\$\{?PR\}?/head", b) and re.search(r"\$\{?HEAD_SHA\}?", b) for b in runs), runs)
+check("REQ-IMH-21 runs the base's CLI in verify-range and push-report modes, with the key and token in step env only",
+      any("plugins/evidence-sdlc/bin/evidence verify-range" in b for b in runs) and any("--push-report" in b for b in runs)
+      and re.search(r"EVIDENCE_SIGNING_KEY:\s*\$\{\{\s*secrets\.", vr) and re.search(r"GH_TOKEN:", vr)
+      and not re.search(r"^env:\s*\n(?:\s+.*\n)*?\s+EVIDENCE_SIGNING_KEY", vr, re.M), runs)
+check("REQ-IMH-21 no attacker-controlled event field or other `${{ }}` expression inside any run:",
+      runs and not any("${{" in b for b in runs), [b for b in runs if "${{" in b])
+check("REQ-IMH-21 nothing is allowed to fail open (no continue-on-error, no `|| true`)",
+      vr and "continue-on-error" not in vr and not re.search(r"\|\|\s*true", vr))
+check("REQ-IMH-21 permissions are contents: read and pull-requests: read, nothing writable",
+      perms and re.search(r"contents:\s*read", perms.group(1)) and re.search(r"pull-requests:\s*read", perms.group(1))
+      and "write" not in perms.group(1), perms.group(1) if perms else vr[:300])
+check("REQ-IMH-21 each mode is conditioned on its event",
+      re.search(r"if:.*github\.event_name\s*==\s*'push'", vr)
+      and re.search(r"if:.*github\.event_name\s*!=\s*'push'|if:.*github\.event_name\s*==\s*'pull_request_target'", vr))
+
+gr, mdoc, pref = read("docs", "gates-reference.md"), read("docs", "managed-settings.md"), read("docs", "policy-reference.md")
+cm, sap, ho, cl = (read("governance", "control-mapping.md"), read("governance", "supplier-audit-packet.md"), read("HANDOFF.md"),
+                   read("CHANGELOG.md"))
+cl21 = cl.split("## 2.1.0", 1)[1].split("\n## ", 1)[0] if "## 2.1.0" in cl else ""
+check("REQ-IMH-18 gates reference and managed-settings doc: local push gate advisory, verify-range pull_request_target "
+      "authoritative, sign-and-gate unchanged",
+      all(re.search(r"advisory", t, re.I) and "verify-range" in t and "pull_request_target" in t for t in (gr, mdoc))
+      and "sign-and-gate" in gr)
+check("REQ-IMH-18 docs name the owner actions: required check, code-owner review, re-run after approval, fork PRs",
+      all(re.search(p, gr + mdoc, re.I) for p in (r"required (status )?check", r"code.owner", r"re-run", r"fork")))
+check("REQ-IMH-18 policy reference documents git_allowed_config, verify_range_blob_cap_mb and verify_range_allow_large",
+      all(k in pref for k in ("git_allowed_config", "verify_range_blob_cap_mb", "verify_range_allow_large")))
+check("REQ-IMH-18 governance rests change control on verify-range and states the ADR-0003 residual risk",
+      "verify-range" in cm and "verify-range" in sap and all(re.search(r"residual risk", t, re.I) and "ADR-0003" in t for t in (cm, sap)))
+check("REQ-IMH-18 HANDOFF and the 2.1.0 CHANGELOG Known issues name what moved to PILOT-59, 60 and 61",
+      "verify-range" in ho and re.search(r"known issues", cl21, re.I) and all(k in cl21 for k in ("PILOT-59", "PILOT-60", "PILOT-61")),
+      cl21[:300])
+
 fails = sum(1 for _, ok, _ in res if not ok)
 print(f"\n{len(res) - fails} passed, {fails} failed")
 if os.environ.get("JUNIT_OUT"):
