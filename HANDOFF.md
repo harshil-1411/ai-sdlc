@@ -1,0 +1,134 @@
+# Handoff — Evidence Chain v2
+
+For whoever picks this up next (engineer or agent session). Read this first, then
+`README.md`. Last updated 2026-09-24 by the maintainer's Claude Code session.
+
+## Where things stand
+
+| | |
+| --- | --- |
+| Repository | https://github.com/harshil-1411/ai-sdlc, branch `main` (only branch on GitHub) |
+| Head | `6c32020`: PILOT-53 round 6 |
+| Version | 2.0.0, all five plugins |
+| Maintainer | suparn.bector@msbdocs.com |
+| Enterprise score | **3.3 / 5**, independently verified at `774bba8` (v1 was 2.1). Round 6 (`6c32020`) is not re-scored. |
+| Reports | [v1 audit](https://claude.ai/artifact/2AC3mxyFdmkHKYgogwLFpG) · [v1 vs v2](https://claude.ai/artifact/7WPE6snzrdb6DFjjFRBKLC) (private; the owner shares them) |
+| Tests | engine 342 · lifecycle 25 · sensor 17 · CLI 80 · content 66, all passing; `evidence gaps --strict` shows 103/103 requirements PROVEN |
+
+The work since the v1 audit is recorded as intent/spec/plan in:
+- `intent/2026-09-24-v2-enterprise-hardening/` (PILOT-53)
+- `intent/2026-09-24-testing-depth-and-strategy-interview/` (PILOT-51)
+
+`CHANGELOG.md` summarises it.
+
+## What's in the box
+
+- **5 plugins** (`plugins/`): discovery, sdlc, quality, compliance, integrations.
+  They contain 30 skills, 11 agents, and 5 slash commands (`/evidence-sdlc:start|status|approve|gaps|release-report`).
+- **Gate engine**, `plugins/evidence-sdlc/scripts/engine/`. It's Python stdlib only and fails closed.
+  - Entry point: `hook.py`.
+  - Rules: `evidence_policy.py`.
+  - Shell parsing: `cmdparse.py`.
+  - State, policy and audit: `state.py`.
+  - Signing: `signing.py`.
+  - Post-command monitor: `integrity.py`.
+  - CLI lifecycle: `lifecycle.py`.
+  - Hook wiring: `plugins/evidence-sdlc/hooks/hooks.json`.
+  - Rules are driven by `plugins/evidence-sdlc/policy/default-policy.json`, merged in three layers: default, then org, then repo (tighten-only).
+- **`evidence` CLI**, `plugins/evidence-sdlc/bin/evidence`. It's on PATH inside sessions; `cli/evidence` is a shim.
+  - Lifecycle: `change start|status|list|advance|set-tier|release|clear-violations`, `approve`, `audit verify`, `metrics`.
+  - Traceability: `doctor`, `scan`, `gaps`, `export`, `results sign`, `tracker`.
+- **Governance**, `governance/`. `control-mapping.md` maps SOC 2, ISO 27001:2022 and NIST SSDF to mechanisms. Every enforcement claim cites a test.
+- **CI**, `.github/workflows/ci.yml`. The `checks` job runs every suite without the key. The `sign-and-gate` job signs results with the *base branch's* CLI and runs `gaps --strict`. Evals run on manual dispatch only.
+- **Adopter templates**: `managed-settings.json`, `pipelines/` (GitHub Actions, GitLab, CI-hosted agent, CODEOWNERS example), `docs/managed-hooks.example.json`.
+
+## Run and verify
+
+```bash
+bash scripts/ci/run-tests.sh                # every suite -> JUnit in validation/results/
+python3 cli/evidence gaps --strict          # this repo's own traceability (run twice after big changes:
+                                            # the content suite reads the previous run's results)
+python3 cli/evidence doctor                 # includes a live gate canary
+bash scripts/ci/check-version-bump.sh main  # before merging any plugin change
+claude plugin validate . && for p in plugins/*/; do claude plugin validate "$p"; done
+```
+
+Evals cost money. Run them per plugin with
+`claude plugin eval . --scaffold --allow-tools Write Edit` and regenerate the summary with
+`python3 scripts/ci/eval-summary.py <plugin> <results.json>`.
+
+## Working on this repo from now on
+
+This repo is meant to run under its own v2 rules. **It hasn't yet.** v2 was built in a
+session still running the v1 hooks, so there's no `.evidence/changes/` or audit trail
+for PILOT-53. The plan says so openly. Make the next change the first dogfooded one:
+
+1. Install the plugins from this repo, then start a **new** session. Hooks load at session start.
+   ```
+   /plugin marketplace add harshil-1411/ai-sdlc
+   /plugin install evidence-discovery@evidence-chain   (and the other four)
+   ```
+2. Create a branch that carries a tracker key, e.g. `feature/PILOT-54-short-name`. The next free key is PILOT-54.
+3. Run `evidence change start PILOT-54 --tier <n> --kind feature|fix|chore`, then write the artifacts the tier requires.
+4. A human approves by sending `/evidence-sdlc:approve PILOT-54 <plan-sha>` in the chat.
+5. Commits need `PILOT-54` in the message, an `Agent-Session: <session id>` trailer, and the change's `.evidence/` files staged.
+
+**Unsigned mode:** without `EVIDENCE_SIGNING_KEY`, agents may only work on **Tier 1**
+changes. Engine changes are Tier 3 by the framework's own rules. Before that work you need either:
+- the key deployed (`docs/managed-settings.md`, "Signing key"), or
+- an org policy that raises `unsigned_max_tier`, which accepts forgeable records.
+
+## Open work
+
+### Code, in priority order
+1. **Inline interpreter code** (`python -c`, `node -e`) is judged by a keyword denylist
+   (`cmdparse._WRITE_HINTS`), so string tricks get past the pre-check. Replace it with an
+   allowlist of read-only forms, or make strict mode the default.
+2. **Gitignored content** isn't watched by the integrity monitor: writes inside ignored
+   directories, and edits to existing ignored files. Hash a configured set such as `.env*`
+   and build configs.
+3. **About half of `tests/content_acceptance_tests.py` is keyword-presence.** Replace these
+   with structural checks: sections filled, REQ IDs resolve, and referenced tests exist and ran.
+4. **Review content** isn't checked, only that the required agent completed after the latest change.
+5. **Stale `REQ-GATE-*` rows** in `validation/traceability.csv` are kept deliberately:
+   they're evidence of a 2026-09-12 run, and rows are never rewritten. `export --conflicts-only`
+   flags them. Supersede them with new rows rather than editing them.
+
+### Owner actions (no code can do these)
+- [ ] Replace `REPLACE-WITH-YOUR-ORG` with `harshil-1411/ai-sdlc` in:
+  - the five `plugins/*/.claude-plugin/plugin.json` files
+  - `managed-settings.json` (`strictKnownMarketplaces`)
+  - `pipelines/github-actions/evidence-chain.yml`
+  - `README.md`, `docs/managed-settings.md`, `docs/extending.md`
+
+  This is a plugin change, so bump the versions and add a CHANGELOG entry.
+- [ ] Branch protection on `main`: require the `checks` and `sign-and-gate` jobs and code-owner review; block force pushes.
+- [ ] Copy `pipelines/github-actions/CODEOWNERS.example` to `.github/CODEOWNERS` with real handles.
+- [ ] Add the `EVIDENCE_SIGNING_KEY` Actions secret (32+ characters) and set the variable `EVIDENCE_REQUIRE_SIGNED=true`.
+- [ ] Set up GitHub approval mode in an org policy:
+  - `approval.mode: "github"`
+  - `github_repo`
+  - `github_allowed_approvers`
+- [ ] Deploy `managed-settings.json` with the signing key and sandbox. Confirm on a real machine that `echo $EVIDENCE_SIGNING_KEY` in an agent session is denied or empty, and that sessions print "Evidence Chain gates live".
+- [ ] Run the evals that weren't run for budget:
+  - compliance
+  - the rest of sdlc and discovery, at 3 or more runs per arm
+  - the live scenarios
+- [ ] Pilot with one team for 60–90 days, commission an external red team, then re-score.
+
+## Decisions worth knowing (and why)
+
+- **One Python engine, not bash + jq.** Pattern-matched bash gates were where the v1 bypasses came from.
+- **Signing key held by the hooks, hidden from the sandbox.** The engine and the agent run as the same OS user, so only a secret distinguishes their writes.
+- **No `dependencies` in `plugin.json`.** An unmet dependency stops a plugin's skills loading entirely. The eval run caught this: 0 of 43 sdlc cases fired.
+- **Versions are back, guarded by `check-version-bump.sh`.** The two earlier reverts happened because a static version made `/plugin update` skip real changes; the check makes a missed bump unmergeable.
+- **Background execution is denied.** Work that runs after a command returns escapes both the pre-check and the integrity monitor.
+- **Approvals go through UserPromptSubmit.** The model can't author a user prompt. Nested or unattended sessions are refused, and a Tier 3 plan needs a second person.
+
+## Gotchas
+
+- **Hooks load at session start.** Editing `hooks.json` mid-session doesn't change that session's gates, but script *content* is read live.
+- **GitHub history:** `main` on GitHub was force-replaced once on 2026-09-24. It had only GitHub's "Initial commit" README.
+- **Local branches:** `master` is the old v1 line, and `hardening/v2` has the same head as `main`. Both are local only.
+- **Windows:** native Windows is unsupported; use WSL.
+- **Personal files** moved out of the repo are in `~/Desktop/evidence-chain-extras/` on the maintainer's machine.

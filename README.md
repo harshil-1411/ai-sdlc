@@ -1,5 +1,7 @@
 # Evidence Chain
 
+> **Picking this up?** Start with [HANDOFF.md](HANDOFF.md): current state, how to verify, open work and owner actions.
+
 **An AI-native SDLC control plane for teams that have to prove what they shipped.**
 
 > **This is not regulatory, legal or compliance advice.** Read [DISCLAIMER.md](DISCLAIMER.md)
