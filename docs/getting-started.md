@@ -86,6 +86,14 @@ just let them fire when a workflow needs them). They add:
   `.evidence/adapter.example.yml`'s field list — see step 8)
 - `.evidence/context/compliance.md`
 
+Then run `test-strategy-discovery` (ask "what's our test strategy" or "what testing
+should we be doing"). It reads the repository first and asks the team one batch of
+questions about what the repository can't answer: test types in scope, performance
+and accessibility targets, environments, browsers, and who owns UAT and the go/no-go.
+It adds:
+
+- `.evidence/context/test-strategy.md`
+
 Every line in these files carries a confidence marker: `[confirmed]` (read from a
 file, cited), `[inferred]` (strong evidence, not declarative), or `[ASK]` (could not
 be established — a question is written out, waiting for a human).

@@ -1,5 +1,5 @@
 {
   "name": "evidence-quality",
-  "description": "Test strategy, test-case authoring into the test management system, automation, continuous testing, and the traceability ID chain that links tracker to test case to commit to evidence.",
+  "description": "Test strategy, test-case authoring into the test management system, automation, E2E UI (Playwright/Selenium/Cypress), accessibility, performance (load/stress/soak/spike), security testing, static analysis, continuous testing, and the traceability ID chain that links tracker to test case to commit to evidence.",
   "author": { "name": "Suparn Bector", "email": "suparnbector@gmail.com" }
 }

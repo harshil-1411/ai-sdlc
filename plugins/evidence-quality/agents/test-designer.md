@@ -71,6 +71,13 @@ For each `REQ-<area>-<nn>` in the spec, produce:
 10. **Automated or manual**, with a reason. Manual is a legitimate answer for judgement
     and for regulated walkthroughs where human attestation is part of the evidence.
 
+11. **Non-functional routing** — where a requirement states a latency, throughput,
+    concurrency, accessibility, security, browser/device or locale expectation,
+    name the test type and the skill that owns its design (`performance-testing`,
+    `accessibility-testing`, `security-testing`, `e2e-ui-testing`), and the target
+    it is measured against. A non-functional requirement with no number (e.g. "should
+    be fast") is a spec defect. Flag it, don't design around it.
+
 Not every category applies to every requirement — a pure calculation has no empty
 state, a single-actor batch job may have no real concurrency case. Say "not
 applicable" explicitly rather than silently dropping a category; a reviewer should be

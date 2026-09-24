@@ -8,6 +8,13 @@ description: Design the test approach for a change — which layer each requirem
 Read `.evidence/context/stack.md` first for the real test frameworks and commands in
 this repository. Do not assume a stack.
 
+Then read `.evidence/context/test-strategy.md` for the team's agreed strategy:
+the test types in scope, the non-functional targets, environments, the browser/device
+matrix and the owners. Plan within it. If a change needs a test type the profile marks
+`out`, say so and name the risk. Don't quietly add or drop the type. If the file is
+absent, state that this plan uses the framework defaults below, and recommend running
+`test-strategy-discovery` (evidence-discovery).
+
 ## Approach every requirement assuming it fails
 
 The happy path is the part that was already tried while the code was written. A test
@@ -37,6 +44,24 @@ For each `REQ-<area>-<nn>`, decide the **lowest layer that can actually prove it
 
 Push proof down. A requirement proven end-to-end that could have been proven at the
 API layer costs ten times as much to run and is ten times flakier.
+
+## Route each test type to the skill that owns its depth
+
+This skill decides *which* types a change needs. The type skills decide *how*:
+
+| Test type | Owning skill | Use when the change… |
+| --- | --- | --- |
+| E2E UI, cross-browser/device, visual regression, localisation | `e2e-ui-testing` | changes a user-visible journey, layout or supported locale |
+| Accessibility | `accessibility-testing` | adds or changes UI |
+| Load, stress, soak, spike, capacity | `performance-testing` | carries a latency, throughput or concurrency requirement, or touches a hot path |
+| SCA, secrets, container/IaC, DAST, fuzzing, pen testing | `security-testing` | adds an endpoint, dependency, parser, file input, image or infra |
+| Lint, types, complexity, SAST configuration | `static-analysis` | introduces or changes analysis rules, or fails a static check |
+| Contract | `contract-testing` (evidence-integrations) | calls or is called by an external system |
+| Characterization | `legacy-characterization` (evidence-sdlc) | modifies thinly tested existing code |
+
+Non-functional requirements (performance, accessibility, security) get rows in the
+test plan like any other `REQ-`. They are not an afterthought in a separate
+document.
 
 ## Decide automated vs manual honestly
 
@@ -92,6 +117,20 @@ Treat line, branch, functional and mutation coverage as different questions, not
 interchangeable synonyms for "tested." High line coverage with weak or absent
 assertions proves nothing: a line executed is not a line checked.
 
+- **Functional (requirement) coverage** is the one this framework can compute
+  without any tool: the share of `REQ-` IDs with at least one test that ran and
+  passed. It comes from the test-plan table and the traceability matrix. A
+  requirement with no row, or whose only test is quarantined or skipped, is
+  uncovered. Report the uncovered IDs by name, not only as a percentage.
+- **Diff coverage** (coverage of the lines this change touched) is information for
+  the reviewer. Missing coverage of a changed branch gets a question in review, not
+  an automatic block.
+- **Mutation score**, where the project runs mutation testing, is the best available
+  signal of assertion quality on a critical module. Cite it for that module.
+- **No coverage tool in the repository** is a recorded gap (`[ASK]` in
+  `test-strategy.md`). Do not install one ad hoc inside a feature change. Adopting a
+  tool is its own planned change.
+
 **Never gate a merge on a coverage percentage.** `CONTRIBUTING.md`'s "Do not add
 gates that block on generated scores" and `continuous-testing`'s "never gate a merge
 on an automatically-counted findings total" both apply here without exception —
@@ -102,3 +141,19 @@ Regulated paths (Tier 3, per `risk-tiering`) need a demonstrably higher bar than
 aggregate repository-wide number — cite coverage on the specific regulated module or
 requirement, not the whole repository's average, and pair it with the
 assertion-quality check a raw percentage cannot make on its own.
+
+## Before and after a test cycle
+
+**Before:** the plan's test section (`templates/test-plan-section.md`) states the
+entry criteria: what must be true before testing starts, e.g. build deployed to the
+named environment, test data seeded, blocking defects from the last cycle closed,
+and non-functional targets present in `spec.md`. Starting without them is a recorded
+deviation, not a silent one.
+
+**After:** close every release test cycle with a **test summary report**, drafted
+from `templates/test-summary-report.md` using only linked evidence: scope run,
+results per layer and type, requirement coverage with uncovered IDs named, open
+defects, accepted gaps, flake and quarantine status, and non-functional results
+against their targets. The go/no-go decision is signed by the human named in
+`test-strategy.md`. **The agent drafts the report. It never signs it or fills in the
+decision.**

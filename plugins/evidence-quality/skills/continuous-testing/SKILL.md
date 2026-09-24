@@ -10,7 +10,10 @@ that could catch this class of defect runs at the earliest stage where it could 
 it**, and each stage produces evidence.
 
 Read `.evidence/context/deployment.md` for the actual CI system, environments and
-regions before designing anything.
+regions before designing anything. Read `.evidence/context/test-strategy.md` for
+which test types are in scope, where active security scanning and load testing
+are allowed, and the browser matrix. Place only in-scope types in stages. If the
+file is absent, say that the stage design below uses framework defaults.
 
 ```mermaid
 flowchart LR
@@ -37,10 +40,33 @@ flowchart LR
 | Merge to main | Merge | Full build, artifact, SBOM, publish to registry | Yes | Artifact + SBOM, signed |
 | Deploy to test env | Merge | Deploy, smoke, full E2E, accessibility, API regression | Yes | Run posted to the test management system |
 | Nightly | Schedule | Full regression, performance, extended security, flake detection | No — reports | Trend reports |
-| Pre-release | Release candidate | Full regression, manual/UAT run, validation evidence assembly | Yes | Release test run, traceability export |
+| Pre-release | Release candidate | Full regression, manual/UAT run, validation evidence assembly | Yes | Release test run, traceability export, test summary report |
 | Post-deploy | Deploy to any env | Smoke, health, key business-journey probes | Yes — triggers rollback | Deployment record |
 
 Adjust to what the repository actually has. The shape matters more than the specifics.
+
+### Where each specialised test type sits
+
+| Test type | Stage(s) | Owning skill |
+| --- | --- | --- |
+| Lint, format, type check | Pre-commit (changed files) + commit | `static-analysis` |
+| SAST | Commit (fast rules) + nightly (deep rules) | `static-analysis` (config), `security-testing` (findings) |
+| SCA, secret, container, IaC scanning | Commit / image build; nightly re-scan of the default branch | `security-testing` |
+| DAST | Deploy to test (baseline scan) + nightly (full, authenticated) | `security-testing` |
+| Fuzzing | Nightly / weekly, on parsers and file inputs | `security-testing` |
+| Pen testing | Per cadence in `test-strategy.md`, before major releases | `security-testing` |
+| E2E smoke, primary browser | Pull request | `e2e-ui-testing` |
+| Full E2E, browser/device matrix, visual regression, localisation | Deploy to test + nightly + pre-release | `e2e-ui-testing` |
+| Accessibility, automated | Pull request (components, changed pages) + deploy to test | `accessibility-testing` |
+| Accessibility, manual | Pre-release, for changed UI | `accessibility-testing` |
+| Load | Nightly (trend) + pre-release (against targets) | `performance-testing` |
+| Stress, spike | Pre-release; after architecture or infra changes | `performance-testing` |
+| Soak | Scheduled (e.g. weekly) + pre-release for Tier 3 | `performance-testing` |
+| Flake detection | Nightly | `test-automation` |
+
+Pre-release closes with the **test summary report** (`templates/test-summary-report.md`,
+per `test-strategy`). That report is the stage's evidence, and a named human signs its
+go/no-go.
 
 ## What blocks and what informs
 

@@ -26,7 +26,9 @@ and the traceability matrix has to be maintained by hand — which means it will
   accessibility check.
 - **No sleeps.** Wait for a condition, never for a duration.
 - **Isolate the layers.** End-to-end suites should be thin: the critical journeys only.
-  Everything else belongs lower, where it is faster and more stable.
+  Everything else belongs lower, where it is faster and more stable. For browser
+  automation specifics (Playwright, Selenium, Cypress, cross-browser, visual
+  regression, localisation), apply `e2e-ui-testing`.
 
 ## Test data
 
@@ -67,6 +69,16 @@ suite people do not trust is a suite people bypass.
 - **Never** fix flake by adding a retry to hide it, widening a wait, or loosening an
   assertion. Find the race.
 - Flake rate is a tracked metric, not a mood.
+
+**Detecting flake.** A test is flaky when it both passes and fails on the **same
+commit** in the same environment. Detect it deliberately, in nightly runs rather than
+in the merge gate: rerun failures, run the suite in random order and in parallel, and
+compare results across repeated runs of an unchanged commit. A test that failed and
+then passed on rerun is recorded as **flaky**, never as passed. It goes straight to
+quarantine and `flake-triage`. Detection reruns exist to find flake. The merge-gating
+run keeps retries off, so a rerun can never turn red into green there. Flake rate
+= flaky tests ÷ tests executed, per week, tracked alongside quarantine count and
+quarantine age.
 
 ## Interactive browser tooling vs. scripted tests
 

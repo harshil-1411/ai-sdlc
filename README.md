@@ -329,6 +329,7 @@ skill's trigger phrases in one place, see
 | `toolchain-discovery` | Which tools exist, and whether the agent can reach them |
 | `design-system-discovery` | Component source of truth, tokens, conventions |
 | `compliance-discovery` | Industry, jurisdictions, frameworks — asked, not inferred |
+| `test-strategy-discovery` | The team's agreed test strategy — types in scope, targets, environments, owners — read from the repo, then asked |
 | `document-ingestion` | Existing SOPs and protocols, brought into the chain safely |
 | `stack-surveyor` (agent) | Read-only survey with evidence and confidence markers |
 
@@ -365,8 +366,14 @@ the diff — see `codebase-grounded-planning`'s "While implementing" section.
 | `testrail-authoring` | Manual cases in the tool's required format, linked back |
 | `test-automation` | Framework-agnostic discipline, tagging, flake policy |
 | `continuous-testing` | What runs when, what blocks, what counts as evidence |
+| `e2e-ui-testing` | Browser UI journeys, cross-browser/device, visual regression, localisation; Playwright / Selenium / Cypress references loaded only for the tool you use |
+| `accessibility-testing` | Conformance to your target: automated scans plus the keyboard, screen-reader, zoom and contrast checks automation can't make |
+| `performance-testing` | Load, stress, soak, spike and capacity tests against numeric targets, with baselines |
+| `security-testing` | SCA, secrets, container/IaC, DAST, fuzzing, pen testing, and one findings/suppression policy |
+| `static-analysis` | Lint, types, complexity, SAST config — baseline-and-ratchet, suppression and rule-change discipline |
 
-Also in this plugin: `agents/` (test-designer, flake-triage).
+Also in this plugin: `agents/` (test-designer, flake-triage); `templates/` (test-plan
+section, test summary report with a human-signed go/no-go, traceability matrix).
 
 ### `plugins/evidence-compliance` — for regulated records
 
@@ -396,7 +403,7 @@ flowchart TD
     D["evidence-discovery<br/>— runs first, per repo"] ==> CTX[(".evidence/context/<br/>stack · deployment · toolchain<br/>design-system · compliance")]
 
     CTX --> S["evidence-sdlc<br/>· intent → spec → plan<br/>· risk tiering, council<br/>· the deterministic gates"]
-    CTX --> Q["evidence-quality<br/>· traceability, test strategy<br/>· cases, automation, CI"]
+    CTX --> Q["evidence-quality<br/>· traceability, test strategy<br/>· cases, automation, CI<br/>· E2E, a11y, perf, security"]
     CTX --> C["evidence-compliance<br/>· loads only the control sets<br/>the profile names"]
     CTX --> I["evidence-integrations<br/>· boundary changes<br/>· contract tests"]
 
@@ -666,7 +673,7 @@ matters.
 
 ## Examples
 
-Eight worked scenarios in [`examples/scenarios/`](examples/scenarios/), each a full
+Nine worked scenarios in [`examples/scenarios/`](examples/scenarios/), each a full
 walkthrough — which skill fires at each stage, what it produces, which gate checks
 it, and why — rather than a description in the abstract:
 
@@ -679,6 +686,7 @@ it, and why — rather than a description in the abstract:
 | [`third-party-integration`](examples/scenarios/third-party-integration/README.md) | Calling an external API — where security review ends and integration review begins |
 | [`standalone-cli-audit`](examples/scenarios/standalone-cli-audit/README.md) | Using just `cli/evidence` on a repository that uses no part of this framework at all |
 | [`qa-evidence-profile`](examples/scenarios/qa-evidence-profile/README.md) | The evidence profile and per-layer test-case design made concrete for one regulated requirement — what each case's evidence actually is, and where it lands |
+| [`test-strategy-and-release-cycle`](examples/scenarios/test-strategy-and-release-cycle/README.md) | The testing side end to end: the onboarding test-strategy interview, one change's performance, accessibility, E2E and security requirements proven, and a human-signed go/no-go |
 | [`sensor-and-learning-loop`](examples/scenarios/sensor-and-learning-loop/README.md) | The sensor catches an unfilled "Areas of concern" stub before review; a mid-session correction becomes a durable `CLAUDE.md` line instead of being forgotten by the next session |
 
 See [`examples/README.md`](examples/README.md) for the full index, including the
