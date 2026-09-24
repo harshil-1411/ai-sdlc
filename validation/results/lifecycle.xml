@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence lifecycle CLI" tests="25" failures="0">
+<testsuite name="evidence lifecycle CLI" tests="33" failures="0">
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 change start creates state"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 change start rejects a non-key"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 status reports missing plan"></testcase>
@@ -25,4 +25,12 @@
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 GitHub approval refused when the approver is the PR author"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 github approval mode refuses the prompt channel"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 github mode with no allowed approvers refuses"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-SLF-01 the human-terminal check reads and writes a real (non-seekable) terminal"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-SLF-01 the human-terminal check still refuses inside Claude Code"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 `evidence change clear-violations` without the key in a signed repo refuses and names the key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 `evidence change set-tier` without the key in a signed repo refuses and names the key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 `evidence change release` without the key in a signed repo refuses and names the key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 `evidence approve ABC-7` without the key in a signed repo refuses and names the key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 a signed .evidence/changes/… violations file alone marks the repository as signed"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 a signed .evidence/violations/… violations file alone marks the repository as signed"></testcase>
 </testsuite>

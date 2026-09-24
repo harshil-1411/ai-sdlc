@@ -62,6 +62,81 @@ def prompt(cwd, text):
     return json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else ""
 
 
+def signed_terminal_tests():
+    """PILOT-57: human terminal actions (spec D1, D7)."""
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import lifecycle
+    # REQ-SLF-01: a real terminal is not seekable; the confirmation channel must still work on one
+    saved = {k: os.environ.pop(k) for k in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT") if k in os.environ}
+    label = "REQ-SLF-01 the human-terminal check reads and writes a real (non-seekable) terminal"
+    try:
+        master, slave = os.openpty()
+    except OSError as e:
+        # A sandbox without pseudo-terminals records no result, so this is not proof there; CI (Linux) runs it.
+        print(f"SKIP {label}: no pseudo-terminal here ({e})")
+        master = None
+    if master is not None:
+        try:
+            tty = lifecycle._human_tty(os.ttyname(slave))
+            tty.write("Type the key to confirm: ")
+            tty.flush()
+            os.write(master, b"ABC-7\n")
+            line = tty.readline().strip()
+            prompt_seen = os.read(master, 200)
+            check(label, line == "ABC-7" and b"confirm" in prompt_seen, (line, prompt_seen))
+        except Exception as e:
+            check(label, False, repr(e))
+        finally:
+            os.close(master)
+            os.close(slave)
+    os.environ.update(saved)
+    try:
+        os.environ["CLAUDECODE"] = "1"
+        lifecycle._human_tty()
+        refused = False
+    except lifecycle.HumanOnly:
+        refused = True
+    finally:
+        os.environ.pop("CLAUDECODE", None)
+        os.environ.update(saved)
+    check("REQ-SLF-01 the human-terminal check still refuses inside Claude Code", refused)
+
+    # REQ-SLF-05: in a signed deployment, a terminal without the key must not write unsigned records
+    d = repo()
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    import importlib, signing, state as st
+    importlib.reload(signing)
+    st.save_state(d, "ABC-7", {"key": "ABC-7", "tier": 1, "kind": "feature", "stage": "plan"})
+    del os.environ["EVIDENCE_SIGNING_KEY"]
+    importlib.reload(signing)
+    before = open(os.path.join(d, ".evidence", "changes", "ABC-7", "state.json")).read()
+    human = {k: v for k, v in ENV.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
+    for args in (["change", "clear-violations", "ABC-7"], ["change", "set-tier", "ABC-7", "2"], ["change", "release", "ABC-7"],
+                 ["approve", "ABC-7"]):
+        r = subprocess.run([sys.executable, EVIDENCE] + args, cwd=d, capture_output=True, text=True, env=human,
+                           stdin=subprocess.DEVNULL)
+        check(f"REQ-SLF-05 `evidence {' '.join(args[:2])}` without the key in a signed repo refuses and names the key",
+              r.returncode != 0 and "EVIDENCE_SIGNING_KEY" in (r.stderr + r.stdout)
+              and open(os.path.join(d, ".evidence", "changes", "ABC-7", "state.json")).read() == before
+              and not os.path.exists(os.path.join(d, ".evidence", "changes", "ABC-7", "approval.json")), r.stderr + r.stdout)
+    shutil.rmtree(d)
+    # a repository whose only signed record is a violations file is still recognised as signed
+    for rel in (os.path.join("changes", "ABC-7", "violations.json"), os.path.join("violations", "feature_ABC-7-login.json")):
+        d = repo()
+        os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+        importlib.reload(signing)
+        p = os.path.join(d, ".evidence", rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        json.dump(signing.sign({"entries": []}), open(p, "w"))
+        del os.environ["EVIDENCE_SIGNING_KEY"]
+        importlib.reload(signing)
+        r = subprocess.run([sys.executable, EVIDENCE, "change", "clear-violations", "ABC-7"], cwd=d, capture_output=True,
+                           text=True, env=human, stdin=subprocess.DEVNULL)
+        check(f"REQ-SLF-05 a signed .evidence/{rel.split(os.sep)[0]}/… violations file alone marks the repository as signed",
+              r.returncode != 0 and "EVIDENCE_SIGNING_KEY" in (r.stderr + r.stdout), r.stderr + r.stdout)
+        shutil.rmtree(d)
+
+
 def main():
     d = repo()
     r = run(["change", "start", "ABC-7", "--tier", "1", "--kind", "feature"], d)
@@ -171,6 +246,7 @@ def main():
     r = run(["approve", "ABC-8", "--github-pr", "5"], d, env={"EVIDENCE_GH": fake, "EVIDENCE_ORG_POLICY": org})
     check("REQ-V2A-01 github mode with no allowed approvers refuses", r.returncode != 0 and "allowed_approvers" in r.stderr, r.stderr)
     shutil.rmtree(d)
+    signed_terminal_tests()
     print(f"\n{res['pass']} passed, {res['fail']} failed")
     if os.environ.get("JUNIT_OUT"):
         from xml.sax.saxutils import escape, quoteattr

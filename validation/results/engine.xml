@@ -1,5 +1,65 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence-sdlc gate engine" tests="341" failures="0">
+<testsuite name="evidence-sdlc gate engine" tests="402" failures="0">
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-07 20 concurrent audit appends on a fresh repository keep one unbroken chain: every entry, no fork, no false tamper recovery"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 a concurrent sibling fork verifies, reported as a named warning"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 a deleted entry still fails verification"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 an altered entry still fails verification"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 a forked sibling with a bad signature fails"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 an entry pointing further back than its sibling is a break, not a fork"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 an entry duplicated right after itself is a break, not a fork"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 another session's chain spliced in after the first entry is a break, not a fork"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 the hook refuses `--plan` and writes nothing"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 the hook refuses `--spec` and writes nothing"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 the hook refuses `--intent` and writes nothing"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 the hook refuses `--quick` and writes nothing"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 the hook refuses when the repository is not the session's project (CLAUDE_PROJECT_DIR)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 a read-only agent cannot have the hook change lifecycle state"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 a hook-performed start records via: hook and the agent session"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 an absolute change key is refused by the hook and another repository's state is untouched"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 an `..` change key is refused by the hook and another repository's state is untouched"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 an slash change key is refused by the hook and another repository's state is untouched"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 the CLI refuses a path as a change key for every subcommand"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 a signed state copied under another key's directory is rejected on load"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 without CLAUDE_PROJECT_DIR the hook performs nothing (fails closed)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 security: a symlinked change directory does not redirect the hook's signed write"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 security: the audit append does not follow a symlinked log"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 security: the audit append refuses a hard-linked log"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 security: saving state replaces a hard-linked state.json instead of writing through it"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 an unreadable change state still records the monitor's violations and an engine-error entry"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 a deny entry left out of the staged audit log blocks the commit"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-07 security: a hard-linked audit log is moved aside, a fresh log records it, and a violation is opened"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-07 security: a read-only audit log is moved aside the same way"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-07 security: when the audit log cannot be written at all, every call is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-07 security: an unreadable audit directory (the log itself not yet seen) denies every call"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-07 security: a read-only audit directory denies a new session whose log cannot be created"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-07 security: an audit directory replaced by a file denies every call"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 a deny entry rewritten in place as a `tool` entry does not pass as the unstaged tail"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 security: a failing integrity check is recorded as a violation, not swallowed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 `--plan .Claude/commands/x.md` is refused whatever its case"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 `--plan .EVIDENCE/x.md` is refused whatever its case"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 `--plan .Git/x.md` is refused whatever its case"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 agent `change start` is performed by the hook and its state is signed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 agent `change advance` is performed by the hook and stays signed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 a lifecycle call chained with another program is denied and writes nothing"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 without a key, the hook refuses a Tier 2 start (unsigned-mode cap)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 in plan mode the hook performs nothing"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 without a key, a Tier 1 start is performed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 the hook runs its own engine, never the agent's ./evidence script"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: --plan absolute path outside the repo is refused and nothing is written"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: --plan `..` escape is refused and nothing is written"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: --plan control-plane file is refused and nothing is written"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: --plan non-Markdown path is refused and nothing is written"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: --quick (human CLI) never overwrites an existing plan"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: --quick will not follow a symlinked plan/ directory out of the repository"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: the hook will not start or sign a change in another repository"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: advance refuses to re-sign unsigned (agent-written) state"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-03 unstaging a file (staged -&gt; untracked directory) is not reported as a write"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-03 a new file inside an untracked directory is still judged"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 commit allowed when the audit log only gained the `git add` call's entry since staging"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 commit denied when the staged audit log is not a prefix (altered)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 commit denied when the audit log is more than two entries ahead of the index"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 state.json changed after staging still denies"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 commit denied when the audit log was never staged"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: by default an unsigned session cannot work on a Tier 2 change"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: Tier 3 plan approved by the person who started the change is denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: Tier 3 plan approved by a second person is allowed"></testcase>
@@ -50,8 +110,9 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 round4: a commit staging an unclaimed file is denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-02 round4: a later commit with the audit log modified but unstaged is denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: a replayed integrity snapshot is recorded as a violation"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 round4: the plugin's own CLI is allowed wherever the plugin is installed"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 round4: `change start --quick` creates the plan without an integrity violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 round4: the plugin's own CLI is recognised wherever the plugin is installed; an agent's `--quick` is refused with guidance (PILOT-57: the hook writes only state.json)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 round4: `change start --quick` from a human terminal creates the plan"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 round4: read-only CLI calls still run in the agent's shell"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 re-audit: unsigned lifecycle state rejected when a signing key is configured"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 re-audit: forged (unsigned) approval rejected when a signing key is configured"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 re-audit: approval written by a human channel (signed) allows"></testcase>
@@ -77,7 +138,7 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 re-audit: .claude/commands/deploy.md is control plane"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 re-audit: .claude/skills/x/SKILL.md is control plane"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: a released change no longer unlocks edits"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: agent-run `evidence change start` is not reverted by the integrity monitor"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: agent-run `evidence change start` creates the change (performed by the hook)"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: a removed integrity snapshot is recorded as a violation"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: integrity monitor runs inside a git worktree"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: CI detached HEAD resolves the key from GITHUB_HEAD_REF"></testcase>

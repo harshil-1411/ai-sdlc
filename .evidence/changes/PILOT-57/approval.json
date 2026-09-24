@@ -1,0 +1,10 @@
+{
+  "approved_at": "2026-09-24T10:01:08Z",
+  "approver": "suparn.bector@msbdocs.com",
+  "host": "MSBINEM-PC001",
+  "key": "PILOT-57",
+  "method": "prompt",
+  "plan_path": "intent/2026-09-24-signed-lifecycle-fixes/plan.md",
+  "plan_sha256": "9900d90b06ff5bb306d0daab237d6187b6b8ccb954b78c8271d06e7a65ac834d",
+  "sig": "1dceea3faa83f44a46cc3dda3411d61dd826043ef91fadedd4083e28c4ed382a"
+}

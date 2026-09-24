@@ -23,5 +23,13 @@ PASS REQ-V2A-01 GitHub approval recorded from an approving review (agent may rec
 PASS REQ-V2A-01 GitHub approval refused when the approver is the PR author
 PASS REQ-V2A-01 github approval mode refuses the prompt channel
 PASS REQ-V2A-01 github mode with no allowed approvers refuses
+PASS REQ-SLF-01 the human-terminal check reads and writes a real (non-seekable) terminal
+PASS REQ-SLF-01 the human-terminal check still refuses inside Claude Code
+PASS REQ-SLF-05 `evidence change clear-violations` without the key in a signed repo refuses and names the key
+PASS REQ-SLF-05 `evidence change set-tier` without the key in a signed repo refuses and names the key
+PASS REQ-SLF-05 `evidence change release` without the key in a signed repo refuses and names the key
+PASS REQ-SLF-05 `evidence approve ABC-7` without the key in a signed repo refuses and names the key
+PASS REQ-SLF-05 a signed .evidence/changes/… violations file alone marks the repository as signed
+PASS REQ-SLF-05 a signed .evidence/violations/… violations file alone marks the repository as signed
 
-25 passed, 0 failed
+33 passed, 0 failed

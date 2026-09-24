@@ -166,6 +166,35 @@ records are *detected* (the integrity monitor) but not *proven*.
 The key only helps if the sandbox is actually on. `sandbox.failIfUnavailable: true` in
 the template makes sure it is.
 
+### Working with the key in place
+
+- **Agent lifecycle calls are performed by the hook.** When the agent runs
+  `evidence change start <KEY> --tier <n> --kind <kind>` or `evidence change advance <KEY> <stage>`
+  as its own command, the PreToolUse hook runs it with the engine's code and key and answers
+  `Done by the gate engine: …`. It does so only in the project Claude Code opened
+  (`CLAUDE_PROJECT_DIR`), never for read-only review agents or in plan mode, and refuses other
+  options (`--quick`, `--plan`, …). The agent writes the plan with the Write tool instead. The
+  history entry records `via: hook` and the agent session. The command never runs in the agent's shell, which has
+  no key and would write unsigned state that the gates then reject. Chained with other
+  programs, the call is refused: run `git switch -c …` first, then the `evidence` call alone.
+- **Human terminal actions need the key in that terminal.** `evidence approve`,
+  `change set-tier`, `change release` and `change clear-violations` refuse to write an
+  unsigned record into a signed repository. Give the key to that one command only, without
+  printing it or leaving it in your shell:
+
+  ```bash
+  EVIDENCE_SIGNING_KEY="$(python3 -c 'import json; print(json.load(open("/Library/Application Support/ClaudeCode/managed-settings.json"))["env"]["EVIDENCE_SIGNING_KEY"])')" \
+    evidence change clear-violations ABC-123
+  ```
+
+  On Linux the file is `/etc/claude-code/managed-settings.json`. Use `sudo python3` if
+  only root can read it. Plan approval needs no key: send
+  `/evidence-sdlc:approve <KEY> <plan-sha>` in the Claude Code prompt.
+- **Committing.** Stage the change's evidence (`git add .evidence/…`) in one call, then
+  commit in the next. The engine appends to the session audit log on every call, so the
+  commit accepts a staged log that is behind the file by at most two appended entries.
+  Those entries go into the next commit.
+
 ## Owner actions checklist
 
 A plugin can't do any of these. Each one is the owner's job, and each should be

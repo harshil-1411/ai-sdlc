@@ -1,0 +1,27 @@
+{
+  "created_at": "2026-09-24T08:34:12Z",
+  "created_by": "suparn.bector@msbdocs.com",
+  "history": [
+    {
+      "at": "2026-09-24T08:34:12Z",
+      "by": "suparn.bector@msbdocs.com",
+      "stage": "spec"
+    },
+    {
+      "at": "2026-09-24T08:44:46Z",
+      "by": "suparn.bector@msbdocs.com",
+      "stage": "approved",
+      "via": "prompt"
+    },
+    {
+      "at": "2026-09-24T08:46:13Z",
+      "by": "engine",
+      "stage": "implementing"
+    }
+  ],
+  "key": "PILOT-57",
+  "kind": "fix",
+  "sig": "4632e0a94e2a3a1fd36724cf521facf55e17a232da7c9c8625f20e77c2ecff05",
+  "stage": "implementing",
+  "tier": 2
+}

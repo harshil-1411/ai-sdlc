@@ -10,8 +10,9 @@ import json
 import os
 import re
 import subprocess
+import sys
 
-ENGINE_VERSION = "2.0.0"
+ENGINE_VERSION = "2.0.1"
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_POLICY = os.path.join(HERE, "..", "..", "policy", "default-policy.json")
 ORG_POLICY_PATHS = [
@@ -234,7 +235,13 @@ def active_key(root, policy, branch=None):
 
 # ------------------------------------------------------------------ change state
 
+SAFE_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}")
+
+
 def change_dir(root, key):
+    # A key becomes a path component; the unsandboxed hook writes here, so no `/`, `..` or absolute keys.
+    if not SAFE_KEY.fullmatch(key or ""):
+        raise ValueError(f"'{key}' is not a usable change key (letters, digits, '-' and '_' only)")
     return os.path.join(root, ".evidence", "changes", key)
 
 
@@ -243,19 +250,93 @@ def load_state(root, key):
     if not os.path.isfile(p):
         return None
     with open(p) as f:
-        return json.load(f)
+        state = json.load(f)
+    if isinstance(state, dict) and state.get("key") not in (None, key):
+        # a signed state copied under another key's directory
+        raise ValueError(f"{p} belongs to change {state.get('key')}, not {key}")
+    return state
+
+
+# ------------------------------------------------------------------ engine writes
+# Hooks run outside the agent's sandbox and hold the signing key, so every file the engine
+# writes is reached through directory handles opened without following symlinks: a link the
+# agent's shell planted under .evidence/ (or anywhere on the path) cannot redirect the write.
+
+def _rel_parts(rel):
+    parts = rel.replace(os.sep, "/").split("/")
+    if not parts or any(p in ("", ".", "..") for p in parts):
+        raise ValueError(f"refusing engine write to '{rel}'")
+    return parts
+
+
+def _dir_fd(root, dirs):
+    """A handle on root/dirs..., creating missing directories; refuses any symlinked component."""
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for d in dirs:
+            try:
+                nfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(d, 0o755, dir_fd=fd)
+                except FileExistsError:
+                    pass  # a concurrent call created it first
+                nfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = nfd
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def write_file(root, rel, data):
+    """Replace root/rel atomically with data (str or bytes). A fresh O_EXCL temp file is renamed
+    over the target, so neither a symlink nor a hard link at the target or temp name is followed."""
+    parts = _rel_parts(rel)
+    dfd = _dir_fd(root, parts[:-1])
+    tmp = f".{parts[-1]}.{os.getpid()}.tmp"
+    try:
+        try:
+            os.unlink(tmp, dir_fd=dfd)
+        except FileNotFoundError:
+            pass
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data.encode() if isinstance(data, str) else data)
+        os.replace(tmp, parts[-1], src_dir_fd=dfd, dst_dir_fd=dfd)
+    finally:
+        os.close(dfd)
+
+
+def open_append(root, rel):
+    """root/rel opened for reading and appending (binary). Refuses a symlink, a non-regular file
+    and a file with other hard links, which could point outside the repository."""
+    import stat
+    parts = _rel_parts(rel)
+    for attempt in range(5):
+        dfd = _dir_fd(root, parts[:-1])
+        try:
+            fd = os.open(parts[-1], os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o644, dir_fd=dfd)
+            break
+        except FileNotFoundError:
+            # seen on macOS when concurrent first calls are still creating the directory; walk again
+            if attempt == 4:
+                raise
+        finally:
+            os.close(dfd)
+    st_ = os.fstat(fd)
+    if not stat.S_ISREG(st_.st_mode) or st_.st_nlink != 1:
+        os.close(fd)
+        raise ValueError(f"refusing to append to '{rel}': not a plain file")
+    return os.fdopen(fd, "a+b")
 
 
 def save_state(root, key, state):
     import signing
     state = signing.sign(dict(state))
-    d = change_dir(root, key)
-    os.makedirs(d, exist_ok=True)
-    tmp = os.path.join(d, ".state.json.tmp")
-    with open(tmp, "w") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
-        f.write("\n")
-    os.replace(tmp, os.path.join(d, "state.json"))
+    change_dir(root, key)  # validates the key
+    write_file(root, f".evidence/changes/{key}/state.json", json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
 def load_approval(root, key):
@@ -387,11 +468,10 @@ def violations_path(root, key, branch):
 
 def record_violations(root, key, state, branch, violations, session):
     p = violations_path(root, key if state else None, branch)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
     data = _read_violations(p)
     for v in violations:
         data.append(dict(v, at=now(), session=session, open=True))
-    write_violations(p, data)
+    write_violations(p, data, root)
 
 
 def _read_violations(p):
@@ -411,11 +491,9 @@ def _read_violations(p):
     return raw.get("entries", [])
 
 
-def write_violations(p, data):
+def write_violations(p, data, root):
     import signing
-    with open(p, "w") as f:
-        json.dump(signing.sign({"entries": data}), f, indent=2)
-        f.write("\n")
+    write_file(root, os.path.relpath(p, root), json.dumps(signing.sign({"entries": data}), indent=2) + "\n")
 
 
 def open_violations(root, key, branch):
@@ -431,13 +509,18 @@ def audit_dir(root):
     return os.path.join(root, ".evidence", "audit")
 
 
-def _last_hash(path):
+def entry_hash(entry, prev):
+    body = {k: v for k, v in entry.items() if k not in ("hash", "sig")}
+    body["prev"] = prev
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _last_hash_fd(f):
     try:
-        with open(path, "rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - 8192))
-            tail = f.read().decode("utf-8", "replace").strip().splitlines()
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - 8192))
+        tail = f.read().decode("utf-8", "replace").strip().splitlines()
         if tail:
             return json.loads(tail[-1]).get("hash", "")
     except (OSError, ValueError):
@@ -445,35 +528,89 @@ def _last_hash(path):
     return ""
 
 
-def entry_hash(entry, prev):
-    body = {k: v for k, v in entry.items() if k not in ("hash", "sig")}
-    body["prev"] = prev
-    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def _open_log(root, rel, session):
+    """The session log for appending. A log the engine cannot append to (hard-linked, made read-only,
+    replaced by something that is not a file) is moved aside -- kept as evidence -- and a fresh log is
+    started whose first entry says so, with a violation recorded. Raises if even that is impossible."""
+    try:
+        return open_append(root, rel)
+    except (OSError, ValueError) as e:
+        # Only the log itself being refused is tampering; anything else (a directory problem, a race)
+        # is raised, never "recovered" by moving a healthy log aside.
+        import errno
+        if not os.path.lexists(os.path.join(root, rel)) or (
+                isinstance(e, OSError) and e.errno not in (errno.EACCES, errno.EPERM, errno.ELOOP, errno.EISDIR,
+                                                           errno.ENXIO, errno.EMLINK)):
+            raise
+        import secrets
+        import signing
+        parts = _rel_parts(rel)
+        dfd = _dir_fd(root, parts[:-1])
+        aside = f"{parts[-1]}.unwritable-{secrets.token_hex(4)}"
+        try:
+            os.rename(parts[-1], aside, src_dir_fd=dfd, dst_dir_fd=dfd)
+        finally:
+            os.close(dfd)
+        f = open_append(root, rel)
+        first = {"event": "audit-log-replaced", "reason": str(e)[:200], "moved_to": aside, "ts": now(), "session": session,
+                 "prev": ""}
+        first["hash"] = entry_hash(first, "")
+        f.write((json.dumps(signing.sign(first), sort_keys=True) + "\n").encode())
+        f.flush()
+        try:
+            record_violations(root, None, None, current_branch(root), [{"path": rel, "rule": "audit-tamper",
+                                                                         "action": f"moved aside to {aside}"}], session)
+        except Exception:
+            pass  # the replacement entry above is the record
+        return f
+
+
+def audit_ready(root, session):
+    """Raise if this session's existing audit log cannot be appended to (after recovery)."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", session or "unknown")[:80] or "unknown"
+    rel = f".evidence/audit/{safe}.jsonl"
+    try:
+        os.lstat(os.path.join(root, ".evidence"))
+    except FileNotFoundError:
+        return  # this repository keeps no evidence yet; nothing to protect
+    # Proven by opening (creating) the log itself, not with exists(), which reads "cannot look" as
+    # "absent", and not by entering the directory, which a read-only directory still allows.
+    _open_log(root, rel, session).close()
 
 
 def audit_append(root, session, entry):
-    d = audit_dir(root)
-    os.makedirs(d, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9_-]", "_", session or "unknown")[:80] or "unknown"
-    path = os.path.join(d, f"{safe}.jsonl")
-    prev = _last_hash(path)
     entry = dict(entry)
     entry.setdefault("ts", now())
     entry.setdefault("session", session)
     entry.setdefault("user", os.environ.get("USER") or os.environ.get("USERNAME") or "unknown")
-    entry["prev"] = prev
-    entry["hash"] = entry_hash(entry, prev)
     import signing
-    entry = signing.sign(entry)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, sort_keys=True) + "\n")
+    with _open_log(root, f".evidence/audit/{safe}.jsonl", session) as f:
+        # Concurrent tool calls (parallel subagents) append to the same log: read the last
+        # hash and append under one exclusive lock, or two entries share a prev and the chain forks.
+        try:
+            import fcntl
+            fcntl.flock(f, fcntl.LOCK_EX)
+        except (ImportError, OSError) as e:
+            sys.stderr.write(f"evidence: audit log lock unavailable ({e}); concurrent calls may fork the chain\n")
+        prev = _last_hash_fd(f)
+        entry["prev"] = prev
+        entry["hash"] = entry_hash(entry, prev)
+        entry = signing.sign(entry)
+        f.write((json.dumps(entry, sort_keys=True) + "\n").encode())
+        f.flush()
     return entry
 
 
-def audit_verify(path):
-    """Return (ok, problems). With a signing key configured, every entry must carry a valid signature."""
+def audit_verify(path, warnings=None):
+    """Return (ok, problems). With a signing key configured, every entry must carry a valid signature.
+
+    A fork -- an entry whose prev is its predecessor's prev, i.e. two entries appended from the
+    same last hash by concurrent calls before appends were locked -- is not a break: both are
+    hash-correct (and signed), and nothing is missing. It is reported in `warnings`. A deleted,
+    altered or reordered entry still fails, because some prev then matches neither neighbour."""
     import signing
-    problems, prev = [], ""
+    problems, prev, prev_of_prev, prev_session, first_session = [], "", None, None, None
     with open(path, encoding="utf-8") as f:
         for n, line in enumerate(f, 1):
             line = line.strip()
@@ -483,15 +620,23 @@ def audit_verify(path):
                 e = json.loads(line)
             except ValueError:
                 problems.append(f"line {n}: not JSON")
-                prev = ""
+                prev, prev_of_prev = "", None
                 continue
+            first_session = first_session if n > 1 else e.get("session")
             if e.get("prev", "") != prev:
-                problems.append(f"line {n}: chain broken (prev does not match line {n - 1})")
+                # a fork is two different entries of this log's own session appended from one
+                # predecessor -- not a duplicate of its sibling, not another session's chain spliced in
+                if (prev_of_prev is not None and e.get("prev", "") == prev_of_prev and e.get("hash") != prev
+                        and e.get("session") == prev_session == first_session):
+                    if warnings is not None:
+                        warnings.append(f"line {n}: fork (appended concurrently with line {n - 1} from the same entry)")
+                else:
+                    problems.append(f"line {n}: chain broken (prev does not match line {n - 1})")
             if entry_hash(e, e.get("prev", "")) != e.get("hash"):
                 problems.append(f"line {n}: content altered (hash mismatch)")
             if signing.verify(e) is False:
                 problems.append(f"line {n}: signature missing or invalid (entry not written by the gate engine)")
-            prev = e.get("hash", "")
+            prev, prev_of_prev, prev_session = e.get("hash", ""), e.get("prev", ""), e.get("session")
     return not problems, problems
 
 

@@ -237,6 +237,10 @@ check("REQ-V2P-06 README is 250 lines or fewer and personal files are not tracke
       len(read("README.md").splitlines()))
 check("REQ-V2P-07 strictKnownMarketplaces is documented as an owner action with the value to set",
       re.search(r"strictKnownMarketplaces", read("docs", "managed-settings.md")) and re.search(r"owner action", read("docs", "managed-settings.md"), re.I))
+msd = read("docs", "managed-settings.md")
+check("REQ-SLF-06 managed-settings doc: hook-performed lifecycle calls, key for human terminal actions, commit tail rule",
+      "Done by the gate engine" in msd and re.search(r'EVIDENCE_SIGNING_KEY="\$\(python3 .*\\\n\s*evidence change clear-violations', msd)
+      and "clear-violations" in msd and re.search(r"at most two appended entries", msd))
 check("REQ-V2C-01 the CLI ships in the plugin's bin/ and runs",
       subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "--version"], capture_output=True, text=True).returncode == 0)
 hj = json.load(open(P("plugins", "evidence-sdlc", "hooks", "hooks.json")))
