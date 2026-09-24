@@ -8,11 +8,18 @@
       "session": "1e01f04e-c965-4eb7-abf0-c379188964c9",
       "stage": "intent",
       "via": "hook"
+    },
+    {
+      "at": "2026-09-24T16:19:20Z",
+      "by": "suparn.bector@msbdocs.com",
+      "session": "1e01f04e-c965-4eb7-abf0-c379188964c9",
+      "stage": "spec",
+      "via": "hook"
     }
   ],
   "key": "PILOT-58",
   "kind": "fix",
-  "sig": "8a7fd13a3e6419c501b5f0d375c4837db4f3be2db5b71f39988b279efbca5315",
-  "stage": "intent",
+  "sig": "d33884e393abc964136787de2962c2aa829dfd75609c1820e756836a9d6f0367",
+  "stage": "spec",
   "tier": 3
 }
