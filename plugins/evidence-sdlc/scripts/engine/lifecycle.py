@@ -295,11 +295,11 @@ def _clear_violations(root, key):
         sys.exit("Not cleared.")
     for p in {st.violations_path(root, key, st.current_branch(root)), st.violations_path(root, None, st.current_branch(root))}:
         if os.path.isfile(p):
-            data = json.load(open(p))
+            data = st._read_violations(p)
             for v in data:
                 if v.get("open"):
                     v.update(open=False, cleared_by=_who(root), cleared_at=st.now())
-            json.dump(data, open(p, "w"), indent=2)
+            st.write_violations(p, data)
     st.audit_append(root, "clear-violations", {"event": "violations-cleared", "key": key, "by": _who(root), "count": len(vs)})
     print(f"Cleared {len(vs)} violation(s).")
     return 0

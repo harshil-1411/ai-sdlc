@@ -170,3 +170,16 @@ feature-flag config are added to change control. The ledger gets a Tier 3 floor 
 reports a Tier 2 floor. Tier 2 now also needs `code-reviewer`. `ungated` shrinks to
 just Markdown. `enforce_claims: false` is **ignored**, because a repo can't turn a
 strictness flag off.
+
+## Keys added after the v2 re-audits
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `always_gated` | `CLAUDE.md`, `REVIEW.md`, `AGENTS.md`, `.gitignore`, `.gitattributes` | Markdown and git files that are gated like source even though `*.md` is otherwise ungated: they steer agents, reviewers, or what the integrity monitor can see. |
+| `deny_background` | `true` | Deny `cmd &` and subshell backgrounding: work that runs after the command returns escapes both checks. |
+| `deny_persistence` | `true` | Deny nohup, setsid, at, crontab, launchctl, systemd-run, screen, tmux, caffeinate. |
+| `commit_requires_audit` | `true` | Every commit in an active change must include that change's current audit log, state and approval, and only claimed files. |
+| `unsigned_max_tier` | `1` | Highest tier an agent may work on when no `EVIDENCE_SIGNING_KEY` is deployed. Raising it (org policy only) accepts that approvals and records could be forged. |
+| `tier3_distinct_approver` | `true` | A Tier 3 plan approved through the prompt or terminal channel must be approved by someone other than the person who started the change. |
+| `unknown_programs` | `monitor` | `deny` turns on strict mode: any program not in the built-in known list or `known_programs` is refused, because what it writes cannot be judged. `monitor` leaves them to the integrity monitor. |
+| `known_programs` | `[]` | Programs an organisation adds to the strict-mode list. |

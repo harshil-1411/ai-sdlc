@@ -388,27 +388,38 @@ def violations_path(root, key, branch):
 def record_violations(root, key, state, branch, violations, session):
     p = violations_path(root, key if state else None, branch)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    data = []
-    if os.path.isfile(p):
-        try:
-            data = json.load(open(p))
-        except ValueError:
-            data = []
+    data = _read_violations(p)
     for v in violations:
         data.append(dict(v, at=now(), session=session, open=True))
+    write_violations(p, data)
+
+
+def _read_violations(p):
+    import signing
+    if not os.path.isfile(p):
+        return []
+    try:
+        raw = json.load(open(p))
+    except ValueError:
+        return [{"path": p, "rule": "unreadable violations file", "open": True}]
+    if isinstance(raw, list):  # pre-v2.0 format
+        return raw
+    if signing.verify(raw) is False:
+        return [{"path": p, "rule": "violations record altered (signature invalid)", "open": True}]
+    return raw.get("entries", [])
+
+
+def write_violations(p, data):
+    import signing
     with open(p, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(signing.sign({"entries": data}), f, indent=2)
         f.write("\n")
 
 
 def open_violations(root, key, branch):
     out = []
     for p in {violations_path(root, key, branch), violations_path(root, None, branch)}:
-        if os.path.isfile(p):
-            try:
-                out += [v for v in json.load(open(p)) if v.get("open")]
-            except ValueError:
-                out.append({"path": p, "rule": "unreadable violations file", "open": True})
+        out += [v for v in _read_violations(p) if v.get("open")]
     return out
 
 

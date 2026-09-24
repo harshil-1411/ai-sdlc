@@ -141,9 +141,40 @@ def snapshot(ctx):
     dirty = _dirty(root)
     snap = {"cp": cp, "dirty": dirty if isinstance(dirty, dict) else {}, "timeout": dirty == "timeout",
             "tool_use_id": ctx.payload.get("tool_use_id") or "last", "session": ctx.session, "taken_at": st.now(),
-            "audit": _audit_sizes(root), "cli_writes": sorted(cli_writes(ctx)), "root": root}
+            "audit": _audit_sizes(root), "cli_writes": sorted(cli_writes(ctx)), "root": root, "extras": _extras(root, pol)}
     with open(_snap_path(ctx.session, ctx.payload.get("tool_use_id")), "w") as f:
         json.dump(signing.sign(snap), f)
+
+
+def _extras(root, policy):
+    """Things `git status` does not show that can still change what gets reviewed:
+    git hooks/config/excludes, index flags that hide working-tree edits, the set of
+    ignored top-level entries, and the user-level control plane."""
+    ex = {}
+    gd = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root, capture_output=True, text=True, timeout=10).stdout.strip()
+    gd = gd if os.path.isabs(gd) else os.path.join(root, gd)
+    for rel in ("config", "info/exclude", "info/attributes"):
+        p = os.path.join(gd, rel)
+        ex[f".git/{rel}"] = _hash(p) if os.path.isfile(p) else None
+    hooks = os.path.join(gd, "hooks")
+    if os.path.isdir(hooks):
+        for n in sorted(os.listdir(hooks)):
+            if not n.endswith(".sample"):
+                ex[f".git/hooks/{n}"] = _hash(os.path.join(hooks, n))
+    try:
+        flags = subprocess.run(["git", "ls-files", "-v"], cwd=root, capture_output=True, text=True, timeout=20).stdout
+        hidden = sorted(l[2:] for l in flags.splitlines() if l[:1].islower() or l[:1] == "S")
+        ex["(index flags)"] = hashlib.sha256("\n".join(hidden).encode()).hexdigest()
+        ign = subprocess.run(["git", "status", "--porcelain", "--ignored=matching", "--untracked-files=no"], cwd=root,
+                             capture_output=True, text=True, timeout=20).stdout
+        ex["(ignored entries)"] = hashlib.sha256("\n".join(sorted(l for l in ign.splitlines() if l.startswith("!!"))).encode()).hexdigest()
+    except subprocess.TimeoutExpired:
+        ex["(index flags)"] = "timeout"
+    for pat in policy.get("user_control_plane", []):
+        p = os.path.expanduser(pat)
+        if "*" not in p and os.path.isfile(p):
+            ex[pat] = _hash(p)
+    return ex
 
 
 def _audit_sizes(root):
@@ -218,6 +249,14 @@ def check(ctx, judge):
                 os.remove(full)
             notes.append(f"{rel} (control plane) was created by that command" + (" and has been removed." if can_restore else "."))
             violations.append({"path": rel, "rule": "control-plane", "action": "removed" if can_restore else "recorded"})
+    # 1b. git metadata, hidden index flags, ignored entries, user control plane
+    before_ex = snap.get("extras") or {}
+    if before_ex:
+        after_ex = _extras(root, pol)
+        for k in sorted(set(before_ex) | set(after_ex)):
+            if before_ex.get(k) != after_ex.get(k):
+                notes.append(f"{k} was changed by that command (outside what git status shows).")
+                violations.append({"path": k, "rule": "hidden-change", "action": "recorded"})
     # 2. audit logs may only grow, never shrink or be replaced
     for name, size in snap.get("audit", {}).items():
         full = os.path.join(st.audit_dir(root), name)

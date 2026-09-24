@@ -452,7 +452,9 @@ def result_sidecar_ok(path):
     if rec.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
         return False, "file changed after signing"
     head = os.environ.get("GITHUB_SHA") or os.environ.get("CI_COMMIT_SHA") or _git_head()
-    if rec.get("commit") and head and rec["commit"] != head:
+    if not rec.get("commit"):
+        return False, "signature not bound to a commit"
+    if head and rec["commit"] != head:
         return False, f"signed for commit {rec['commit'][:12]}, not the commit under test ({head[:12]})"
     v = _signing().verify(rec)
     if v is None:

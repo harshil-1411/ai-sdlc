@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence-sdlc gate engine" tests="327" failures="0">
+<testsuite name="evidence-sdlc gate engine" tests="336" failures="0">
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: by default an unsigned session cannot work on a Tier 2 change"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: Tier 3 plan approved by the person who started the change is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: Tier 3 plan approved by a second person is allowed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 round5: .gitignore is gated (it controls what the monitor can see)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round5: integrity monitor records an index flag hiding edits"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round5: integrity monitor records a new git hook"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round5: integrity monitor records git exclude rules"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 round5: strict mode denies an unknown program"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 round5: strict mode allows a known program"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: sleep 3 &amp;"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: (sleep 1; cp /tmp/x src/other.py) &amp;"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: screen -dm sh -c 'rm src/other.py'"></testcase>

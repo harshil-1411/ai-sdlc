@@ -27,7 +27,11 @@ BASE_ENV = {k: v for k, v in os.environ.items()
                          "GITHUB_HEAD_REF")}
 BASE_ENV["GIT_AUTHOR_NAME"] = BASE_ENV["GIT_COMMITTER_NAME"] = "test"
 BASE_ENV["GIT_AUTHOR_EMAIL"] = BASE_ENV["GIT_COMMITTER_EMAIL"] = "test@example.com"
-BASE_ENV["EVIDENCE_ORG_POLICY"] = "/nonexistent/org-policy.json"
+# Most suites run without a signing key, so the fixture org policy opts in to unsigned
+# Tier 2/3 (the default allows only Tier 1 unsigned). suite_round5 tests the default.
+_ORG = os.path.join(tempfile.gettempdir(), "evidence-test-org-policy.json")
+json.dump({"unsigned_max_tier": 3}, open(_ORG, "w"))
+BASE_ENV["EVIDENCE_ORG_POLICY"] = _ORG
 
 PLAN_TEMPLATE = """# Plan: test change
 Tracker: {key}   From: spec.md   Date: 2026-09-24
@@ -473,7 +477,7 @@ def suite_policy_merge():
          env={"RELEASE_APPROVAL": "whatever"}, rule_hint="does not match")
     json.dump({"ungated": ["src/**", "**/*.md"]}, open(os.path.join(r, ".evidence", "policy.json"), "w"))
     org = os.path.join(r, "org.json")
-    json.dump({"allow_repo_ungated_additions": True}, open(org, "w"))
+    json.dump({"allow_repo_ungated_additions": True, "unsigned_max_tier": 3}, open(org, "w"))
     t, i = edit("src/other.py")
     case("REQ-V2X-01 org policy can permit repo ungated additions", r, t, i, "allow", env={"EVIDENCE_ORG_POLICY": org})
     shutil.rmtree(r)
@@ -883,8 +887,48 @@ def suite_round4():
     shutil.rmtree(r)
 
 
+def suite_round5():
+    """Round 5: unsigned-mode limits, Tier 3 second person, hidden changes, strict mode."""
+    r = make_repo()
+    start_change(r, tier=2, claims=("src/**",))
+    t, i = edit("src/app.py")
+    case("REQ-V2A-01 round5: by default an unsigned session cannot work on a Tier 2 change", r, t, i, "deny",
+         env={"EVIDENCE_ORG_POLICY": "/nonexistent"}, rule_hint="UNSIGNED MODE")
+    start_change(r, tier=3, claims=("src/**",))
+    st_p = os.path.join(r, ".evidence", "changes", "ABC-1", "state.json")
+    ap_p = os.path.join(r, ".evidence", "changes", "ABC-1", "approval.json")
+    stj = json.load(open(st_p)); stj["created_by"] = "dev@example.com"; json.dump(stj, open(st_p, "w"))
+    apj = json.load(open(ap_p)); apj["approver"] = "dev@example.com"; apj["method"] = "prompt"; json.dump(apj, open(ap_p, "w"))
+    case("REQ-V2A-01 round5: Tier 3 plan approved by the person who started the change is denied", r, t, i, "deny",
+         rule_hint="second person")
+    apj["approver"] = "lead@example.com"; json.dump(apj, open(ap_p, "w"))
+    case("REQ-V2A-01 round5: Tier 3 plan approved by a second person is allowed", r, t, i, "allow")
+    t2, i2 = write(".gitignore", "*\n")
+    case("REQ-V2G-03 round5: .gitignore is gated (it controls what the monitor can see)", r, t2, i2, "deny")
+    sh("git add -A && git commit -q -m 'ABC-1: c'", r)
+    for tid, mut, label in (
+            ("h1", lambda: sh("git update-index --assume-unchanged src/app.py", r), "an index flag hiding edits"),
+            ("h2", lambda: open(os.path.join(r, ".git", "hooks", "pre-commit"), "w").write("#!/bin/sh\n"), "a new git hook"),
+            ("h3", lambda: open(os.path.join(r, ".git", "info", "exclude"), "a").write("src/\n"), "git exclude rules")):
+        pre = {"session_id": "s5", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": tid,
+               "permission_mode": "default"}
+        run_hook(r, pre)
+        mut()
+        obj, _ = run_hook(r, dict(pre, hook_event_name="PostToolUse"), event="post")
+        check(f"REQ-V2G-02 round5: integrity monitor records {label}",
+              "outside what git status shows" in obj.get("hookSpecificOutput", {}).get("additionalContext", ""), obj)
+    strict = os.path.join(r, "strict.json")
+    json.dump({"unknown_programs": "deny", "unsigned_max_tier": 3}, open(strict, "w"))
+    t3, i3 = bash("./vendor/mystery-binary --flag")
+    case("REQ-V2X-01 round5: strict mode denies an unknown program", r, t3, i3, "deny", env={"EVIDENCE_ORG_POLICY": strict},
+         rule_hint="known programs")
+    t4, i4 = bash("pytest -q tests")
+    case("REQ-V2X-01 round5: strict mode allows a known program", r, t4, i4, "allow", env={"EVIDENCE_ORG_POLICY": strict})
+    shutil.rmtree(r)
+
+
 if __name__ == "__main__":
-    for fn in [suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
+    for fn in [suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
                suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]:
         fn()
     print(f"\n{results['pass']} passed, {results['fail']} failed")

@@ -153,6 +153,11 @@ def check_gated(ctx, rel, kind="write", detail=""):
                     f"{what} needs change {key} to be started. Run `evidence change start {key} --tier <1|2|3> "
                     "--kind feature|fix|chore`, write the artifacts its tier requires, and ask a human to approve the plan.")
     import signing
+    if not signing.enabled() and int(state.get("tier") or 1) > int(pol.get("unsigned_max_tier", 1)):
+        return deny("unsigned-mode",
+                    f"{what}: change {key} is Tier {state.get('tier')}, and this session has no signing key "
+                    "(UNSIGNED MODE), so its approval and records could be forged. The organisation deploys "
+                    "EVIDENCE_SIGNING_KEY (see docs/managed-settings.md), or sets unsigned_max_tier in its org policy.")
     if signing.verify(state) is False:
         return deny("state-unsigned",
                     f"{what}: the lifecycle state for {key} is not signed by the gate engine, so it may have been "
@@ -215,6 +220,12 @@ def check_gated(ctx, rel, kind="write", detail=""):
                         f"{what}: policy sets a minimum of Tier {floor} for this path, but change {key} is Tier {tier}. "
                         f"A human raises the tier with `evidence change set-tier {key} {floor}`; the tier's extra "
                         "artifacts and reviews then apply.")
+    if (tier >= 3 and pol.get("tier3_distinct_approver", True) and approval.get("method") in ("prompt", "tty")
+            and state.get("created_by") and approval.get("approver") == state.get("created_by")):
+        return deny("tier3-same-person",
+                    f"{what}: change {key} is Tier 3, and its plan was approved by the same person who started the "
+                    f"change ({approval.get('approver')}). Tier 3 needs a second person: another engineer approves "
+                    "in their own session or terminal, or the plan is approved on GitHub.")
     if tier >= 3 and pol.get("deny_tier3_auto_modes", True) and ctx.permission_mode in pol.get("tier3_denied_permission_modes", []):
         return deny("tier3-auto-mode",
                     f"{what}: change {key} is Tier 3, which requires per-change human review, but this session is in "
@@ -491,6 +502,11 @@ def _check_deploy(ctx, s):
     return None
 
 
+_KNOWN_PROGS = set(cmdparse.READ_ONLY_PROGS) | cmdparse.WRITE_PROGS | cmdparse.INTERPRETERS | cmdparse.SHELLS | {
+    "git", "gh", "evidence", "cd", "pwd", "true", "false", "sleep", "date", "which", "command", "type", "mkdir", "find",
+    "xargs", "tr", "tee", "env", "export", "npm", "npx", "pnpm", "yarn", "node", "pytest", "tox", "make", "cargo", "go",
+    "mvn", "gradle", "dotnet", "rustc", "javac", "java", "ruff", "black", "eslint", "prettier", "tsc", "jest", "vitest",
+    "playwright", "pip", "pip3", "uv", "poetry", "bundle", "rake", "rspec", "docker", "kubectl", "helm", "terraform"}
 _NETWORK_PROGS = {"curl", "wget", "nc", "ncat", "netcat", "socat", "ssh", "scp", "sftp", "telnet", "ftp", "http",
                   "https", "xh", "aria2c", "rsync"}
 _CLAUDE_BINS = {"claude", "claude-code"}
@@ -624,6 +640,10 @@ def check_bash(ctx, command):
             return deny("opaque-write",
                         f"The command name here is computed at run time ({s.argv[0]}), so the gates cannot tell what runs. "
                         "Write the command out literally.")
+        if pol.get("unknown_programs") == "deny" and s.argv and s.prog not in _KNOWN_PROGS and s.prog not in set(pol.get("known_programs", [])):
+            return deny("unknown-program",
+                        f"`{s.prog}` is not on this organisation's list of known programs (strict mode), so what it "
+                        "writes cannot be judged. Ask the platform team to add it to known_programs.")
         if _launches_claude(s):
             return deny("nested-agent",
                         "Starting another Claude Code session from an agent session is not allowed: it would run outside "

@@ -17,8 +17,6 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
-    env:
-      EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,22 +44,15 @@ jobs:
       - name: All suites (engine, lifecycle, sensor, CLI, content) -> fresh JUnit in validation/results
         run: bash scripts/ci/run-tests.sh
 
-      - name: Signing is required when the repository says so
-        if: vars.EVIDENCE_REQUIRE_SIGNED == 'true' && env.EVIDENCE_SIGNING_KEY == ''
-        run: |
-          echo "EVIDENCE_REQUIRE_SIGNED is true but the EVIDENCE_SIGNING_KEY secret is not available to this run."
-          exit 1
-
-      - name: Sign the results this run produced (only CI holds the key)
-        if: env.EVIDENCE_SIGNING_KEY != ''
-        run: python3 plugins/evidence-sdlc/bin/evidence results sign validation/results/*.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-results
+          path: validation/results/
 
       - name: Version bump check
         if: github.event_name == 'pull_request'
         run: bash scripts/ci/check-version-bump.sh "origin/${{ github.base_ref }}"
 
-      - name: Dogfood — this repository's own traceability gaps (strict)
-        run: python3 plugins/evidence-sdlc/bin/evidence gaps --strict
 
       - name: Dogfood — audit logs verify
         run: python3 plugins/evidence-sdlc/bin/evidence audit verify
@@ -75,6 +66,35 @@ jobs:
           npm install -g @anthropic-ai/claude-code
           claude plugin validate .
           for p in plugins/*/; do claude plugin validate "$p"; done
+
+  sign-and-gate:
+    # The key lives only in this job. It runs no test code: it hashes the result files the
+    # checks job uploaded, signs them bound to this commit and run, and runs the strict gate.
+    runs-on: ubuntu-latest
+    needs: checks
+    env:
+      EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: validation-results
+          path: validation/results/
+      - name: Signing is required when the repository says so
+        if: vars.EVIDENCE_REQUIRE_SIGNED == 'true' && env.EVIDENCE_SIGNING_KEY == ''
+        run: |
+          echo "EVIDENCE_REQUIRE_SIGNED is true but the EVIDENCE_SIGNING_KEY secret is not available to this run."
+          exit 1
+      - name: Sign this run's results
+        if: env.EVIDENCE_SIGNING_KEY != ''
+        run: python3 plugins/evidence-sdlc/bin/evidence results sign validation/results/*.xml
+      - name: Traceability gaps (strict)
+        run: python3 plugins/evidence-sdlc/bin/evidence gaps --strict
 
   evals:
     if: github.event_name == 'workflow_dispatch' && inputs.run_evals

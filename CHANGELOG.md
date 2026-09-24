@@ -52,6 +52,12 @@ fixed, what is partial, and what remains an owner action. Intent, spec and plan:
   must state its tier once and match state; released changes stop unlocking edits;
   reviews count only after the latest source change.
 
+- Unsigned sessions may work only on Tier 1 changes by default; Tier 3 needs a second
+  approver; the integrity monitor also watches git hooks/config/excludes, index flags
+  that hide edits, ignored entries and the user-level control plane; opt-in strict mode
+  refuses unknown programs; CI signs results in a separate job that runs no test code,
+  and signatures must be bound to a commit.
+
 ### Approval and lifecycle
 - Human-only approval through three channels: a human's chat message
   `/evidence-sdlc:approve <KEY> <sha>` (recorded by the UserPromptSubmit hook), the

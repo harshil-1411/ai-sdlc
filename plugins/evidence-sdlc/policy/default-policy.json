@@ -53,7 +53,6 @@
     "NOTICE*",
     "CHANGELOG*",
     "AUTHORS*",
-    ".gitignore",
     ".evidenceignore"
   ],
   "allow_repo_ungated_additions": false,
@@ -259,9 +258,15 @@
     "**/CLAUDE.md",
     "**/CLAUDE.local.md",
     "**/REVIEW.md",
-    "**/AGENTS.md"
+    "**/AGENTS.md",
+    ".gitignore",
+    "**/.gitignore",
+    ".gitattributes"
   ],
   "deny_persistence": true,
   "commit_requires_audit": true,
-  "deny_background": true
+  "deny_background": true,
+  "unsigned_max_tier": 1,
+  "tier3_distinct_approver": true,
+  "unknown_programs": "monitor"
 }
