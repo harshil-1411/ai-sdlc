@@ -17,6 +17,14 @@ fi
 path=$(jq -r '.tool_input.file_path // .tool_input.path // empty' <<<"$input")
 [ -z "$path" ] && exit 0
 
+# plan.md, intent/*/plan.md etc. are repo-root concepts (see codebase-grounded-
+# planning's templates and "Concurrent sessions" section) but every check below
+# is a relative-path lookup. Anchor to the repo root so a tool call made from
+# inside a subdirectory (e.g. plugins/<name>/ during plugin development) still
+# sees a plan.md that exists at the root -- without this, this gate falsely
+# denies edits from any subdirectory even when an approved plan.md is on disk.
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) && cd "$repo_root" || true
+
 case "$path" in
   */intent/*|*/docs/*|*intent.md|*spec.md|*plan.md|plan/*.md|*CLAUDE.md|*.claude/*|*/validation/*|*/tmp/*|*.log) exit 0 ;;
 esac

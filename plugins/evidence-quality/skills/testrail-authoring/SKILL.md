@@ -38,7 +38,13 @@ Each case:
   the expected result must name the audit entry, the timestamp behaviour, and what is
   displayed to the user where an approval or signature is involved.
 - **Traceability** — the tracker key in its designated field, and the `REQ-<area>-<nn>`
-  it proves in the case body.
+  it proves in the case body. **If the requester already gave you the tracker key in
+  their request, use that key — do not leave the field `TBD` or a placeholder while
+  waiting on a connector to confirm something you already have.** For example, if the
+  request says "tracker key FIX-221", `custom_tracker_key` is `FIX-221`, full stop —
+  a placeholder in that situation is not caution, it is discarding a fact you were
+  handed. Treat the key as genuinely missing, and placeholder it, only when no one has
+  stated it anywhere in the conversation and no connector can supply it.
 - **Priority** — from the risk tier of the change, not from enthusiasm.
 
 ## Write the link back

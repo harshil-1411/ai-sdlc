@@ -1,6 +1,6 @@
 ---
 name: secure-api-review
-description: Apply the organisation application security standard to any endpoint, auth flow, storage change, dependency, or infrastructure change. Use this whenever code creates or modifies an API route, touches authentication, authorization, tenancy, tokens, key material, file upload/download, webhooks, or third-party calls; whenever an OpenAPI spec is generated; and whenever anyone asks for a security review, threat model, or pen-test prep.
+description: Apply the organisation application security standard to any endpoint, auth flow, storage change, dependency, or infrastructure change. Use this whenever code creates or modifies an API route, touches authentication, authorization, tenancy, tokens, key material, file upload/download, webhooks, or third-party calls; whenever an OpenAPI spec is generated; and whenever anyone asks for a security review, threat model, or pen-test prep. Also trigger on plain pre-PR review asks with no security vocabulary at all — "I added a new endpoint, can you review it", "review this before I open the PR", "can you review this handler/route", "review this diff", "PR review" — whenever the code shown or referenced is a route, handler, or endpoint. Applies whether the code is in the repository or pasted directly into the request.
 ---
 
 # Secure API review
@@ -23,6 +23,19 @@ penetration testing. Both produce findings; a human decides.
 
 This checklist assumes a multi-tenant product handling records that customers rely on.
 Replace the examples with the two or three failures your product cannot have.
+
+## Review the code you were given
+
+If the handler, route, or diff under review is included directly in the
+request — pasted inline, in a code block, or as a diff — review that code.
+Do not require locating a matching file on disk before reviewing it. A phrase
+like "I added a new endpoint, can you review it" describes a change that
+already happened in the author's own working copy; it does not mean the code
+is present in *this* session's checkout, and an empty or unrelated repository
+here is not evidence that the change doesn't exist. If you cannot find the
+file, say so as a one-line caveat and still run the full review against the
+code you were given — never decline to review pasted code just because a
+matching file search came up empty.
 
 ## Checks
 

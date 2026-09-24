@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: regulatory-controls-reports-na-not-silence
+tags: [behavior, regulatory-controls, scaffold]
+context:
+  scaffold_script: fixture.sh

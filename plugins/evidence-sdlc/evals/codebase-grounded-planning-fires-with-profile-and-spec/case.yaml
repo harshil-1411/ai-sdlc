@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: codebase-grounded-planning-fires-with-profile-and-spec
+tags: [trigger, codebase-grounded-planning, scaffold]
+context:
+  scaffold_script: fixture.sh

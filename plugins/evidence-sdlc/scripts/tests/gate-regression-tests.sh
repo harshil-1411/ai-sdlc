@@ -94,6 +94,17 @@ ROOTPLAN="$SCRATCH/rootplan"
 mkdir -p "$ROOTPLAN"
 : > "$ROOTPLAN/plan.md"
 
+# ---- git repo with plan.md ONLY at its root, for the cwd-anchoring case
+# below: gate-plan-exists.sh used to resolve plan.md/intent/*/plan.md relative
+# to the tool call's cwd rather than the repo root, so a tool call made from a
+# subdirectory (e.g. plugins/<name>/ during plugin development) was falsely
+# denied even though an approved plan.md existed at the repo root. Found via
+# this plugin's own eval-suite work (see intent/2026-09-12-gate-regression-tests/). ----
+SUBDIRPLAN="$SCRATCH/subdirplan"
+mkdir -p "$SUBDIRPLAN/plugins/some-plugin"
+git -C "$SUBDIRPLAN" init -q -b main
+: > "$SUBDIRPLAN/plan.md"
+
 # ---- throwaway git repos with a chosen branch, one real commit ----
 make_repo() {
   local dir="$1" branch="$2"
@@ -134,6 +145,9 @@ run_case "gate-plan-exists: plan.md only at root (PILOT-7 bug scenario) -> allow
 run_case "gate-plan-exists: doc path always exempt -> allow" \
   "plugins/evidence-sdlc/scripts/gate-plan-exists.sh" \
   "$(json_path /repo/README.md)" allow "$EMPTY"
+run_case "gate-plan-exists: plan.md at repo root, tool call cwd is a subdirectory -> allow" \
+  "plugins/evidence-sdlc/scripts/gate-plan-exists.sh" \
+  "$(json_path plugins/some-plugin/src/a.py)" allow "$SUBDIRPLAN/plugins/some-plugin"
 
 echo "=== production-gate.sh ==="
 run_case "production-gate: standalone prod token -> deny" \

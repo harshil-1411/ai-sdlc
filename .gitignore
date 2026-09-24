@@ -5,4 +5,11 @@ __pycache__/
 # output) -- explicitly not the system of record per its own comment and
 # governance/records-retention.md ("git history and the telemetry export are
 # the audit trail; this is a convenience record for engineers").
-.claude/logs/
+# Un-anchored (**/) because a session run from inside plugins/<name>/ writes
+# its own .claude/logs/ there too, not just at the repo root.
+**/.claude/logs/
+
+# claude plugin eval run output (per plugin: plugins/<name>/evals/results/).
+# Un-anchored (**/) -- a mid-pattern slash would anchor this to the repo root
+# and miss every plugin's own evals/results/ subdirectory.
+**/evals/results/

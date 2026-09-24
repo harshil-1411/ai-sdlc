@@ -1,6 +1,6 @@
 ---
 name: contract-testing
-description: Establish and maintain contract tests so integration breakages are caught in the pipeline instead of in production. Use whenever an integration is added or changed, whenever a partner publishes a new API version, whenever an integration incident is investigated, and whenever a spec relies on an external system behaving a particular way. Never rely on a shared staging environment as the only proof an integration works.
+description: Establish and maintain contract tests so integration breakages are caught in the pipeline instead of in production. Use whenever an integration is added or changed, whenever a partner publishes a new API version, whenever an integration incident is investigated, and whenever a spec relies on an external system behaving a particular way. Trigger specifically when a contract test starts failing and someone proposes updating the contract/fixture/stub file to match the partner's new response so the test passes again — establish whether it's your code, their contract, or a misunderstanding before touching the contract file; treat that request the same as "update the test to match the bug." Never rely on a shared staging environment as the only proof an integration works.
 ---
 
 # Contract testing
