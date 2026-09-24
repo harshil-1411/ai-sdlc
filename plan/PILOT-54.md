@@ -35,6 +35,7 @@ inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
 - `tests/content_acceptance_tests.py`
 - `plugins/evidence-sdlc/commands/start.md`
 - `validation/results/**`
+- `.evidence/adapter.yml`
 
 Not claimed; made by the human: `managed-settings.json` (control plane, done in 5f5487d).
 
@@ -66,6 +67,11 @@ Not claimed; made by the human: `managed-settings.json` (control plane, done in 
   - Create the branch first, in its own Bash call.
   - Then run `evidence change start` as its own command. The gate engine performs it, and refuses it when chained.
 - `tests/content_acceptance_tests.py`: new checks (see Proof).
+- **Revision 2** (after the human's first `run-tests.sh` runs, on 2026-09-24):
+  - What happened: REQ-P54-01..06 showed as ORPHANED / UNVERIFIED-RESULT in `evidence gaps --strict`, even with passing results in `content.xml`. The cause is that `.evidence/adapter.yml` `spec_glob` lists only `intent/*/spec.md`, so a Tier 1 change's requirement IDs, which live in `plan/<KEY>.md`, are never read as requirements.
+  - Fix: add `plan/*.md` to `spec_glob` in `.evidence/adapter.yml`.
+  - Check REQ-P54-07 confirms `evidence gaps` reads requirements from the plan.
+  - Implementation commit 1d7e871 is already on this branch. This revision adds only the adapter line and its check.
 
 ## Order of work
 1. **Done by the human (5f5487d):** the `//` permission paths and the marketplace `repo` in `managed-settings.json`.
@@ -93,15 +99,18 @@ N/A — Tier 1
 
 ## Proof
 
-| REQ ID | Layer | Automated? | Test case ID | Automated test | Evidence |
-| --- | --- | --- | --- | --- | --- |
-| REQ-P54-01 No `REPLACE-WITH-YOUR-ORG` in tracked files outside `CHANGELOG.md`, `intent/`, `plan/` and `validation/`; every plugin.json `repository` is `https://github.com/harshil-1411/ai-sdlc` | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-01 …" | validation/results/content.xml |
-| REQ-P54-02 `.github/CODEOWNERS` exists, has a default owner, covers `.evidence/policy.json`, `.claude/`, `managed-settings.json`, `.github/` and the engine, and has no `@your-org` placeholder | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-02 …" | validation/results/content.xml |
-| REQ-P54-03 Every plugin.json version equals its marketplace.json entry, is 2.0.2, and CHANGELOG has `## 2.0.2` | content + CI script | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-03 …"; `scripts/ci/check-version-bump.sh` | validation/results/content.xml; CI log |
-| REQ-P54-04 Every `permissions` rule in `managed-settings.json` whose path is absolute uses `//`, and the pre-fix template at 1391408 is detected as failing | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-04 …" | validation/results/content.xml |
-| REQ-P54-05 `docs/managed-settings.md` documents the `//` rule and a Read-tool canary step; the supplier packet no longer claims shell-only hiding | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-05 …" | validation/results/content.xml |
-| REQ-P54-06 `commands/start.md` says to run `evidence change start` as its own command, performed by the gate engine | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-06 …" | validation/results/content.xml |
-| REQ-P54-04 (live) With the fixed settings deployed, a Read of a file in the managed directory is denied by permission settings | manual | no | MAN-P54-01 | — | Observed denied on 2026-09-24 in session 1e01f04e ("File is in a directory that is denied by your permission settings"); the human confirmed the installed file uses `//` paths. |
+Revision 3: each ID now sits alone in the REQ ID cell. `evidence gaps` defines a requirement only from a table cell that is exactly the ID. Revision 2 put the ID and its description in one cell, so no row defined anything.
+
+| REQ ID | Requirement | Layer | Automated? | Test case ID | Automated test | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| REQ-P54-01 | No `REPLACE-WITH-YOUR-ORG` in tracked files outside `CHANGELOG.md`, `intent/`, `plan/`, `validation/`, `.evidence/` and the test file itself; every plugin.json `repository` is `https://github.com/harshil-1411/ai-sdlc` | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-01 …" | validation/results/content.xml |
+| REQ-P54-02 | `.github/CODEOWNERS` exists, has a default owner, covers `.evidence/policy.json`, `.claude/`, `managed-settings.json`, `.github/` and the engine, and has no `@your-org` placeholder | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-02 …" | validation/results/content.xml |
+| REQ-P54-03 | Every plugin.json version equals its marketplace.json entry, is 2.0.2, and CHANGELOG has `## 2.0.2` | content + CI script | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-03 …"; `scripts/ci/check-version-bump.sh` | validation/results/content.xml; CI log |
+| REQ-P54-04 | Every `permissions` rule in `managed-settings.json` whose path is absolute uses `//`; the managed directories are denied to Read; the pre-fix template at 1391408 is detected as failing | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-04 …" | validation/results/content.xml |
+| REQ-P54-05 | `docs/managed-settings.md` documents the `//` rule and a Read-tool canary step; the supplier packet no longer claims shell-only hiding | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-05 …" | validation/results/content.xml |
+| REQ-P54-06 | `commands/start.md` says to run `evidence change start` as its own command, performed by the gate engine | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-06 …" | validation/results/content.xml |
+| REQ-P54-07 | `evidence gaps` reads requirement IDs from Tier 1 plans (`plan/*.md`), so REQ-P54-01..06 are requirements with covering tests, not ORPHANED | content | yes | — | `tests/content_acceptance_tests.py` "REQ-P54-07 …" (the adapter's spec_glob includes `plan/*.md`, and `evidence gaps` lists no REQ-P54 test as ORPHANED) | validation/results/content.xml |
+| MAN-P54-01 | Live: with the fixed settings deployed, a Read of a file in the managed directory is denied by permission settings (REQ-P54-04) | manual | no | MAN-P54-01 | — | Observed denied on 2026-09-24 in session 1e01f04e ("File is in a directory that is denied by your permission settings"); the human confirmed the installed file uses `//` paths. |
 
 ## Considered and rejected
 - **Editing `managed-settings.json` from the agent.** It is control plane; the engine denies it by design.

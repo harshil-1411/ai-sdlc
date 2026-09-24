@@ -280,6 +280,11 @@ check("REQ-P54-05 managed-settings doc states the // rule with a Read-tool canar
 check("REQ-P54-06 the start command says to run `evidence change start` as its own command, performed by the gate engine",
       re.search(r"own command", read("plugins", "evidence-sdlc", "commands", "start.md"))
       and re.search(r"gate engine", read("plugins", "evidence-sdlc", "commands", "start.md")))
+gp = subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "gaps"], cwd=ROOT,
+                    capture_output=True, text=True).stdout
+orphan = gp.split("ORPHANED", 1)[1].split("\n\n", 1)[0] if "ORPHANED" in gp else ""
+check("REQ-P54-07 evidence gaps reads requirement IDs from Tier 1 plans (plan/*.md), so plan-only REQ IDs are not orphaned",
+      re.search(r"^\s*-\s*plan/\*\.md\s*$", read(".evidence", "adapter.yml"), re.M) and "REQ-P54" not in orphan, orphan[:300])
 check("REQ-V2C-01 the CLI ships in the plugin's bin/ and runs",
       subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "--version"], capture_output=True, text=True).returncode == 0)
 hj = json.load(open(P("plugins", "evidence-sdlc", "hooks", "hooks.json")))
