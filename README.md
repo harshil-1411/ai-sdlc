@@ -40,7 +40,12 @@ Every skill's trigger phrases are in [docs/skills-reference.md](docs/skills-refe
 
 ## Install
 
-Requirements: Claude Code, `git`, **Python 3.8+** on `PATH`, and macOS or Linux (WSL on Windows; native Windows is not supported). The gate engine and
+Requirements: Claude Code, `git`, **Python 3.8+** on `PATH`, and macOS or Linux (WSL on Windows; native Windows is not supported).
+
+**Signing key.** Without `EVIDENCE_SIGNING_KEY` the plugins run in *unsigned mode*,
+which is fine for a trial but limits agent work to Tier 1 changes: approvals and
+records can't be told apart from forgeries without it. For Tier 2 and 3 work, deploy
+the key as described in [docs/managed-settings.md](docs/managed-settings.md). The gate engine and
 the CLI use only the standard library. `jq` is no longer needed. If `python3` is
 missing, the engine fails closed and denies every file change and command.
 

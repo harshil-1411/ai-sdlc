@@ -72,8 +72,6 @@ jobs:
     # checks job uploaded, signs them bound to this commit and run, and runs the strict gate.
     runs-on: ubuntu-latest
     needs: checks
-    env:
-      EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -85,16 +83,26 @@ jobs:
         with:
           name: validation-results
           path: validation/results/
-      - name: Signing is required when the repository says so
-        if: vars.EVIDENCE_REQUIRE_SIGNED == 'true' && env.EVIDENCE_SIGNING_KEY == ''
+      - name: Trusted signer = the base branch's CLI, never the PR's own copy
         run: |
-          echo "EVIDENCE_REQUIRE_SIGNED is true but the EVIDENCE_SIGNING_KEY secret is not available to this run."
-          exit 1
-      - name: Sign this run's results
-        if: env.EVIDENCE_SIGNING_KEY != ''
-        run: python3 plugins/evidence-sdlc/bin/evidence results sign validation/results/*.xml
-      - name: Traceability gaps (strict)
-        run: python3 plugins/evidence-sdlc/bin/evidence gaps --strict
+          base="${{ github.base_ref || github.event.repository.default_branch }}"
+          git fetch -q origin "$base"
+          git worktree add -q ../trusted "origin/$base"
+      - name: Signing is required when the repository says so
+        if: vars.EVIDENCE_REQUIRE_SIGNED == 'true'
+        env:
+          HAS_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != "true" ]; then echo "EVIDENCE_REQUIRE_SIGNED is true but no EVIDENCE_SIGNING_KEY secret"; exit 1; fi
+      - name: Sign this run's results (key visible to this step only)
+        env:
+          EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+        run: |
+          if [ -n "$EVIDENCE_SIGNING_KEY" ]; then python3 ../trusted/plugins/evidence-sdlc/bin/evidence results sign validation/results/*.xml; fi
+      - name: Traceability gaps (strict, trusted CLI)
+        env:
+          EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+        run: python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --strict
 
   evals:
     if: github.event_name == 'workflow_dispatch' && inputs.run_evals

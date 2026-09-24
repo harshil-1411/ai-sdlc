@@ -170,10 +170,11 @@ def _extras(root, policy):
         ex["(ignored entries)"] = hashlib.sha256("\n".join(sorted(l for l in ign.splitlines() if l.startswith("!!"))).encode()).hexdigest()
     except subprocess.TimeoutExpired:
         ex["(index flags)"] = "timeout"
-    for pat in policy.get("user_control_plane", []):
+    for pat in list(policy.get("user_control_plane", [])) + ["~/.gitconfig", "~/.config/git/config", "~/.claude/CLAUDE.md"]:
         p = os.path.expanduser(pat)
-        if "*" not in p and os.path.isfile(p):
-            ex[pat] = _hash(p)
+        for f in (glob.glob(p, recursive=True)[:500] if "*" in p else [p]):
+            if os.path.isfile(f):
+                ex[f] = _hash(f)
     return ex
 
 

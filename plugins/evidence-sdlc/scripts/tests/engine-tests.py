@@ -416,7 +416,7 @@ def suite_commit():
     case("REQ-V2A-03 commit -F - reads the heredoc", r, t, i, "allow")
     t, i = bash("git commit -m \"$(cat <<'EOF'\nno key here\nEOF\n)\"")
     case("REQ-V2G-07 heredoc message without key denied", r, t, i, "deny", rule_hint="no tracker key")
-    t, i = bash("git -c user.name=x commit -m 'fix'")
+    t, i = bash("git -c core.quotepath=off commit -m 'fix'")
     case("REQ-V2G-07 git -c commit still checked", r, t, i, "deny", rule_hint="no tracker key")
     t, i = bash("git commit -am 'ABC-1: x' -m 'Agent-Session: s1'")
     case("REQ-V2G-07 combined -am flags parsed", r, t, i, "allow")
@@ -917,6 +917,13 @@ def suite_round5():
         obj, _ = run_hook(r, dict(pre, hook_event_name="PostToolUse"), event="post")
         check(f"REQ-V2G-02 round5: integrity monitor records {label}",
               "outside what git status shows" in obj.get("hookSpecificOutput", {}).get("additionalContext", ""), obj)
+    for c in ["GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email GIT_CONFIG_VALUE_0=bot@x evidence change start ABC-7 --tier 3",
+              "GIT_AUTHOR_EMAIL=boss@corp.com git commit -m 'ABC-1: x'", "git config user.email boss@corp.com",
+              "git -c user.email=boss@corp.com commit -m 'ABC-1: x'"]:
+        t5, i5 = bash(c)
+        case(f"REQ-V2A-01 round6: identity spoofing denied: {c[:45]}", r, t5, i5, "deny", rule_hint="identity")
+    t5, i5 = bash("git config --get user.email")
+    case("REQ-V2A-01 round6: reading git identity allowed", r, t5, i5, "allow")
     strict = os.path.join(r, "strict.json")
     json.dump({"unknown_programs": "deny", "unsigned_max_tier": 3}, open(strict, "w"))
     t3, i3 = bash("./vendor/mystery-binary --flag")

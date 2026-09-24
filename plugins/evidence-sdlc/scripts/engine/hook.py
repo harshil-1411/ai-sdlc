@@ -189,7 +189,9 @@ def run_session_start(payload):
     import signing
     if not signing.enabled():
         parts.append("UNSIGNED MODE: no EVIDENCE_SIGNING_KEY is configured, so approvals and audit entries are not "
-                     "signed and a forged record cannot be told apart from a real one (see docs/managed-settings.md).")
+                     "signed and a forged record cannot be told apart from a real one (see docs/managed-settings.md). "
+                     f"The agent may work only on changes up to Tier {ctx.policy.get('unsigned_max_tier', 1)} until the "
+                     "organisation deploys the key or raises unsigned_max_tier in its org policy.")
     parts.append("Approval, tier changes and control-plane files are human-only. Commits need the tracker key and an "
                  f"`Agent-Session: {ctx.session or '<session id>'}` trailer.")
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": " ".join(parts)}}

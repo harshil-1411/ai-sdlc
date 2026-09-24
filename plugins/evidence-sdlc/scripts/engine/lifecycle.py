@@ -190,6 +190,12 @@ def cmd_change(args):
         if st.load_state(root, key):
             sys.exit(f"Change {key} already exists. See: evidence change status {key}")
         tier = int(args.tier)
+        import signing
+        cap = int(policy.get("unsigned_max_tier", 1))
+        if not signing.enabled() and tier > cap:
+            sys.exit(f"This session has no signing key (UNSIGNED MODE), which limits agent work to Tier {cap} changes. "
+                     f"A Tier {tier} change needs EVIDENCE_SIGNING_KEY deployed (docs/managed-settings.md) or an org "
+                     "policy that raises unsigned_max_tier.")
         first = {3: "intent", 2: "spec", 1: "plan"}[tier]
         state = {"key": key, "tier": tier, "kind": args.kind, "stage": first, "created_at": st.now(),
                  "created_by": _who(root), "history": [{"stage": first, "at": st.now(), "by": _who(root)}]}

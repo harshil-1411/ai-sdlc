@@ -184,6 +184,14 @@ def check_gated(ctx, rel, kind="write", detail=""):
         return deny("tier-mismatch",
                     f"{what}: the plan says Risk tier {m_tier.group(0)} but change {key} is recorded as Tier {tier}. "
                     f"A human reconciles them (`evidence change set-tier {key} <n>`, or fix the plan and re-approve).")
+    serious = [v for v in st.open_violations(ctx.root, key, ctx.branch)
+               if v.get("rule") in ("hidden-change", "control-plane", "audit-tamper", "integrity-snapshot-missing",
+                                    "integrity-snapshot-altered", "integrity-snapshot-replayed")]
+    if serious:
+        return deny("integrity-violation",
+                    f"{what}: the integrity monitor recorded {len(serious)} change(s) to git metadata or the control "
+                    f"plane ({', '.join(sorted({v['path'] for v in serious})[:4])}). Source edits are paused until a human "
+                    f"reviews and runs `evidence change clear-violations {key}`.")
     if state.get("stage") == "released":
         return deny("change-released",
                     f"{what}: change {key} is released. Start a new change for further work.")
@@ -313,6 +321,12 @@ def _check_git(ctx, s, bodies=()):
         return deny("remote-change",
                     "Changing git remotes is a human action: approvals and reviews are read from the remote, so an agent "
                     "that could repoint it could choose where its approval comes from.")
+    if sub == "config" and any(a.lower().startswith(("user.", "author.", "committer.")) for a in sargs) and not any(
+            a in ("--get", "--get-all", "--list", "-l", "--get-regexp") for a in sargs):
+        return deny("identity", "Changing git identity (user.*, author.*, committer.*) is a human action: approval and "
+                                "Tier 3 second-person checks rely on it.")
+    if any(v and v.split("=", 1)[0].lower().startswith(("user.", "author.", "committer.")) for o, v in gopts if o == "-c"):
+        return deny("identity", "`git -c user.*=…` changes your git identity; not available to an agent session.")
     if sub == "config":
         setting, skip = [], False
         for a in sargs:
@@ -644,6 +658,11 @@ def check_bash(ctx, command):
             return deny("unknown-program",
                         f"`{s.prog}` is not on this organisation's list of known programs (strict mode), so what it "
                         "writes cannot be judged. Ask the platform team to add it to known_programs.")
+        spoof = [k for k in s.env if k.startswith(("GIT_CONFIG_", "GIT_AUTHOR_", "GIT_COMMITTER_")) or k in ("EMAIL", "GIT_DIR", "GIT_WORK_TREE")]
+        if spoof:
+            return deny("identity",
+                        f"Setting {', '.join(sorted(spoof)[:3])} on a command changes your git identity (who git and the "
+                        "approval records think you are) or which repository is used. Not available to an agent session.")
         if _launches_claude(s):
             return deny("nested-agent",
                         "Starting another Claude Code session from an agent session is not allowed: it would run outside "

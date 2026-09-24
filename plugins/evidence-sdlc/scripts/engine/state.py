@@ -402,7 +402,9 @@ def _read_violations(p):
         raw = json.load(open(p))
     except ValueError:
         return [{"path": p, "rule": "unreadable violations file", "open": True}]
-    if isinstance(raw, list):  # pre-v2.0 format
+    if isinstance(raw, list):  # pre-v2.0 format: trusted only when no key is deployed
+        if signing.enabled():
+            return [{"path": p, "rule": "violations record in unsigned legacy format", "open": True}]
         return raw
     if signing.verify(raw) is False:
         return [{"path": p, "rule": "violations record altered (signature invalid)", "open": True}]
