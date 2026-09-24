@@ -1,6 +1,6 @@
 # 0001. Validate engine-written records by signature; serialise Bash monitoring
 
-Status: Proposed
+Status: Rejected (security design review, 2026-09-24). Rule 1 allows replay and rollback of older validly signed records, because signatures bind no path, change or sequence. Rule 2's lease is unsigned, lives in agent-writable `.git/`, and its loss or expiry skips judgement. The concurrency problem moves to PILOT-59, to be redesigned with attested engine writes, a signed lease and chained snapshots in a new ADR.
 Date: 2026-09-24
 Deciders: Suparn Bector (maintainer); second approver Harshil (Tier 3)
 Tracker: PILOT-58   Spec: intent/2026-09-24-integrity-monitor-hardening/spec.md

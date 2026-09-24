@@ -74,6 +74,14 @@ None. No personal, payment or health data. The signing key is a secret that must
 - **No weakening of fail-closed behaviour.** Any new tolerance needs a test showing the attack it was meant to stop is still stopped.
 - **Must run on macOS and Linux (CI).** Tests that need a pty or chmod semantics say where they cannot run.
 
+## Scope update (2026-09-24, after security design review)
+The maintainer split this intent into three changes, and PILOT-58 now covers the security set only (see spec.md, "Scope after the design review"):
+- **Now covered by PILOT-58:** F1, F4, engine-git neutralisation, commit and push validation, audit-log integrity, the `.evidence` directory checks, snapshot-directory safety.
+- **Moved to PILOT-59:** concurrency.
+- **Moved to PILOT-60:** the usability items (committed results, YAML, DUPLICATE-ID, temp-script false positives, `-k`, history).
+
+The Problem statement above still describes the whole set.
+
 ## Out of scope
 - **Stays human-only:** approve, clear, release and merge.
 - **No external red team or pilot program.** Those are owner actions.

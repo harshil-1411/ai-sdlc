@@ -1,76 +1,69 @@
-# Spec: Integrity-monitor and engine hardening
+# Spec: Integrity-monitor and engine git hardening (security set)
 Tracker: PILOT-58   From: intent/2026-09-24-integrity-monitor-hardening/intent.md
-Risk tier: 3 — changes the integrity monitor, audit log, commit gate and git execution inside unsandboxed hooks that hold the signing key; the policy floor `**/audit/**` applies to audit handling, and the change alters the framework's own tamper-evidence claims.
+Risk tier: 3 — integrity monitor, audit log, commit and push gates, and git execution inside unsandboxed hooks that hold the signing key; the policy floor `**/audit/**` applies.
 
 Any claim below not confirmed from a file, a command, or a named person is marked
 inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
 
+## Scope after the design review (2026-09-24)
+The first draft (REQ-IMH-01..18 with ADR-0001) failed security design review.
+- ADR-0001 is rejected: it allowed replay of signed records, and it had an unsigned, bypassable lease.
+- By the maintainer's decision, the work is split:
+
+| Change | Scope | Tier |
+| --- | --- | --- |
+| **PILOT-58 (this spec)** | Confirmed security holes with contained fixes: F1, F4, engine-git neutralisation (ADR-0003), commit and push validation, audit-log integrity, `.evidence` directory checks, snapshot-directory safety | 3 |
+| PILOT-59 | Concurrency: attested engine writes, a signed lease with holder liveness, chained snapshots, background writes (former REQ-IMH-03/04); new ADR | 3 |
+| PILOT-60 | Usability: CI-owned results (ADR-0002 revised), adapter YAML comments, spec-before-plan IDs, inverted temp-script rule, `-k` crash, re-approval history (former REQ-IMH-12..17) | 2 |
+
+The snapshot-restore behaviour for control-plane files, including signed records, is **kept** in PILOT-58. It is what stops rollback and deletion today.
+
 ## Requirements
 | ID | Requirement | Source (intent.md section) | Acceptance |
 | --- | --- | --- | --- |
-| REQ-IMH-01 | The monitor never removes or restores a file through a symlinked path component, and never touches a path outside the repository | Problem: F1 | Engine test: `.evidence/violations/x -> <outside dir>` created by an unparsed program → the outside files are untouched, a violation is recorded |
-| REQ-IMH-02 | A non-regular entry (directory, FIFO, symlink) at a violations-record path is itself an open violation, so the push gate stays closed | Problem: F4 | Engine test: a directory at `.evidence/changes/K/violations.json` → push denied with a violations message |
-| REQ-IMH-03 | Engine-written signed records are validated by signature, never restored or removed by the monitor; an invalid one is quarantined and recorded (ADR-0001) | Problem: concurrency | Engine tests: a concurrent valid engine write during another call's window → no violation, not restored; a forged unsigned `approval.json` → quarantined + violation |
-| REQ-IMH-04 | Allowed Bash calls in one repository are monitored one at a time through a lease with a time-to-live; a call that cannot take the lease within the bound is denied; an expired lease is noted, never blamed on the new call (ADR-0001) | Problem: concurrency | Engine tests: two overlapping calls from different sessions → the second waits, and a write by the first is attributed only to the first; an expired lease → note, no violation; lease held past the bound → deny |
-| REQ-IMH-05 | The directories `.evidence`, `.evidence/audit`, `.evidence/changes`, `.evidence/violations` are control plane: a change to their type, mode or ownership is a violation | Problem: directory globs | Engine test: `chmod 555 .evidence/audit` by an unparsed program → violation |
-| REQ-IMH-06 | If a call's own PostToolUse audit entry cannot be written, a violation is recorded (branch-level) and the next call is denied | Problem: own-log unwritable | Engine test: an unparsed program makes the log read-only → violation recorded, next pre denies |
-| REQ-IMH-07 | Deleting a file inside an untracked directory during a call is judged like any other delete | Problem: untracked deletes | Engine test: an unclaimed untracked file deleted by an unparsed program → violation |
-| REQ-IMH-08 | Integrity snapshots are written only into a per-user, non-symlinked directory with mode 0700, through O_EXCL/O_NOFOLLOW | Problem: temp snapshots | Engine test: a planted symlink at the snapshot directory → the snapshot is refused, and the call is denied (fail closed) |
-| REQ-IMH-09 | Every git process the engine starts runs with command-executing configuration neutralised, and the hook refuses to run git in a repository whose local config defines a command-executing key not allowed by policy | Problem: hook git | Engine test: `.git/config` with `core.fsmonitor = <marker script>` → the marker never runs; the call is denied with a message naming the key |
-| REQ-IMH-10 | A commit's evidence, claims and secret checks cover exactly what the commit records: pathspec/`--only`/`--include` commits are denied; `-a` includes tracked working-tree changes in the checks | Problem: commit bypass | Engine tests: `git commit -m … -- src/unclaimed.py` → deny; `git commit -am` with an unstaged secret in a tracked file → deny |
-| REQ-IMH-11 | `audit verify` rejects any entry whose hash already appeared earlier in the log (a replayed entry), in addition to today's fork rule | Problem: fork rule | Engine test: A,B,B',B → fail |
-| REQ-IMH-12 | `run-tests.sh` runs `evidence gaps --strict` last, against the results it just wrote, to a configurable results directory; the content suite no longer runs the self-check; CI's signed gate stays the merge gate (ADR-0002) | Problem: committed results | Content test: run-tests.sh ends with the gaps step and honours `EVIDENCE_RESULTS_DIR`; a fresh local run passes in one pass with no file under `validation/` changed |
-| REQ-IMH-13 | The adapter YAML reader strips inline `# comments` outside quotes | Problem: YAML comments | CLI test: `- plan/*.md  # note` parses to `plan/*.md` |
-| REQ-IMH-14 | A requirement ID in `plan/*.md` defines a requirement only when no spec defines it, so a Tier 2+ plan under `plan/` causes no DUPLICATE-ID | Problem: DUPLICATE-ID | CLI test: a spec and a `plan/` Proof table sharing an ID → no DUPLICATE-ID, the spec is the definition |
-| REQ-IMH-15 | A temp-directory argument is judged as script execution only when the program executes its argument (interpreters, shells, `make -f`, `source`); `curl -o`, `mkdir`, `tail`, `cat` on temp paths are allowed | Problem: false positives | Engine tests: `python3 /tmp/x.py` → deny; `mkdir -p $TMPDIR/…`, `curl -o /tmp/x`, `tail /tmp/x.log` → allow |
-| REQ-IMH-16 | `engine-tests.py -k <filter>` never crashes because a skipped case skipped setup | Problem: -k crash | Running `-k "REQ-SLF-07 20"` exits 0 when the case passes |
-| REQ-IMH-17 | A plan re-approval appends a `re-approved` history entry to the change state, whatever the stage | Problem: history | Lifecycle test: approve, edit plan, approve again → two approval entries in history |
-| REQ-IMH-18 | `governance/control-mapping.md`, `governance/supplier-audit-packet.md`, `HANDOFF.md` and the 2.0.x Known issues match the shipped behaviour | Compliance evidence impact | Content test: no Known-issues item marked fixed remains listed; the supplier packet describes signature validation of records |
+| REQ-IMH-01 | The monitor lists the control plane without following symlinks, restores through `state.write_file` and removes through a dir-fd `state.remove_file`. It never acts through a symlinked component, never outside the repository, and reports a symlink at a control-plane path as a violation | F1 | Engine tests: `.evidence/violations/x -> <outside dir>` and `.evidence/changes/K -> <outside>` created by an unparsed program → outside files untouched, violation recorded |
+| REQ-IMH-02 | A non-regular entry (directory, FIFO, symlink) at a violations-record path is an open violation, so the push gate stays closed | F4 | Engine test: a directory at `.evidence/changes/K/violations.json` → push denied |
+| REQ-IMH-05 | A change to the type, mode or owner of `.evidence`, `.evidence/audit`, `.evidence/changes` or `.evidence/violations` during a call is a violation | Directory globs | Engine test: `chmod 555 .evidence/audit` by an unparsed program → violation |
+| REQ-IMH-06 | If a call's own PostToolUse audit entry cannot be written, an `audit-unwritable` violation is recorded (branch level), and the next call is denied | Own-log unwritable | Engine test |
+| REQ-IMH-07 | Deleting a file inside an untracked directory during a call is judged like any other delete | Untracked deletes | Engine test |
+| REQ-IMH-08 | Integrity snapshots are written only into `<tempdir>/evidence-chain-snapshots-<uid>/<session>`, a directory owned by the uid, mode 0700 and not a symlink, through the safe writer. A planted link fails closed | Temp snapshots | Engine test |
+| REQ-IMH-09 | Every engine git process runs through `state.run_git` with command-executing configuration neutralised and `GIT_*` scrubbed (ADR-0003 §1). Before git calls other than `rev-parse`, local and worktree config is read with `git config --list --show-scope --includes` and refused on any denied key unless the exact key=value is allow-listed. Refusal in PostToolUse records `git-config-refused`, and the non-git checks still run | Hook git | Engine tests, each with a marker script that must never run: `core.fsmonitor`; `diff.<drv>.command` + `.gitattributes`; textconv; `filter.x.clean`; `filter.lfs.clean = sh -c …` (value not allow-listed); config via `include.path`, `includeIf`, `config.worktree` and a `.git` file (`gitdir:`); `GIT_CONFIG_PARAMETERS` / `GIT_EXTERNAL_DIFF` in the inherited environment |
+| REQ-IMH-10 | PreToolUse denies commits with a pathspec, `--only`, `--include`, `-p`, `--patch`, `--interactive` or `--pathspec-from-file`, and a `git commit` combined in one command with any index-changing git command. `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` are environment spoofing | Commit bypass | Engine tests per form |
+| REQ-IMH-19 | The push gate checks every commit in `merge-base(base, HEAD)..HEAD` against the committed trees: paths within the plan's claims (plus ungated and `.evidence/`), the change's evidence files present at the tip, and no secrets in added blobs (ADR-0003 §3) | Commit bypass | Engine tests: an unclaimed file committed via `commit-tree` + `update-ref`, via `GIT_INDEX_FILE`, and via a cherry-pick → push denied naming the commit and path; a secret added in an intermediate commit and removed later → push denied |
+| REQ-IMH-11 | `audit verify` treats a repeated entry hash as a break, and requires every entry's `session` to match the log's own session (approval and clear logs excepted by name) | Fork rule | Engine tests: A,B,B',B → fail; another session's chain copied into the file → fail |
+| REQ-IMH-20 | For each audit log, the integrity snapshot records `(size, sha256 of those bytes)`. After the call the old bytes must be an exact prefix of the log; a truncated, rewritten or replaced log is a violation. This replaces the size-only check | Audit-log integrity (review) | Engine test: same-length rewrite of an earlier entry → violation; replacement by another session's longer log → violation |
+| REQ-IMH-21 | Push is denied for a keyed branch whose change directory or audit history exists but whose state is missing or fails verification | Review finding | Engine test: delete `state.json` (restored by the monitor) or quarantine it, then push → denied |
+| REQ-IMH-22 | No engine module starts git except through `state.run_git` | ADR-0003 constraint | Engine test scans `plugins/evidence-sdlc/scripts/engine/*.py` for other `subprocess` git invocations |
+| REQ-IMH-18 | `governance/control-mapping.md`, `governance/supplier-audit-packet.md`, `docs/policy-reference.md`, `docs/gates-reference.md`, `docs/managed-settings.md`, `HANDOFF.md` and the CHANGELOG Known issues match the shipped behaviour; items moved to PILOT-59/60 remain listed as known | Compliance evidence impact | Content test |
 
 ## Design
-Existing components reused: `state.write_file` / `open_append` / `_dir_fd` (the safe writers from 2.0.1), `signing.verify`, `integrity.snapshot/check`, `evidence_policy._check_commit`, `cmdparse`, `evidence_trace.load_adapter`.
+Components reused: `state.write_file` / `open_append` / `_dir_fd` (2.0.1), `signing`, `integrity.snapshot/check` (snapshot-restore kept), `evidence_policy._check_commit` and the push gate, the policy key `deny_git_config_keys`, `cmdparse`.
 
-- **REQ-IMH-01, 07, 05 (`integrity.py`):**
-  - `_control_plane_files` walks with `os.walk(followlinks=False)` and `lstat`. A symlink found at a control-plane path is recorded as a violation, never followed.
-  - Removal goes through a new `state.remove_file(root, rel)`, which unlinks through `_dir_fd` (O_NOFOLLOW components), so a symlinked parent raises. Paths whose realpath is outside the root are never removed.
-  - Untracked entries record their status in the snapshot, so a deleted untracked file is judged as a delete.
-  - The four `.evidence` directories are snapshotted by `lstat` (type, mode, uid) in `extras`.
-- **REQ-IMH-02 (`state.py`):** `_read_violations` checks `lstat` first. Anything that is not a regular file returns an open violation entry, "violations record is not a file". `open_violations` therefore blocks.
-- **REQ-IMH-03 (`integrity.check`):** control-plane paths split into *signed records* and *unsigned config*.
-  - Signed records: `.evidence/changes/*/state.json`, `approval.json`, `violations.json`, `.evidence/violations/*`, `.evidence/audit/*.jsonl`.
-  - Unsigned config: everything else.
-  - For signed records: if the file verifies (and, for audit logs, chains with no new break), accept. Otherwise move it aside with `os.rename` through a dir fd to `<name>.quarantined-<rand>` and record a violation. There is no restore or remove.
-  - Unsigned mode (no key): record, as today.
-- **REQ-IMH-04 (`integrity.snapshot/check`, `hook.run_pre/run_post`):**
-  - The lease file is `.git/evidence-monitor.lease`, created O_EXCL with `{session, tool_use_id, expires}`.
-  - PreToolUse retries for up to `policy.monitor_lease_wait_s` (default 15 s), then denies. The PreToolUse hook timeout is 30 s (`plugins/evidence-sdlc/hooks/hooks.json:16`), which leaves room for the snapshot.
-  - PostToolUse removes the lease only if it holds it.
-  - A lease whose `expires` has passed is taken over, with a `concurrent-unmonitored` note.
-  - The TTL is `policy.monitor_lease_ttl_s` (default 600 s).
-  - The snapshot records the lease token, so a post that doesn't own the lease records "integrity-lease-lost" rather than judging.
-- **REQ-IMH-06 (`hook.run_post`):** if `_audit` raises for the post entry, `record_violations(branch-level, "audit-unwritable")` runs. The next `run_pre` already denies through `audit_ready`.
-- **REQ-IMH-08 (`integrity._snap_path`):** the directory is `<tempdir>/evidence-chain-snapshots-<uid>/<session>`.
-  - Created 0700.
-  - `lstat` must show a directory owned by the uid and not a symlink.
-  - Files are written through `state.write_file`, anchored at that directory.
-- **REQ-IMH-09 (`state.git` plus the 6 other direct `subprocess.run(["git", …])` sites):** one helper, `st.run_git(args, cwd)`.
-  - Prepends `-c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -c diff.external= -c protocol.ext.allow=never`.
-  - Sets `GIT_CONFIG_NOSYSTEM=1`.
-  - Before first use per call, parses `.git/config` (and `include.path` files) for command-executing keys: `core.fsmonitor`, `core.hooksPath`, `core.sshCommand`, `core.editor`, `filter.*.{clean,smudge,process}`, `diff.*.{command,textconv}`, `merge.*.driver`, `credential.helper`.
-  - Refuses if any is present and not in `policy.git_allowed_config` (default: `filter.lfs.*`).
-- **REQ-IMH-10 (`evidence_policy._check_commit`):** a pathspec after `--`, or a trailing path argument, `--only`/`-o`, or `--include`/`-i` → deny ("stage what you commit, then `git commit` without paths"). For `-a`, the checked set is staged ∪ `git diff --name-only`, and the secret scan reads working-tree content.
-- **REQ-IMH-11 (`state.audit_verify`):** keep a set of seen hashes; a repeat is a break.
-- **REQ-IMH-12:**
-  - `run-tests.sh`: `EVIDENCE_RESULTS_DIR` defaults to a directory outside the working tree (`$TMPDIR/evidence-results/<repo-hash>`), and `.github/workflows/ci.yml` sets `validation/results`.
-  - The last step runs `evidence gaps --strict --results "$dir"` and writes `gaps.xml` (a REQ-V2C-09 case).
-  - The adapter gains `self_check_requirement: REQ-V2C-09`, which `gaps` skips in UNVERIFIED-RESULT.
-  - The content-suite REQ-V2C-09 block is replaced by a structural check on run-tests.sh (ADR-0002).
-- **REQ-IMH-13 (`evidence_trace` YAML reader):** strip ` #…` outside quotes.
-- **REQ-IMH-14 (`evidence_trace` requirement scan):** scan `intent/*/spec.md` first, then plan globs. For a plan, an ID already defined by a spec is a reference, not a definition.
-- **REQ-IMH-15 (`evidence_policy`, the temp-argument loop at `:779-785`):** apply the temp-dir script check only when `s.prog` is in an `EXECUTES_ARG` set (python*, node, ruby, perl, bash, sh, zsh, make, go, swift, osascript, php, deno, bun, source, `.`). Otherwise skip.
-- **REQ-IMH-16:** `suite_round4` creates `s1.jsonl` itself rather than relying on a filtered case.
-- **REQ-IMH-17 (`lifecycle.write_approval`):** always append a history entry: `approved` when advancing, `re-approved` otherwise.
-- **REQ-IMH-18:** docs and governance text, with the content check.
+- **REQ-IMH-01 (`integrity.py`):**
+  - `_control_plane_files` uses `os.walk(root, followlinks=False)` and matches paths against the globs with `lstat`. A symlink or non-regular file at a control-plane path is reported, never read through.
+  - `check()` restores with `st.write_file(root, rel, old)` and removes with `st.remove_file(root, rel)`.
+  - `remove_file` walks with `_dir_fd` (O_NOFOLLOW), then runs `os.unlink(name, dir_fd=…)`. It refuses if the final entry is a directory.
+- **REQ-IMH-02 (`state._read_violations`):** `lstat` first; anything that isn't a regular file gives `[{"rule": "violations record is not a file", "open": True}]`.
+- **REQ-IMH-05:** `_extras` records `lstat` `(S_IFMT, mode, uid)` for the four directories.
+- **REQ-IMH-06:** `hook.run_post` runs `try: _audit_strict(...)`, and on failure `record_violations(branch-level, "audit-unwritable")`. The next PreToolUse is denied by `audit_ready`.
+- **REQ-IMH-07:** snapshot `dirty` entries carry their porcelain status. After the call, a key present before and absent after, with status `??`, is judged as a delete.
+- **REQ-IMH-08:** `_snap_path` creates the directory 0700 through `os.mkdir`, then checks `lstat`: a directory, owned by `os.getuid()`, not a link. Otherwise it raises, and PreToolUse fails closed. Files are written through `write_file` anchored at that directory.
+- **REQ-IMH-09 (`state.run_git`, ADR-0003 §1–2):**
+  - `env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}`, then `GIT_CONFIG_NOSYSTEM=1` and, when supported, `GIT_ATTR_SOURCE=<empty tree>`.
+  - Args get `-c core.fsmonitor=false -c core.hooksPath=/dev/null -c core.pager=cat -c diff.external= -c protocol.ext.allow=never`, plus `--no-ext-diff --no-textconv` for diff, log and show.
+  - `check_git_config(root)` runs `run_git(["config", "--list", "--show-scope", "--includes"])` and checks keys at `local` or `worktree` scope against the deny set: the policy `deny_git_config_keys` ∪ `filter.*`, `diff.*.command`, `diff.*.textconv`, `merge.*.driver`, `core.askPass`, `core.gitProxy`, `core.sshCommand`, `core.worktree`, `gpg.*program`, `ssh.variant`, `remote.*.uploadpack`, `remote.*.receivepack`, `uploadpack.*`, `*tool.*.cmd`, `interactive.diffFilter`, `pager.*`, `url.*.insteadOf`.
+  - An exact `key=value` in the org-policy `git_allowed_config` passes. The defaults are git-lfs's `filter.lfs.clean=git-lfs clean -- %f`, `filter.lfs.smudge=git-lfs smudge -- %f`, `filter.lfs.process=git-lfs filter-process` and `filter.lfs.required=true`.
+  - The result is cached per hook process.
+- **REQ-IMH-10 (`evidence_policy`):** the extra flag denials in `_check_commit`. The one-command rule: when a simple command is `git commit`, any other simple `git` whose subcommand is in {add, rm, mv, reset, restore, checkout, stash, apply, update-index, read-tree} → deny. The spoof list gets the three variables.
+- **REQ-IMH-19 (push gate):** `range_problems(ctx, base)` runs `run_git(["rev-list", f"{base}..HEAD"])`, then for each commit `run_git(["diff-tree", "--no-commit-id", "-r", "--name-status", "--no-ext-diff", "--no-textconv", sha])`.
+  - Claims are checked on added or modified paths.
+  - Added blobs go to `secretscan` (size-capped).
+  - Evidence files are checked at the tip.
+  - The base comes from the push refspec target's remote-tracking ref, or `origin/<default>`. Without a base, it falls back to the pre-commit rules and says so.
+- **REQ-IMH-11 (`state.audit_verify`):** a `seen` hash set, and a session check against `os.path.basename(path)` for `<session>.jsonl` logs.
+- **REQ-IMH-20 (`integrity.snapshot/check`):** `audit` snapshot values go from `size` to `{size, sha256_prefix}`. After the call, the first `size` bytes are read and their hash compared.
+- **REQ-IMH-21:** in the push gate (`_review_gate` path), if `key` and (`change_dir` exists or `audit_events` has a start for `key`) and `load_state` is None or fails verification → deny.
+- **REQ-IMH-22:** a test greps the engine directory for `subprocess.run([\"git\"` and `"git",` outside `state.run_git`.
 
 ## Regulatory control impact
 `.evidence/context/compliance.md` establishes no applicable framework for this repository (all `[ASK]`), so no control set is loaded.
@@ -79,63 +72,61 @@ Existing components reused: `state.write_file` / `open_append` / `_dir_fd` (the 
 | --- | --- | --- | --- | --- |
 | none established | — | N/A | compliance.md lists none; awaiting maintainer | `.evidence/context/compliance.md:36` |
 
-The framework's own claims for adopters change: `governance/control-mapping.md` maps SOC 2 CC8.1, ISO 27001 A.8.32 and NIST SSDF PW.4 to audit-log and violation tamper-evidence. REQ-IMH-18 re-checks those rows.
+For adopters, `governance/control-mapping.md` maps SOC 2 CC8.1, ISO 27001 A.8.32 and NIST SSDF PW.4 to change control and tamper-evidence. REQ-IMH-19 strengthens the change-control claim (commits validated as recorded), and REQ-IMH-20 strengthens the audit-log claim. REQ-IMH-18 updates those rows.
 
 ## Evidence impact
-- New rows: REQ-IMH-01..18.
-- Modified proof: REQ-V2C-09 moves from a content-suite check to the final `run-tests.sh` step (ADR-0002); its old test is retired in the same change.
-- REQ-V2G-09 (control-plane protection) and REQ-V2A-02 (audit) gain the new behaviour. Their existing tests must still pass, or be listed with the reason they changed (restore to quarantine).
-- `validation/results/` becomes historical (ADR-0002).
-- Re-verification: every repository running 2.0.x should redeploy, because this closes High findings (F1, F4). The CHANGELOG says so.
+- New rows: REQ-IMH-01, 02, 05–11, 18–22.
+- REQ-IMH-03, 04 and 12–17 are moved to PILOT-59/60 and are not defined here.
+- Existing REQ-V2G-09 (control plane), REQ-V2A-02 (audit) and REQ-V2G-07/12 (commit) tests must still pass, or be listed in the PR with the reason.
+- Re-verification: every 2.0.x deployment should upgrade (F1, F4 and the git exposure are High). The CHANGELOG says so.
 
 ## Diagrams
-- Sequence, monitor lease (REQ-IMH-04):
+- Sequence, engine git call (REQ-IMH-09):
 
 ```mermaid
 sequenceDiagram
-  participant A as Call A (pre/post hooks)
-  participant B as Call B (pre/post hooks)
-  participant L as .git/evidence-monitor.lease
-  A->>L: O_EXCL create {A, expires}
-  A->>A: snapshot; command runs
-  B->>L: O_EXCL create → exists; wait ≤ 20 s
-  A->>A: check (signed records validated, not restored)
-  A->>L: remove (owner = A)
-  B->>L: O_EXCL create {B, expires}
-  B->>B: snapshot; command runs; check; release
-  Note over A,B: trust boundary — hooks run unsandboxed with the key
+  participant H as Hook (unsandboxed, has key)
+  participant G as git
+  H->>G: run_git(config --list --show-scope --includes) with -c neutralisations, GIT_* scrubbed
+  G-->>H: key=value by scope
+  alt denied key at local/worktree scope, value not allow-listed
+    H-->>H: refuse (pre: deny; post: git-config-refused violation, non-git checks continue)
+  else clean
+    H->>G: run_git(status / diff --no-ext-diff --no-textconv / diff-tree …)
+  end
+  Note over H,G: trust boundary — repository config and attributes are agent-controlled
 ```
 
 ## Security design
-- **Trust boundary:** hooks, unsandboxed and holding the key, act on paths and repository config that the sandboxed agent can shape. Every new filesystem action goes through dir-fd, O_NOFOLLOW helpers (REQ-IMH-01, 08). Every git process has command-executing config neutralised, or refused (REQ-IMH-09).
-- **Lease abuse:** an agent could hold the lease with a long-running command to stall other calls. That is bounded by the TTL, and it's the agent's own session. A lease file forged by the agent's shell under `.git/` is harmless: a forged `expires` far in the future stalls calls until the wait bound, then denies (fail closed). A forged expired lease is only taken over.
-- **Quarantine versus deletion:** a record that fails verification is never deleted. It is moved aside and recorded, so an agent cannot destroy evidence by corrupting it.
-- **Fail-closed preserved:** each new tolerance has a test proving the attack it guards against is still stopped (REQ-IMH-03 forged approval, REQ-IMH-11 replay, REQ-IMH-15 interpreter on temp file).
-- Required review agents (Tier 3, per `evidence change status PILOT-58`): verifier, security-reviewer, code-reviewer. Run one at a time, with no edits while they run.
+- **Trust boundary:** repository-controlled git execution against the hook's key. ADR-0003 closes it at one entry point, enforced by REQ-IMH-22.
+- **Commit integrity:** PreToolUse checks remain as early feedback. The push-time range check (REQ-IMH-19) is authoritative and does not depend on how the commits were made.
+- **Audit integrity:** prefix-hash (REQ-IMH-20), replay and session binding (REQ-IMH-11), and the own-log failure record (REQ-IMH-06).
+- **Kept behaviour:** snapshot-restore of control-plane files, which guards against rollback and deletion of signed records. The concurrency false positives it causes remain known issues until PILOT-59, which is stated in the CHANGELOG.
+- Required review agents (per `evidence change status PILOT-58`): verifier, security-reviewer, code-reviewer, run one at a time.
 
 ## UX
 | State / concern | Behaviour |
 | --- | --- |
-| Error | Every new denial names the next action: waiting for the lease, stage then commit without paths, the refused git config key and the policy setting that allows it |
-| Success | No new output on the normal path; parallel calls are slower by at most the lease wait |
-| Edge cases (long values, zero, maximum, unusual input) | A killed call leaves a lease that expires after the TTL; take-over is noted |
+| Error | A git-config refusal names the key, its scope and the org-policy setting `git_allowed_config`. The push-range denial names the commit, the path and the rule |
+| Success | No new output on the normal path |
+| Edge cases (long values, zero, maximum, unusual input) | No base ref → push falls back to the pre-commit rules and says so. Very long branches → the range check is bounded by the commit count, and blob scans are size-capped |
 
 Component reuse: N/A — no UI.
 
 ## Areas of concern
-- **Hook acting before the permission prompt** (intent open question 1). Proposal: accept for now, since the managed settings allow `evidence change …` without a prompt anyway. Document it in `docs/managed-settings.md`, and revisit if a deployment needs the prompt. Owner: maintainer — decide at plan approval.
-- **Content self-check design** (intent open question 2). Resolved by the proposal in ADR-0002. Owner: maintainer — accept or reject the ADR at plan approval.
-- **Second CODEOWNERS reviewer** (intent open question 3). This isn't a code decision. Until one exists, Tier 3 merges need the admin override. Owner: maintainer.
-- **Lease wait against the hook timeout.** Checked: the PreToolUse hook timeout is 30 s, and the default wait is 15 s. A command that runs longer than 15 s makes a parallel call wait and then be denied. That's acceptable fail-closed behaviour; the denial says to retry.
-- **Git-LFS and other legitimate filters.** Defaulting `git_allowed_config` to `filter.lfs.*` may be too narrow for some orgs. The refusal message names the policy key to extend.
+- **Repositories with local custom filters, diff drivers or credential helpers will be refused.** The deny set includes `credential.*`, which is common locally, and `includeIf` / `include.path`, which parse as includes but are not denied themselves. Default: deny local-scope credential helpers. They're rarely needed by the engine's read-only git calls, and the message explains the allow path. Owner: maintainer — accept at plan approval.
+- **`GIT_ATTR_SOURCE`** needs git ≥ 2.40. On older git, the `--no-ext-diff --no-textconv` flags and the filter-key refusal remain the defence. Checked: git 2.46.0 locally. `run_git` detects support at runtime, so CI's git version doesn't change correctness.
+- **Hook acting before the permission prompt.** Moved to PILOT-59, since it relates to the lease and its ordering. Owner: maintainer.
+- **Second CODEOWNERS reviewer.** A separate owner action.
 
 ## Architecture decisions
 | ADR | Created / Supersedes / Relies on | Status |
 | --- | --- | --- |
-| `.evidence/decisions/0001-signed-records-are-validated-not-restored.md` | Created | Proposed |
-| `.evidence/decisions/0002-ci-owns-test-results.md` | Created | Proposed |
-| HANDOFF.md "Decisions worth knowing": signing key held by hooks | Relies on | informal (no ADR yet) |
+| `.evidence/decisions/0003-hook-git-is-neutralised-and-commits-are-validated-at-push.md` | Created | Proposed |
+| `.evidence/decisions/0001-signed-records-are-validated-not-restored.md` | Rejected in design review; its problem moves to PILOT-59 | Rejected |
+| `.evidence/decisions/0002-ci-owns-test-results.md` | Deferred to PILOT-60, needs revision | Proposed |
 
 ## Rejected alternatives
-- **Split PILOT-58 into several smaller changes.** Rejected because the concurrency and signed-record decisions (ADR-0001) change how F1, F4 and the directory checks are implemented. Doing them separately would rework the same monitor code three times. Review trigger: if the plan exceeds about 1500 changed lines, split out REQ-IMH-12..17 (harness and usability) as a Tier 1/2 change.
-- **Also see the Alternatives tables in ADR-0001 and ADR-0002.**
+- **One change for everything.** It failed design review as too large, with flawed concurrency and results designs. It is split by the maintainer's decision.
+- **ADR-0001 (validate signed records by signature, lease).** Replay and lease bypasses; see its status line.
+- **See also ADR-0003's Alternatives table.**

@@ -1,6 +1,6 @@
 # 0002. CI's signed results are the proof; nobody commits result files
 
-Status: Proposed
+Status: Proposed. Deferred to PILOT-60 and to be revised before acceptance. The design review found that `self_check_requirement` in the agent-editable `adapter.yml` could exempt any requirement: hard-code it in the trusted CLI instead. It also found that CI signs whatever sits in `validation/results/`: download results to a temporary directory instead, which needs a `ci.yml` change.
 Date: 2026-09-24
 Deciders: Suparn Bector (maintainer); second approver Harshil (Tier 3)
 Tracker: PILOT-58   Spec: intent/2026-09-24-integrity-monitor-hardening/spec.md
