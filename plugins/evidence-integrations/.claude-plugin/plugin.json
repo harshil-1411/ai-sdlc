@@ -1,13 +1,13 @@
 {
   "name": "evidence-integrations",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Third-party and partner integration change management: contracts, versioning, sandboxes, contract tests, failure modes and the regulated-record implications of data leaving the platform.",
   "author": {
     "name": "Suparn Bector",
     "email": "suparn.bector@msbdocs.com"
   },
-  "homepage": "https://github.com/REPLACE-WITH-YOUR-ORG/evidence-chain#readme",
-  "repository": "https://github.com/REPLACE-WITH-YOUR-ORG/evidence-chain",
+  "homepage": "https://github.com/harshil-1411/ai-sdlc#readme",
+  "repository": "https://github.com/harshil-1411/ai-sdlc",
   "license": "MIT",
   "keywords": [
     "integrations",

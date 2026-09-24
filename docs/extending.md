@@ -210,8 +210,9 @@ Always invoke through `bash`, never rely on the file's execute bit, and use
   evidence-sdlc skill fired in any case until the field was removed). Treat sibling
   plugins as soft dependencies: skills say what's missing, and `evidence doctor`
   reports which siblings are installed.
-- **`homepage` and `repository`** carry `REPLACE-WITH-YOUR-ORG` until the owner
-  publishes a remote.
+- **`homepage` and `repository`** point at the published repository,
+  `https://github.com/harshil-1411/ai-sdlc` (plus `#readme` for `homepage`). A fork
+  changes both to its own remote.
 
 The root `.claude-plugin/marketplace.json` has one entry per plugin, with the same
 `name`, a `./plugins/<name>` `source`, the same `description` and the same `version`

@@ -58,9 +58,9 @@ claude plugin marketplace add /path/to/evidence-chain      # from your shell
 /plugin marketplace add /path/to/evidence-chain            # or inside Claude Code
 ```
 
-Once the repository is hosted, `/plugin marketplace add <owner>/evidence-chain` also
-works. That form needs the owner to push this repository to a git remote first.
-The manifests still carry `REPLACE-WITH-YOUR-ORG` placeholders until they do.
+The repository is published at https://github.com/harshil-1411/ai-sdlc, so
+`/plugin marketplace add harshil-1411/ai-sdlc` also works. A fork publishes its own
+remote and adds that instead.
 
 **2. Install all five.** The plugins have soft dependencies on each other
 (`evidence-sdlc` reads `evidence-discovery`'s profile; quality, compliance and

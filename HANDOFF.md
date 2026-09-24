@@ -95,21 +95,17 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
    flags them. Supersede them with new rows rather than editing them.
 
 ### Owner actions (no code can do these)
-- [ ] Replace `REPLACE-WITH-YOUR-ORG` with `harshil-1411/ai-sdlc` in:
-  - the five `plugins/*/.claude-plugin/plugin.json` files
-  - `managed-settings.json` (`strictKnownMarketplaces`)
-  - `pipelines/github-actions/evidence-chain.yml`
-  - `README.md`, `docs/managed-settings.md`, `docs/extending.md`
-
-  This is a plugin change, so bump the versions and add a CHANGELOG entry.
-- [ ] Branch protection on `main`: require the `checks` and `sign-and-gate` jobs and code-owner review; block force pushes.
-- [ ] Copy `pipelines/github-actions/CODEOWNERS.example` to `.github/CODEOWNERS` with real handles.
-- [ ] Add the `EVIDENCE_SIGNING_KEY` Actions secret (32+ characters) and set the variable `EVIDENCE_REQUIRE_SIGNED=true`.
+- [x] Replace the organisation placeholders with `harshil-1411/ai-sdlc` (2026-09-24, PILOT-54; the maintainer edited `managed-settings.json`).
+- [x] Branch protection on `main`: `checks` and `sign-and-gate` required, code-owner review, no force pushes (2026-09-24).
+- [x] `.github/CODEOWNERS` with a real handle (2026-09-24, PILOT-54).
+- [x] `EVIDENCE_SIGNING_KEY` Actions secret: `sign-and-gate` passed on PR #1 (2026-09-24).
+- [ ] Confirm the Actions variable `EVIDENCE_REQUIRE_SIGNED=true` is set (not verified).
+- [ ] A second person for code-owner review. The owner in CODEOWNERS can't approve their own PRs, so until a second reviewer exists, merges need the admin override.
 - [ ] Set up GitHub approval mode in an org policy:
   - `approval.mode: "github"`
   - `github_repo`
   - `github_allowed_approvers`
-- [ ] Deploy `managed-settings.json` with the signing key and sandbox. Confirm on a real machine that `echo $EVIDENCE_SIGNING_KEY` in an agent session is denied or empty, and that sessions print "Evidence Chain gates live".
+- [x] Deploy `managed-settings.json` with the signing key and sandbox, on the maintainer's machine (2026-09-24). The first key was read through the Read tool because of the single-`/` defect, and has been rotated. The env probe and the Read of the managed directory are now both denied. Run the canary (docs/managed-settings.md) on every other machine.
 - [ ] Run the evals that weren't run for budget:
   - compliance
   - the rest of sdlc and discovery, at 3 or more runs per arm
@@ -131,4 +127,9 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
 - **GitHub history:** `main` on GitHub was force-replaced once on 2026-09-24. It had only GitHub's "Initial commit" README.
 - **Local branches:** `master` is the old v1 line, and `hardening/v2` has the same head as `main`. Both are local only.
 - **Windows:** native Windows is unsupported; use WSL.
+- **Absolute paths in permission rules need `//`.** `Read(/Library/…)` is project-relative; `Read(//Library/…)` is the real path. This is how the first signing key leaked (PILOT-54).
+- **Run review agents one at a time.** Parallel subagents made the integrity monitor attribute one agent's writes to another, restore over a real violation record, and fork the audit log (PILOT-57). Monitor concurrency is PILOT-58.
+- **Human terminal actions need the key for that one command:** `EVIDENCE_SIGNING_KEY="$(…)" evidence …` (docs/managed-settings.md). Plan approval goes through the prompt and needs no key.
+- **Content-suite-only requirements need `validation/results/content.xml` committed.** The suite's own `gaps --strict` check reads the committed file before the suite writes a fresh one. Run `bash scripts/ci/run-tests.sh` twice in your terminal and commit the results. Agents can't write `validation/`. Fix tracked for PILOT-58.
+- **The agent sandbox can't open PRs:** `gh` fails TLS verification there. The agent pushes, and a human runs `gh pr create`/`merge`.
 - **Personal files** moved out of the repo are in `~/Desktop/evidence-chain-extras/` on the maintainer's machine.

@@ -1,0 +1,13 @@
+# Adapted from pipelines/github-actions/CODEOWNERS.example (PILOT-54).
+# With branch protection requiring code-owner review, a change to the framework's control
+# plane or gate engine needs a human owner's approval on the server, which no agent
+# session can supply. GitHub does not count a PR author's own review.
+*                                        @harshil-1411
+/.evidence/policy.json                   @harshil-1411
+/.evidence/secrets-allowlist.json        @harshil-1411
+/.evidence/changes/                      @harshil-1411
+/.claude/                                @harshil-1411
+/managed-settings.json                   @harshil-1411
+/.github/                                @harshil-1411
+/plugins/evidence-sdlc/scripts/engine/   @harshil-1411
+/plugins/evidence-sdlc/policy/           @harshil-1411

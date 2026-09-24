@@ -1,13 +1,13 @@
 {
   "name": "evidence-discovery",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Discovers a repository's technology stack, deployment stack, toolchain, design system and agreed test strategy, and writes them to .evidence/context/ so every other skill reads facts instead of assuming them. Never guesses — asks.",
   "author": {
     "name": "Suparn Bector",
     "email": "suparn.bector@msbdocs.com"
   },
-  "homepage": "https://github.com/REPLACE-WITH-YOUR-ORG/evidence-chain#readme",
-  "repository": "https://github.com/REPLACE-WITH-YOUR-ORG/evidence-chain",
+  "homepage": "https://github.com/harshil-1411/ai-sdlc#readme",
+  "repository": "https://github.com/harshil-1411/ai-sdlc",
   "license": "MIT",
   "keywords": [
     "sdlc",
