@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <testsuites>
-  <testsuite name="cli-fixtures" tests="80" failures="0" timestamp="2026-09-24T06:05:44">
+  <testsuite name="cli-fixtures" tests="80" failures="0" timestamp="2026-09-24T13:10:01">
     <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 1: requirement with no test -&gt; exit 1"/>
     <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 1: the requirement is listed as NO COVERAGE"/>
     <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 2: no requirements anywhere -&gt; exit 2"/>

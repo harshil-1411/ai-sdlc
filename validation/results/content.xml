@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="content presence and function checks" tests="66" failures="0">
+<testsuite name="content presence and function checks" tests="67" failures="0">
   <testcase classname="content presence and function checks" name="REQ-DEBT-01 risk-tiering asks about technical debt before 'When in doubt, tier up'"></testcase>
   <testcase classname="content presence and function checks" name="REQ-DEBT-02 debt signals are concrete and already available"></testcase>
   <testcase classname="content presence and function checks" name="REQ-DEBT-03 debt raises the tier one notch, never lowers it, capped at Tier 3"></testcase>
@@ -60,6 +60,7 @@
   <testcase classname="content presence and function checks" name="REQ-V2P-05 reference pipelines are real YAML for GitHub Actions, GitLab and CI-hosted agent"></testcase>
   <testcase classname="content presence and function checks" name="REQ-V2P-06 README is 250 lines or fewer and personal files are not tracked"></testcase>
   <testcase classname="content presence and function checks" name="REQ-V2P-07 strictKnownMarketplaces is documented as an owner action with the value to set"></testcase>
+  <testcase classname="content presence and function checks" name="REQ-SLF-06 managed-settings doc: hook-performed lifecycle calls, key for human terminal actions, commit tail rule"></testcase>
   <testcase classname="content presence and function checks" name="REQ-V2C-01 the CLI ships in the plugin's bin/ and runs"></testcase>
   <testcase classname="content presence and function checks" name="REQ-V2G-11 no hook pre-filter: every Bash/Edit/Write/Agent call reaches the engine"></testcase>
   <testcase classname="content presence and function checks" name="REQ-V2C-09 this repository passes its own `evidence gaps --strict` (every blocking item other than this check itself is clear)"></testcase>
