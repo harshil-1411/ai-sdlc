@@ -1,0 +1,27 @@
+=== spec.md: Areas of concern ===
+PASS: spec.md with real Areas of concern content -> silent
+PASS: spec.md with unfilled placeholder -> finding
+PASS: spec.md with an empty section (heading present, no body) -> finding
+=== plan.md: Files claimed (bare form) ===
+PASS: plan.md with real Files claimed content -> silent
+PASS: plan.md with unfilled placeholder -> finding
+=== plan/<TRACKER-KEY>.md: the namespaced concurrent-session form ===
+PASS: REQ-V2D-08 namespaced plan/<KEY>.md with unfilled placeholder -> finding
+PASS: REQ-V2D-08 namespaced plan/<KEY>.md with real content -> silent
+=== plan.md: mid-flight checkpoint (Tier 2/3) ===
+PASS: REQ-CKPT-03 Tier 2 plan.md WITH a CHECKPOINT step -> silent
+PASS: REQ-CKPT-03 Tier 3 plan.md with NO CHECKPOINT step -> finding
+PASS: REQ-CKPT-03 Tier 1 plan.md with no CHECKPOINT step -> silent (not required)
+PASS: REQ-CKPT-03 plan.md with no sibling spec.md at all -> silent (nothing to check tier against)
+=== SKILL.md: eval case exists ===
+PASS: REQ-EVAL-02 new SKILL.md WITH a matching eval case dir -> silent
+PASS: REQ-EVAL-02 new SKILL.md with NO evals/ directory at all -> finding
+PASS: REQ-EVAL-02 new SKILL.md with evals/ present but no matching case -> finding
+=== unrelated files must never fire ===
+PASS: unrelated file (README.md) -> silent
+PASS: a file merely named *_plan.md, not in a plan/ dir -> silent
+=== python3 missing: the advisory sensor degrades to silence, NOT a deny -- it has nothing to protect ===
+PASS: python3 missing -> silent, exit 0 (not a deny -- nothing to fail closed on here)
+
+===================================
+17 passed, 0 failed

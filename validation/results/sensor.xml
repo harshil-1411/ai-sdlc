@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="template sensor" tests="16" failures="0">
+  <testcase classname="template sensor" name="spec.md with real Areas of concern content -&gt; silent"></testcase>
+  <testcase classname="template sensor" name="spec.md with unfilled placeholder -&gt; finding"></testcase>
+  <testcase classname="template sensor" name="spec.md with an empty section (heading present, no body) -&gt; finding"></testcase>
+  <testcase classname="template sensor" name="plan.md with real Files claimed content -&gt; silent"></testcase>
+  <testcase classname="template sensor" name="plan.md with unfilled placeholder -&gt; finding"></testcase>
+  <testcase classname="template sensor" name="REQ-V2D-08 namespaced plan/&lt;KEY&gt;.md with unfilled placeholder -&gt; finding"></testcase>
+  <testcase classname="template sensor" name="REQ-V2D-08 namespaced plan/&lt;KEY&gt;.md with real content -&gt; silent"></testcase>
+  <testcase classname="template sensor" name="REQ-CKPT-03 Tier 2 plan.md WITH a CHECKPOINT step -&gt; silent"></testcase>
+  <testcase classname="template sensor" name="REQ-CKPT-03 Tier 3 plan.md with NO CHECKPOINT step -&gt; finding"></testcase>
+  <testcase classname="template sensor" name="REQ-CKPT-03 Tier 1 plan.md with no CHECKPOINT step -&gt; silent (not required)"></testcase>
+  <testcase classname="template sensor" name="REQ-CKPT-03 plan.md with no sibling spec.md at all -&gt; silent (nothing to check tier against)"></testcase>
+  <testcase classname="template sensor" name="REQ-EVAL-02 new SKILL.md WITH a matching eval case dir -&gt; silent"></testcase>
+  <testcase classname="template sensor" name="REQ-EVAL-02 new SKILL.md with NO evals/ directory at all -&gt; finding"></testcase>
+  <testcase classname="template sensor" name="REQ-EVAL-02 new SKILL.md with evals/ present but no matching case -&gt; finding"></testcase>
+  <testcase classname="template sensor" name="unrelated file (README.md) -&gt; silent"></testcase>
+  <testcase classname="template sensor" name="a file merely named *_plan.md, not in a plan/ dir -&gt; silent"></testcase>
+</testsuite>

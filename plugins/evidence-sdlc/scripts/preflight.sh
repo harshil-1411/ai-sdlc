@@ -1,61 +1,42 @@
 #!/bin/bash
-# Verifies the environment every other gate script in this framework depends on.
-# Must report loudly even when PATH is so stripped that the usual coreutils
-# (cat, dirname, sed, tr, find) aren't resolvable either -- that is the same class
-# of environment where a gate silently fails open, so this uses bash builtins
-# only and must never itself fail silently.
-shopt -s nullglob globstar
+# Verifies the environment the gate engine depends on, loudly. Uses bash builtins
+# only, so it still reports when PATH is stripped -- the same class of environment
+# in which a gate would otherwise silently fail to run.
+shopt -s nullglob
 
 while IFS= read -r _; do :; done
 
 plugin_root="${CLAUDE_PLUGIN_ROOT:-${BASH_SOURCE[0]%/*}/..}"
-plugins_dir="${plugin_root}/.."
-
+engine="${plugin_root}/scripts/engine"
+py="${EVIDENCE_PYTHON:-python3}"
 failures=()
 
-have_jq=1
-if ! command -v jq >/dev/null 2>&1; then
-  have_jq=0
-  failures+=("jq is not resolvable on PATH -- every gate script shells out to jq to read tool input and emit its decision; without it, gates cannot run at all")
+if ! command -v "$py" >/dev/null 2>&1; then
+  failures+=("python3 is not on PATH -- the gate engine cannot run, so every file change and command will be denied")
+else
+  ver=$("$py" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null)
+  case "$ver" in
+    3.[0-7]|2.*|"") failures+=("python ${ver:-unknown} is too old for the gate engine (needs 3.8+)") ;;
+  esac
 fi
 
-unreadable=""
-for f in "$plugins_dir"/*/scripts/*.sh; do
-  [ -e "$f" ] || continue
-  if [ ! -r "$f" ]; then
-    unreadable="${unreadable}${unreadable:+, }${f}"
-  fi
+for f in hook.py hook.sh evidence_policy.py cmdparse.py state.py secretscan.py lifecycle.py sensor.py; do
+  [ -r "$engine/$f" ] || failures+=("gate engine file missing or unreadable: $engine/$f")
 done
-
-if [ -n "$unreadable" ]; then
-  failures+=("unreadable gate script(s), so they cannot execute: ${unreadable}")
-fi
+[ -r "${plugin_root}/policy/default-policy.json" ] || failures+=("default policy missing: ${plugin_root}/policy/default-policy.json")
 
 profile_note="Repository profile found at .evidence/context/stack.md."
-if [ ! -f ".evidence/context/stack.md" ]; then
-  profile_note="No repository profile at .evidence/context/stack.md (informational only, not a preflight failure)."
-fi
+[ -f ".evidence/context/stack.md" ] || profile_note="No repository profile at .evidence/context/stack.md (run stack-discovery; informational)."
 
 if [ "${#failures[@]}" -gt 0 ]; then
   joined=""
-  for msg in "${failures[@]}"; do
-    joined="${joined}${msg}; "
-  done
-  message="PREFLIGHT FAILED: ${joined}Gates may not be enforcing. Do not make source changes until this is fixed. ${profile_note}"
+  for m in "${failures[@]}"; do joined="${joined}${m}; "; done
+  message="PREFLIGHT FAILED: ${joined}The gates fail closed until this is fixed. ${profile_note}"
 else
-  message="Preflight OK: jq resolves on PATH and all gate scripts are readable. ${profile_note}"
+  message="Preflight OK: python ${ver} and the gate engine are in place. ${profile_note}"
 fi
 
-if [ "$have_jq" -eq 1 ]; then
-  jq -n --arg m "$message" '{
-    hookSpecificOutput: {
-      hookEventName: "SessionStart",
-      additionalContext: $m
-    }
-  }'
-else
-  escaped="${message//\\/\\\\}"
-  escaped="${escaped//\"/\\\"}"
-  escaped="${escaped//$'\n'/ }"
-  printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"
-fi
+escaped="${message//\\/\\\\}"
+escaped="${escaped//\"/\\\"}"
+escaped="${escaped//$'\n'/ }"
+printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$escaped"

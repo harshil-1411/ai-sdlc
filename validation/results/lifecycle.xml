@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="evidence lifecycle CLI" tests="24" failures="0">
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 change start creates state"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 change start rejects a non-key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 status reports missing plan"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 status finds plan via branch key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 approve refuses inside an agent session"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 set-tier refuses inside an agent session"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 advance cannot set approved"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 prompt approval without hash is refused with the hash to use"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 prompt approval with a stale hash is refused"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 prompt approval with the right hash is recorded"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 approval binds to plan sha and names method"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 approval moves stage to approved"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 approval phrase must be the whole message"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2S-04 verified refused until review agents recorded"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2S-04 verified allowed after verifier recorded"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-02 audit verify passes on untouched logs"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-02 audit verify detects tampering"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2C-07 metrics reports changes and stage-skip rate"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2D-09 overlapping claims reported"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2G-10 advance failing-test records fix_base"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 GitHub approval recorded from an approving review (agent may record it)"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 GitHub approval refused when the approver is the PR author"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 github approval mode refuses the prompt channel"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 github mode with no allowed approvers refuses"></testcase>
+</testsuite>

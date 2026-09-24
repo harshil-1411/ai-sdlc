@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="content acceptance" tests="66" failures="2">
+  <testcase classname="content acceptance" name="REQ-DEBT-01 risk-tiering asks about technical debt before 'When in doubt, tier up'"></testcase>
+  <testcase classname="content acceptance" name="REQ-DEBT-02 debt signals are concrete and already available"></testcase>
+  <testcase classname="content acceptance" name="REQ-DEBT-03 debt raises the tier one notch, never lowers it, capped at Tier 3"></testcase>
+  <testcase classname="content acceptance" name="REQ-CKPT-01 plan template has a Mid-flight checkpoint section for Tier 2/3"></testcase>
+  <testcase classname="content acceptance" name="REQ-CKPT-02 planning skill stops at the CHECKPOINT step and re-validates against spec"></testcase>
+  <testcase classname="content acceptance" name="REQ-CKPT-03 sensor flags a Tier 2 plan with no CHECKPOINT step (advisory)"></testcase>
+  <testcase classname="content acceptance" name="REQ-CKPT-03 sensor is silent once the CHECKPOINT marker exists"></testcase>
+  <testcase classname="content acceptance" name="REQ-EVAL-02 sensor flags a new SKILL.md with no eval case"></testcase>
+  <testcase classname="content acceptance" name="REQ-EVAL-01 DoD requires an eval case when a new skill is introduced"></testcase>
+  <testcase classname="content acceptance" name="REQ-TSD-01 test-strategy-discovery reads the repository before asking, then asks one batch"></testcase>
+  <testcase classname="content acceptance" name="REQ-TSD-02 test-strategy profile template covers scope, targets, environments, matrix, owners, criteria"></testcase>
+  <testcase classname="content acceptance" name="REQ-TSD-03 nothing is out of scope without a reason and a named decider"></testcase>
+  <testcase classname="content acceptance" name="REQ-TSD-04 test-strategy and continuous-testing read test-strategy.md"></testcase>
+  <testcase classname="content acceptance" name="REQ-TSD-05 SessionStart profile message names test-strategy.md"></testcase>
+  <testcase classname="content acceptance" name="REQ-PERF-01 performance-testing covers load, stress, soak, spike and capacity"></testcase>
+  <testcase classname="content acceptance" name="REQ-PERF-02 no numeric target in the spec means no test (spec defect, never invented)"></testcase>
+  <testcase classname="content acceptance" name="REQ-PERF-03 workload model, baseline, parity gap, thresholds fixed before run, percentiles not averages"></testcase>
+  <testcase classname="content acceptance" name="REQ-SEC-01 security-testing covers SCA, secrets, container/IaC, DAST, fuzzing, pen testing"></testcase>
+  <testcase classname="content acceptance" name="REQ-SEC-02 suppressions need reason, owner, approver and expiry; baseline vs new"></testcase>
+  <testcase classname="content acceptance" name="REQ-SEC-03 active scanning only against profile-named non-production targets"></testcase>
+  <testcase classname="content acceptance" name="REQ-SA-01 static-analysis covers lint, format, type checks, complexity, SAST"></testcase>
+  <testcase classname="content acceptance" name="REQ-SA-02 baseline and ratchet; no rule disabled to pass; rule changes are their own change"></testcase>
+  <testcase classname="content acceptance" name="REQ-E2E-01 e2e-ui-testing covers journeys, locators, waits, data, artifacts, sharding, cross-browser, visual, locale"></testcase>
+  <testcase classname="content acceptance" name="REQ-E2E-02 Playwright/Selenium/Cypress references, loaded only when the profile names the tool"></testcase>
+  <testcase classname="content acceptance" name="REQ-A11Y-01 conformance target from profile; automated scans are not enough; manual checks required"></testcase>
+  <testcase classname="content acceptance" name="REQ-COV-01 functional (requirement) coverage is named and uncovered IDs are listed"></testcase>
+  <testcase classname="content acceptance" name="REQ-FLK-01 flake detection records flaky, never passed; merge gate keeps retries off"></testcase>
+  <testcase classname="content acceptance" name="REQ-TSR-01 test summary report template with a human-signed go/no-go"></testcase>
+  <testcase classname="content acceptance" name="REQ-TSR-02 test-plan section has entry criteria and a non-functional table"></testcase>
+  <testcase classname="content acceptance" name="REQ-INT-01 test-strategy routes each test type to its owning skill"></testcase>
+  <testcase classname="content acceptance" name="REQ-DOC-01 docs and metadata list the testing skills"></testcase>
+  <testcase classname="content acceptance" name="REQ-TEVAL-01 each PILOT-51 skill has trigger, non-trigger and behavior eval cases"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2R-01 architect, code-reviewer, release-manager and docs-writer agents exist"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2R-02 verifier not pinned to haiku; no stale 'other five agents' references"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-01 ADR template and .evidence/decisions/ referenced by spec-and-design and DoD"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-02 release-readiness drafts, never signs, never supplies RELEASE_APPROVAL"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-03 one tier notation ('Risk tier:'); no 'Risk classification:' left"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-04 Part 11 / QA/RA wording in risk-tiering and DoD reads from compliance.md"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-05 RCA has git history/bisect, causal chain, sibling sweep and state-based fix mode"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-06 every skill description parses and is 500 characters or fewer"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-06 'design the schema' trigger belongs to one skill only"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-07 contract-testing names tool options chosen from the profile; legacy ranks by churn"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-08 plan-rows check reads every active change's plan, not just the first"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2D-10 stale statements corrected (no 'blocks source edits' claim in require-repo-profile; eval README counts)"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2K-04 secure-api-review covers OWASP API1..API10 (2023) and reads org specifics from the profile"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2K-02 managed settings drop Bash(git *) and deny git -c/config, force push and gh merge"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2K-02 managed settings force-enable the five plugins"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2A-04 managed settings ship the OTel env block"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2O-01 governance no longer claims 'no source change is possible'; claims cite engine tests"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2O-02 control mapping covers SOC 2, ISO 27001:2022 and NIST SSDF with statuses"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2O-03 every control set states its owner explicitly (no &lt;name&gt; placeholder)"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-01 every plugin has a semver version and CHANGELOG has the entry"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-01 version-bump check fails without a bump and passes with one"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-02 metadata: homepage, repository, license, keywords, owner email on every plugin"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-03 slash commands exist; approve is not model-invocable"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-04 dependencies declared; commit gate moved into the sdlc engine"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-05 CI runs engine, lifecycle, CLI suites, version check, gaps and plugin validate"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-05 reference pipelines are real YAML for GitHub Actions, GitLab and CI-hosted agent"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-06 README is 250 lines or fewer and personal files are not tracked"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-07 strictKnownMarketplaces is documented as an owner action"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2C-01 the CLI ships in the plugin's bin/ and runs"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2G-11 no hook pre-filter: every Bash/Edit/Write/Agent call reaches the engine"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2C-09 this repository passes its own `evidence gaps` (no NO COVERAGE or DUPLICATE-ID beyond this check itself)"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2E-01 a committed eval SUMMARY.md exists for every plugin"><failure message="[]">[]</failure></testcase>
+  <testcase classname="content acceptance" name="REQ-V2E-02 summaries record with-vs-without deltas"><failure message=""></failure></testcase>
+  <testcase classname="content acceptance" name="REQ-V2E-03 eval cases exist for release-readiness and the new agents"></testcase>
+</testsuite>

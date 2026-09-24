@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-24T10:00:00.000Z",
+  "suite": {"root": "/elsewhere/plugins/demo", "ablation": "with-without", "threshold": 1},
+  "cases": [
+    {"name": "demo-case", "dir": "evals/demo-case",
+     "arms": {"with": [{"score": 1, "passed": true}]},
+     "aggregates": {"score": 1, "passRate": 1}}
+  ],
+  "aggregates": {"casesTotal": 1, "casesPassed": 1}
+}

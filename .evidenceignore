@@ -1,0 +1,10 @@
+# Paths `evidence` (cli/evidence) never scans for specs or tests.
+# gitignore-style globs; `!` negation is not supported. See cli/README.md.
+
+# Fixture inputs for the CLI's own tests: they carry structural tags for
+# made-up requirement IDs (REQ-FIX-*) on purpose, and would otherwise be
+# reported as ORPHANED tests of this repository.
+cli/tests/fixtures/
+
+# claude plugin eval run output is results, not tests (ingested separately).
+plugins/*/evals/results/

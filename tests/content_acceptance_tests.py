@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Acceptance tests for requirements whose deliverable is content: skills, templates,
+agents, governance, docs, product metadata. Each check tests the acceptance criterion
+written in its spec row, not merely that a file exists; several are functional (they
+run the sensor, the plan-rows check, the CLI or the version-bump script).
+
+    python3 tests/content_acceptance_tests.py            # JUNIT_OUT=path.xml for a JUnit report
+"""
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), ".."))
+P = lambda *a: os.path.join(ROOT, *a)  # noqa: E731
+sys.path.insert(0, P("plugins", "evidence-sdlc", "scripts", "engine"))
+res = []
+
+
+def read(*a):
+    try:
+        return open(P(*a), encoding="utf-8").read()
+    except OSError:
+        return ""
+
+
+def check(label, ok, detail=""):
+    res.append((label, bool(ok), "" if ok else str(detail)[:400]))
+    print(("PASS " if ok else "FAIL ") + label + ("" if ok else f" :: {detail}"))
+
+
+def frontmatter(path):
+    t = open(path, encoding="utf-8").read()
+    m = re.match(r"^---\n(.*?)\n---\n", t, re.S)
+    if not m:
+        return None
+    fm = {}
+    for line in m.group(1).splitlines():
+        if ":" in line and not line.startswith(" "):
+            k, v = line.split(":", 1)
+            fm[k.strip()] = v.strip()
+    return fm
+
+
+def skill(p, n):
+    return read("plugins", p, "skills", n, "SKILL.md")
+
+
+# ------------------------------------------------------------ PILOT-50
+rt = skill("evidence-sdlc", "risk-tiering")
+check("REQ-DEBT-01 risk-tiering asks about technical debt before 'When in doubt, tier up'",
+      "debt" in rt.lower() and rt.lower().find("debt") < rt.lower().find("when in doubt"))
+check("REQ-DEBT-02 debt signals are concrete and already available",
+      all(w in rt.lower() for w in ("workaround", "incident", "coverage")))
+check("REQ-DEBT-03 debt raises the tier one notch, never lowers it, capped at Tier 3",
+      re.search(r"raise", rt, re.I) and re.search(r"never lower|never weaken|only raise", rt, re.I) and "3" in rt)
+check("REQ-CKPT-01 plan template has a Mid-flight checkpoint section for Tier 2/3",
+      "## Mid-flight checkpoint" in read("plugins", "evidence-sdlc", "templates", "plan.md"))
+check("REQ-CKPT-02 planning skill stops at the CHECKPOINT step and re-validates against spec",
+      re.search(r"CHECKPOINT.*spec", skill("evidence-sdlc", "codebase-grounded-planning"), re.S))
+import sensor  # noqa: E402
+with tempfile.TemporaryDirectory() as d:
+    os.makedirs(os.path.join(d, "plan"))
+    pp = os.path.join(d, "plan", "X-1.md")
+    open(pp, "w").write("# Plan\nTracker: X-1\nRisk tier: 2\n\n## Files claimed\n- `src/**`\n\n## Order of work\n1. do it\n")
+    note = sensor.check(pp, d) or ""
+    check("REQ-CKPT-03 sensor flags a Tier 2 plan with no CHECKPOINT step (advisory)", "CHECKPOINT" in note, note)
+    open(pp, "a").write("2. CHECKPOINT: re-check against spec\n")
+    check("REQ-CKPT-03 sensor is silent once the CHECKPOINT marker exists", sensor.check(pp, d) is None)
+    os.makedirs(os.path.join(d, "plugins", "p", "skills", "newskill"))
+    sp = os.path.join(d, "plugins", "p", "skills", "newskill", "SKILL.md")
+    open(sp, "w").write("---\nname: newskill\ndescription: x\n---\n")
+    check("REQ-EVAL-02 sensor flags a new SKILL.md with no eval case", "no eval case" in (sensor.check(sp, d) or ""))
+dod = read("plugins", "evidence-sdlc", "templates", "definition-of-ready-and-done.md")
+check("REQ-EVAL-01 DoD requires an eval case when a new skill is introduced",
+      "Eval case added under `evals/`" in dod and "evals/" in read("docs", "extending.md"))
+
+# ------------------------------------------------------------ PILOT-51
+tsd = skill("evidence-discovery", "test-strategy-discovery")
+check("REQ-TSD-01 test-strategy-discovery reads the repository before asking, then asks one batch",
+      re.search(r"read before asking", tsd, re.I) and re.search(r"one numbered batch", tsd, re.I))
+tpl = read("plugins", "evidence-discovery", "templates", "test-strategy.md")
+check("REQ-TSD-02 test-strategy profile template covers scope, targets, environments, matrix, owners, criteria",
+      all(h in tpl for h in ("## Test types in scope", "## Non-functional targets", "## Environments",
+                             "## Browser and device matrix", "## Entry and exit criteria")) and "[ASK]" in tpl)
+check("REQ-TSD-03 nothing is out of scope without a reason and a named decider",
+      re.search(r"out of scope silently", tsd, re.I) and "decider" in tsd.lower())
+check("REQ-TSD-04 test-strategy and continuous-testing read test-strategy.md",
+      "test-strategy.md" in skill("evidence-quality", "test-strategy") and "test-strategy.md" in skill("evidence-quality", "continuous-testing"))
+check("REQ-TSD-05 SessionStart profile message names test-strategy.md",
+      "test-strategy.md" in read("plugins", "evidence-discovery", "scripts", "require-repo-profile.sh"))
+perf = skill("evidence-quality", "performance-testing")
+check("REQ-PERF-01 performance-testing covers load, stress, soak, spike and capacity",
+      all(w in perf.lower() for w in ("load", "stress", "soak", "spike", "capacity")))
+check("REQ-PERF-02 no numeric target in the spec means no test (spec defect, never invented)",
+      re.search(r"no target, no test", perf, re.I) and re.search(r"spec defect", perf, re.I))
+check("REQ-PERF-03 workload model, baseline, parity gap, thresholds fixed before run, percentiles not averages",
+      all(re.search(w, perf, re.I) for w in ("workload model", "baseline", "parity", "before the run", "percentile", "coordinated omission")))
+sec = skill("evidence-quality", "security-testing")
+check("REQ-SEC-01 security-testing covers SCA, secrets, container/IaC, DAST, fuzzing, pen testing",
+      all(re.search(w, sec, re.I) for w in ("SCA|dependency", "secret", "container", "IaC", "DAST", "fuzz", "penetration|pen test")))
+check("REQ-SEC-02 suppressions need reason, owner, approver and expiry; baseline vs new",
+      all(re.search(w, sec, re.I) for w in ("owner", "approver", "expiry", "baseline")))
+check("REQ-SEC-03 active scanning only against profile-named non-production targets",
+      re.search(r"production", sec, re.I) and re.search(r"profile", sec, re.I) and re.search(r"written authoris", sec, re.I))
+sa = skill("evidence-quality", "static-analysis")
+check("REQ-SA-01 static-analysis covers lint, format, type checks, complexity, SAST",
+      all(re.search(w, sa, re.I) for w in ("lint", "format", "type check", "complexity", "SAST")))
+check("REQ-SA-02 baseline and ratchet; no rule disabled to pass; rule changes are their own change",
+      re.search(r"ratchet", sa, re.I) and re.search(r"separate|own change", sa, re.I))
+e2e = skill("evidence-quality", "e2e-ui-testing")
+check("REQ-E2E-01 e2e-ui-testing covers journeys, locators, waits, data, artifacts, sharding, cross-browser, visual, locale",
+      all(re.search(w, e2e, re.I) for w in ("journey", "locator", "wait", "test data|auth", "shard", "cross-browser|browser", "visual", "locali")))
+refs = [os.path.basename(x) for x in glob.glob(P("plugins", "evidence-quality", "skills", "e2e-ui-testing", "references", "*.md"))]
+check("REQ-E2E-02 Playwright/Selenium/Cypress references, loaded only when the profile names the tool",
+      {"playwright.md", "selenium.md", "cypress.md"} <= set(refs) and re.search(r"only (if|when) the profile", e2e, re.I), refs)
+a11y = skill("evidence-quality", "accessibility-testing")
+check("REQ-A11Y-01 conformance target from profile; automated scans are not enough; manual checks required",
+      re.search(r"not sufficient|necessary, not sufficient", a11y, re.I) and all(w in a11y.lower() for w in ("keyboard", "screen reader", "zoom", "contrast")))
+ts = skill("evidence-quality", "test-strategy")
+check("REQ-COV-01 functional (requirement) coverage is named and uncovered IDs are listed",
+      re.search(r"functional.*coverage", ts, re.I | re.S) and re.search(r"uncovered", ts, re.I))
+ta = skill("evidence-quality", "test-automation")
+check("REQ-FLK-01 flake detection records flaky, never passed; merge gate keeps retries off",
+      re.search(r"flaky", ta, re.I) and re.search(r"never (as )?pass", ta, re.I))
+check("REQ-TSR-01 test summary report template with a human-signed go/no-go",
+      re.search(r"Go / No-go", read("plugins", "evidence-quality", "templates", "test-summary-report.md")))
+check("REQ-TSR-02 test-plan section has entry criteria and a non-functional table",
+      "Entry criteria" in read("plugins", "evidence-quality", "templates", "test-plan-section.md")
+      and "Non-functional" in read("plugins", "evidence-quality", "templates", "test-plan-section.md"))
+check("REQ-INT-01 test-strategy routes each test type to its owning skill",
+      all(s in ts for s in ("performance-testing", "security-testing", "static-analysis", "e2e-ui-testing", "accessibility-testing")))
+check("REQ-DOC-01 docs and metadata list the testing skills",
+      "e2e-ui-testing" in read("docs", "skills-reference.md") and "performance" in read("plugins", "evidence-quality", ".claude-plugin", "plugin.json"))
+new_cases = [d for d in glob.glob(P("plugins", "*", "evals", "*")) if re.search(
+    r"/(test-strategy-discovery|performance-testing|security-testing|static-analysis|e2e-ui-testing|accessibility-testing)-", d)]
+check("REQ-TEVAL-01 each PILOT-51 skill has trigger, non-trigger and behavior eval cases",
+      len(new_cases) >= 18 and all(os.path.isfile(os.path.join(d, "prompt.md")) for d in new_cases), len(new_cases))
+
+# ------------------------------------------------------------ PILOT-53 content
+agents = {os.path.basename(a)[:-3] for a in glob.glob(P("plugins", "evidence-sdlc", "agents", "*.md"))}
+check("REQ-V2R-01 architect, code-reviewer, release-manager and docs-writer agents exist",
+      {"architect", "code-reviewer", "release-manager", "docs-writer"} <= agents, agents)
+ver = read("plugins", "evidence-sdlc", "agents", "verifier.md")
+check("REQ-V2R-02 verifier not pinned to haiku; no stale 'other five agents' references",
+      "model: haiku" not in ver and not any("other five agents" in read("plugins", "evidence-sdlc", "agents", a + ".md") for a in agents))
+check("REQ-V2D-01 ADR template and .evidence/decisions/ referenced by spec-and-design and DoD",
+      os.path.isfile(P("plugins", "evidence-sdlc", "templates", "adr.md")) and ".evidence/decisions" in skill("evidence-sdlc", "spec-and-design")
+      and ".evidence/decisions" in dod)
+rr = skill("evidence-sdlc", "release-readiness")
+check("REQ-V2D-02 release-readiness drafts, never signs, never supplies RELEASE_APPROVAL",
+      rr and re.search(r"never sign|not sign", rr, re.I) and "RELEASE_APPROVAL" in rr)
+tier_forms = [f for f in glob.glob(P("plugins", "*", "skills", "*", "SKILL.md")) + glob.glob(P("plugins", "*", "templates", "*.md"))
+              if re.search(r"Risk classification:", read(os.path.relpath(f, ROOT)))]
+check("REQ-V2D-03 one tier notation ('Risk tier:'); no 'Risk classification:' left", not tier_forms, tier_forms)
+check("REQ-V2D-04 Part 11 / QA/RA wording in risk-tiering and DoD reads from compliance.md",
+      "compliance.md" in rt and "compliance.md" in dod and not re.search(r"QA/RA sign-off", rt))
+rca = skill("evidence-sdlc", "root-cause-analysis")
+check("REQ-V2D-05 RCA has git history/bisect, causal chain, sibling sweep and state-based fix mode",
+      all(re.search(w, rca, re.I) for w in ("bisect", "causal|mechanism", "sibling", "change start .*--kind fix", "failing-test")))
+descs = {}
+for f in glob.glob(P("plugins", "*", "skills", "*", "SKILL.md")):
+    fm = frontmatter(f)
+    descs[f] = len((fm or {}).get("description", "")) if fm else 10 ** 6
+check("REQ-V2D-06 every skill description parses and is 500 characters or fewer",
+      all(v <= 500 for v in descs.values()), {os.path.relpath(k, ROOT): v for k, v in descs.items() if v > 500})
+check("REQ-V2D-06 'design the schema' trigger belongs to one skill only",
+      sum("design the schema" in (frontmatter(f) or {}).get("description", "") for f in descs) <= 1)
+check("REQ-V2D-07 contract-testing names tool options chosen from the profile; legacy ranks by churn",
+      re.search(r"Pact", skill("evidence-integrations", "contract-testing")) and re.search(r"git log", skill("evidence-sdlc", "legacy-characterization")))
+with tempfile.TemporaryDirectory() as d:
+    subprocess.run(["git", "init", "-q"], cwd=d)
+    for k, body in (("A-1", "| REQ-A-01 | x | unit | Yes | — | test_a | report |\n"), ("B-2", "| REQ-B-01 | no proof |\n")):
+        os.makedirs(os.path.join(d, ".evidence", "changes", k))
+        json.dump({"key": k, "tier": 1, "stage": "plan", "plan": f"plan/{k}.md"}, open(os.path.join(d, ".evidence", "changes", k, "state.json"), "w"))
+        os.makedirs(os.path.join(d, "plan"), exist_ok=True)
+        open(os.path.join(d, "plan", f"{k}.md"), "w").write(body)
+    out = subprocess.run([sys.executable, P("plugins", "evidence-quality", "scripts", "check-test-plan-rows.py")],
+                         input="{}", cwd=d, capture_output=True, text=True).stdout
+    check("REQ-V2D-08 plan-rows check reads every active change's plan, not just the first", "REQ-B-01" in out and "REQ-A-01" not in out, out)
+check("REQ-V2D-10 stale statements corrected (no 'blocks source edits' claim in require-repo-profile; eval README counts)",
+      "blocks source edits only" not in read("plugins", "evidence-discovery", "scripts", "require-repo-profile.sh"))
+sar = skill("evidence-sdlc", "secure-api-review")
+check("REQ-V2K-04 secure-api-review covers OWASP API1..API10 (2023) and reads org specifics from the profile",
+      all(re.search(rf"API{i}\b", sar) for i in range(1, 11)) and re.search(r"stack\.md|compliance\.md", sar))
+ms = json.load(open(P("managed-settings.json")))
+check("REQ-V2K-02 managed settings drop Bash(git *) and deny git -c/config, force push and gh merge",
+      "Bash(git *)" not in ms["permissions"]["allow"] and all(x in ms["permissions"]["deny"] for x in ("Bash(git -c *)", "Bash(git config *)", "Bash(gh pr merge *)")))
+check("REQ-V2K-02 managed settings force-enable the five plugins", len(ms.get("enabledPlugins", {})) == 5)
+check("REQ-V2A-04 managed settings ship the OTel env block", ms.get("env", {}).get("CLAUDE_CODE_ENABLE_TELEMETRY") == "1")
+gov = read("governance", "supplier-audit-packet.md")
+check("REQ-V2O-01 governance no longer claims 'no source change is possible'; claims cite engine tests",
+      "No source change is possible without an approved plan" not in gov and "engine-tests" in gov)
+cm = read("governance", "control-mapping.md")
+check("REQ-V2O-02 control mapping covers SOC 2, ISO 27001:2022 and NIST SSDF with statuses",
+      all(x in cm for x in ("CC8.1", "A.8.32", "PW.4", "ENFORCED", "OWNER ACTION")) and
+      all(os.path.isfile(P("plugins", "evidence-compliance", "skills", "regulatory-controls", "references", f)) for f in ("iso-27001.md", "nist-ssdf.md")))
+sets = [f for f in glob.glob(P("plugins", "evidence-compliance", "skills", "regulatory-controls", "references", "*.md")) if not f.endswith("README.md")]
+check("REQ-V2O-03 every control set states its owner explicitly (no <name> placeholder)",
+      sets and all("Owner: UNASSIGNED" in open(f).read() or re.search(r"Owner: (?!<)\S", open(f).read()) for f in sets)
+      and not any("Owner: <name>" in open(f).read() for f in sets))
+man = {n: json.load(open(P("plugins", n, ".claude-plugin", "plugin.json"))) for n in os.listdir(P("plugins")) if os.path.isfile(P("plugins", n, ".claude-plugin", "plugin.json"))}
+check("REQ-V2P-01 every plugin has a semver version and CHANGELOG has the entry",
+      all(re.fullmatch(r"\d+\.\d+\.\d+", m.get("version", "")) for m in man.values()) and "## 2.0.0" in read("CHANGELOG.md"))
+with tempfile.TemporaryDirectory() as d:
+    subprocess.run(f"git init -q -b main && mkdir -p plugins/x/.claude-plugin && echo '{{\"version\":\"1.0.0\"}}' > plugins/x/.claude-plugin/plugin.json "
+                   "&& git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git checkout -qb f && echo x > plugins/x/a.md "
+                   "&& git add -A && git -c user.email=t@t -c user.name=t commit -qm change", shell=True, cwd=d)
+    r1 = subprocess.run(["bash", P("scripts", "ci", "check-version-bump.sh"), "main"], cwd=d, capture_output=True, text=True)
+    subprocess.run("echo '{\"version\":\"1.0.1\"}' > plugins/x/.claude-plugin/plugin.json && git -c user.email=t@t -c user.name=t commit -qam bump", shell=True, cwd=d)
+    r2 = subprocess.run(["bash", P("scripts", "ci", "check-version-bump.sh"), "main"], cwd=d, capture_output=True, text=True)
+    check("REQ-V2P-01 version-bump check fails without a bump and passes with one", r1.returncode != 0 and r2.returncode == 0, r1.stdout + r2.stdout)
+check("REQ-V2P-02 metadata: homepage, repository, license, keywords, owner email on every plugin",
+      all(all(k in m for k in ("homepage", "repository", "license", "keywords")) and m["author"]["email"] == "suparn.bector@msbdocs.com" for m in man.values()))
+cmds = {os.path.basename(c)[:-3] for c in glob.glob(P("plugins", "evidence-sdlc", "commands", "*.md"))}
+ap = frontmatter(P("plugins", "evidence-sdlc", "commands", "approve.md")) or {}
+check("REQ-V2P-03 slash commands exist; approve is not model-invocable",
+      {"start", "status", "approve", "gaps", "release-report"} <= cmds and ap.get("disable-model-invocation") == "true", cmds)
+qh = read("plugins", "evidence-quality", "hooks", "hooks.json")
+check("REQ-V2P-04 dependencies declared; commit gate moved into the sdlc engine",
+      man["evidence-quality"].get("dependencies") and "require-issue-key" not in qh)
+ci = read(".github", "workflows", "ci.yml")
+check("REQ-V2P-05 CI runs engine, lifecycle, CLI suites, version check, gaps and plugin validate",
+      all(x in ci for x in ("engine-tests.py", "cli-lifecycle-tests.py", "test_cli_fixtures.sh", "check-version-bump.sh", "evidence gaps", "plugin validate")))
+check("REQ-V2P-05 reference pipelines are real YAML for GitHub Actions, GitLab and CI-hosted agent",
+      all(os.path.isfile(P("pipelines", *x)) for x in (("github-actions", "evidence-chain.yml"), ("github-actions", "agent-in-ci.yml"), ("gitlab", "evidence-chain.gitlab-ci.yml"))))
+tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+check("REQ-V2P-06 README is 250 lines or fewer and personal files are not tracked",
+      len(read("README.md").splitlines()) <= 250 and "docs/linkedin-caption.txt" not in tracked and not any(t.endswith(".zip") for t in tracked),
+      len(read("README.md").splitlines()))
+check("REQ-V2P-07 strictKnownMarketplaces is documented as an owner action",
+      "strictKnownMarketplaces" in read("docs", "managed-settings.md") and "REPLACE" in json.dumps(ms["strictKnownMarketplaces"]))
+check("REQ-V2C-01 the CLI ships in the plugin's bin/ and runs",
+      subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "--version"], capture_output=True, text=True).returncode == 0)
+hj = json.load(open(P("plugins", "evidence-sdlc", "hooks", "hooks.json")))
+pre = hj["hooks"]["PreToolUse"]
+check("REQ-V2G-11 no hook pre-filter: every Bash/Edit/Write/Agent call reaches the engine",
+      all("if" not in h for entry in pre for h in entry["hooks"]) and any("Bash" in e.get("matcher", "") and "Edit" in e.get("matcher", "") for e in pre))
+g = subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "gaps"], cwd=ROOT, capture_output=True, text=True)
+block = re.findall(r"^(NO COVERAGE|FAILED|DUPLICATE-ID|MISSING-CHILD) \((\d+)\)", g.stdout, re.M)
+no_cov = re.findall(r"^  - (REQ-\S+)", g.stdout.split("NO COVERAGE", 1)[1].split("\n\n", 1)[0], re.M) if "NO COVERAGE (" in g.stdout else []
+others = [x for x in no_cov if x != "REQ-V2C-09"]
+check("REQ-V2C-09 this repository passes its own `evidence gaps` (no NO COVERAGE or DUPLICATE-ID beyond this check itself)",
+      not others and not any(n != "0" for k, n in block if k == "DUPLICATE-ID"), g.stdout[-600:])
+summaries = [f for f in glob.glob(P("plugins", "*", "evals", "SUMMARY.md"))]
+check("REQ-V2E-01 a committed eval SUMMARY.md exists for every plugin", len(summaries) == 5, summaries)
+check("REQ-V2E-02 summaries record with-vs-without deltas", summaries and all(re.search(r"Δ|delta|without", open(s).read(), re.I) for s in summaries))
+sdlc_cases = [os.path.basename(d) for d in glob.glob(P("plugins", "evidence-sdlc", "evals", "*")) if os.path.isdir(d)]
+check("REQ-V2E-03 eval cases exist for release-readiness and the new agents",
+      all(any(c.startswith(p) for c in sdlc_cases) for p in ("release-readiness-", "architect-", "code-reviewer-", "release-manager-", "docs-writer-")))
+
+fails = sum(1 for _, ok, _ in res if not ok)
+print(f"\n{len(res) - fails} passed, {fails} failed")
+if os.environ.get("JUNIT_OUT"):
+    from xml.sax.saxutils import escape, quoteattr
+    with open(os.environ["JUNIT_OUT"], "w") as f:
+        f.write(f'<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="content acceptance" tests="{len(res)}" failures="{fails}">\n')
+        for label, ok, detail in res:
+            f.write(f'  <testcase classname="content acceptance" name={quoteattr(label)}>')
+            if not ok:
+                f.write(f'<failure message={quoteattr(detail[:200])}>{escape(detail)}</failure>')
+            f.write("</testcase>\n")
+        f.write("</testsuite>\n")
+sys.exit(1 if fails else 0)

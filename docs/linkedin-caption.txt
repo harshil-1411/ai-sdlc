@@ -1,7 +1,0 @@
-I built an AI-SDLC framework for teams shipping validated software: e-signature, CLM, anything under 21 CFR Part 11 or a customer validation package. The idea is simple. Skills discover and advise, hooks enforce, and the chain of commits becomes the audit trail instead of something assembled after the fact at release.
-
-Then I ran it on a real repository. A zip stripping the execute bit silently disabled every gate on install. And the CLI I built to prove requirement coverage reported clean on this exact repo, because it trusted a spreadsheet row instead of checking whether the test file actually said so. The evidence tool had the evidence bug.
-
-Ketryx has raised $57M and works with 3 of the top 5 MedTech companies. A handful of other open-source frameworks exist too. This is the narrower, vendor-neutral option, for teams who can't or won't buy a platform. If you're running validated software with AI in the loop: when did you last check whether your own evidence tooling has the exact bug it's supposed to catch?
-
-#EngineeringLeadership #RegulatedSoftware #AIAgents

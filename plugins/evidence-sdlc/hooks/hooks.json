@@ -1,70 +1,50 @@
 {
-  "description": "the organisation SDLC gates. Skills make the standards likely; these make the non-negotiable ones deterministic.",
+  "description": "Evidence Chain gates (engine v2). One Python engine makes every decision: plan approval and claims, tier floors, change control, test protection, control-plane protection, secrets, protected pushes, merges, commits and production releases. It fails closed.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task",
         "hooks": [
           {
             "type": "command",
             "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/gate-plan-exists.sh"],
-            "statusMessage": "Checking for an approved plan.md",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/protect-validated-paths.sh"],
-            "statusMessage": "Checking validated / protected paths",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/block-test-weakening.sh"],
-            "statusMessage": "Protecting the test suite",
-            "timeout": 15
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Bash(git push *)",
-            "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/block-protected-branch-push.sh"],
-            "statusMessage": "Checking branch protection",
-            "timeout": 15
-          },
-          {
-            "type": "command",
-            "if": "Bash(*deploy*)",
-            "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/production-gate.sh"],
-            "statusMessage": "Checking release authorization",
-            "timeout": 15
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/engine/hook.sh",
+              "pre"
+            ],
+            "statusMessage": "Evidence Chain gates",
+            "timeout": 30
           }
         ]
       }
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task",
         "hooks": [
           {
             "type": "command",
             "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/audit-log.sh"],
-            "async": true
-          },
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/engine/hook.sh",
+              "post"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
           {
             "type": "command",
             "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/template-sensor.sh"],
-            "timeout": 15
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/engine/hook.sh",
+              "prompt"
+            ],
+            "timeout": 20
           }
         ]
       }
@@ -75,14 +55,19 @@
           {
             "type": "command",
             "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"
+            ],
             "statusMessage": "Verifying gate environment",
             "timeout": 20
           },
           {
             "type": "command",
             "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/session-context.sh"],
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/scripts/engine/hook.sh",
+              "session-start"
+            ],
             "timeout": 20
           }
         ]

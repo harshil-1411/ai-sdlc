@@ -1,0 +1,26 @@
+PASS REQ-V2S-01 change start creates state
+PASS REQ-V2S-01 change start rejects a non-key
+PASS REQ-V2S-01 status reports missing plan
+PASS REQ-V2S-01 status finds plan via branch key
+PASS REQ-V2A-01 approve refuses inside an agent session
+PASS REQ-V2A-01 set-tier refuses inside an agent session
+PASS REQ-V2A-01 advance cannot set approved
+PASS REQ-V2A-01 prompt approval without hash is refused with the hash to use
+PASS REQ-V2A-01 prompt approval with a stale hash is refused
+PASS REQ-V2A-01 prompt approval with the right hash is recorded
+PASS REQ-V2A-01 approval binds to plan sha and names method
+PASS REQ-V2A-01 approval moves stage to approved
+PASS REQ-V2A-01 approval phrase must be the whole message
+PASS REQ-V2S-04 verified refused until review agents recorded
+PASS REQ-V2S-04 verified allowed after verifier recorded
+PASS REQ-V2A-02 audit verify passes on untouched logs
+PASS REQ-V2A-02 audit verify detects tampering
+PASS REQ-V2C-07 metrics reports changes and stage-skip rate
+PASS REQ-V2D-09 overlapping claims reported
+PASS REQ-V2G-10 advance failing-test records fix_base
+PASS REQ-V2A-01 GitHub approval recorded from an approving review (agent may record it)
+PASS REQ-V2A-01 GitHub approval refused when the approver is the PR author
+PASS REQ-V2A-01 github approval mode refuses the prompt channel
+PASS REQ-V2A-01 github mode with no allowed approvers refuses
+
+24 passed, 0 failed

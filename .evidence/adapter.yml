@@ -1,0 +1,13 @@
+# evidence-chain's own traceability layout (PRESET A plus machine-readable results).
+requirements_source: file_glob
+spec_glob:
+  - intent/*/spec.md
+requirement_pattern: 'REQ-[A-Za-z0-9]+-[0-9]+'
+tracker_pattern: '[A-Z][A-Z0-9]+-[0-9]+'
+test_dir_segments: [tests, __tests__, qa, evals]
+artifact_chain:
+  intent_glob: [intent/*/intent.md]
+  plan_glob: [intent/*/plan.md, plan/*.md]
+# Written by scripts/ci/run-tests.sh (JUnit per suite) and the eval summary copies.
+test_results_location:
+  - validation/results

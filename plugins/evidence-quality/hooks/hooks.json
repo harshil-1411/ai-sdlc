@@ -1,28 +1,13 @@
 {
-  "description": "Traceability and test-coverage gates. The commit gate is deterministic; the coverage check is advisory.",
+  "description": "Advisory test-coverage check at session start. The commit gate (tracker key, Agent-Session trailer, staged-secret scan) moved into the evidence-sdlc gate engine in v2.",
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Bash(git commit *)",
-            "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/require-issue-key.sh"],
-            "statusMessage": "Checking tracker key",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
             "command": "bash",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/check-test-plan-rows.sh"],
+            "args": ["-c", "command -v python3 >/dev/null 2>&1 && exec python3 \"$0\" || cat >/dev/null", "${CLAUDE_PLUGIN_ROOT}/scripts/check-test-plan-rows.py"],
             "timeout": 20
           }
         ]

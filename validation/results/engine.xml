@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="evidence-sdlc gate engine" tests="234" failures="0">
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 gate-plan-exists: source edit with no approved plan is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 production-gate: release to production without approval is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 require-issue-key: commit without a key is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 block-test-weakening: existing test edit in a fix task is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 block-protected-branch-push: push to main is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 protect-validated-paths: migration edit without a change ticket is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-03 mutant evidence_policy.py (return False&#10;    return any() flips a deny case"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-03 mutant evidence_policy.py (if False:) flips a deny case"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-03 mutant cmdparse.py (for op, target in []:) flips a deny case"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-03 mutant secretscan.py (return []) flips a deny case"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: ls src/*.py | xargs rm"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: find src -name '*.py' -delete"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: find . -name '*.py' -exec rm {} +"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm tests/*.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm tests/test_{app,other}.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: cd tests &amp;&amp; rm test_app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: cd src &amp;&amp; echo x &gt; other.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm -rf .evidence/audit"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm -rf .evidence"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm -rf ."></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: git checkout -- ."></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: tar -xf bundle.tar"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: unzip bundle.zip"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: read-only allowed: find . -name '*.py' -exec grep -l TODO {"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: read-only allowed: find src -type f | wc -l"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: read-only allowed: tar -tf bundle.tar"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: read-only allowed: cd src &amp;&amp; ls"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: read-only allowed: cd tests &amp;&amp; python3 -m unittest"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: bash notes.txt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: sh ./notes.txt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: source notes.txt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: . notes.txt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: python3 /var/folders/z9/hgln9yn96hzdfwzbz_61j"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: python3 -c &quot;import sys; sys.path.insert(0,'e'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: python3 -c &quot;exec(open('notes.txt').read())&quot;"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name='REQ-V2G-02 self-review: unchecked code execution denied: python3 -c "import base64;exec(base64.b64deco'></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: node -e &quot;require('child_process').execSync('i"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: unchecked code execution denied: bash $SCRIPT"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: gh pr review 5 --approve"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: gh pr review 5 -a -b ok"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: gh pr comment 5 --body '/approve-plan abcdef1"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: gh api repos/o/r/pulls/5/reviews -f event=APP"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: gh api graphql -f query='mutation { mergePull"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: curl -X PUT -H 'Authorization: token x' https"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: curl --json '{}' https://gitlab.example.com/a"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 self-review: harmless variant allowed: gh pr review 5 --comment -b 'looks fine'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 self-review: harmless variant allowed: curl -s https://api.github.com/repos/o/r/pull"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 self-review: harmless variant allowed: bash -n scripts/x.sh"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-9: src/latest_migration.py is not a test"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-9: src/fastest_path.py is not a test"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-10: src/cache-invalidation/x.py is not change-controlled"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-10: src/test-infra/x.py is not change-controlled"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-52: tool call from a subdirectory resolves repo-root state"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-8/11/12: allowed: echo 'remember to git commit later'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name='REQ-GATE-02 historic PILOT-8/11/12: allowed: echo "remember to git push after review"'></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-8/11/12: allowed: ./scripts/reproduce.sh"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-8/11/12: allowed: ./deploy.sh byproduct-catalog"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-02 historic PILOT-8/11/12: allowed: ./deploy.sh product"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-10 legacy FIX_TASK=1 still protects existing tests"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-01 malformed JSON denies"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-01 empty input denies"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-01 Edit without path denies"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-01 Bash without command denies"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-04 no key in branch denies source edit despite stale plans"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 absolute path under a tmp directory is gated"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 traversal through an exempt-looking segment is gated"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 markdown docs stay ungated"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 README stays ungated"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 .github/workflows/ci.yml is no longer blanket-exempt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 package.json is no longer blanket-exempt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 config/app.yaml is no longer blanket-exempt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 NotebookEdit is gated"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: cat &gt; src/x.py &lt;&lt;'E'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: sed -i 's/a/b/' src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: sed -i.bak -e 's/a/b/' src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: echo x &gt;&gt; src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: tee src/new.py &lt; /dev/null"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: cp /etc/hosts src/hosts.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: mv src/app.py src/app2.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: rm -f src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: git checkout -- src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: truncate -s0 src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: dd if=/dev/zero of=src/app.py count=1"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: printf 'x' | tee -a src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: cd src &amp;&amp; echo x &gt; app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: bash -c 'echo x &gt; src/app.py'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: echo $(echo x &gt; src/app.py)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 Bash write denied: perl -pi -e 's/a/b/' src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 opaque write denied: python3 -c &quot;open('src/x.py','w').write('"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 opaque write denied: python3 - &lt;&lt;'EOF'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 opaque write denied: node -e &quot;require('fs').writeFileSync('sr"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 opaque write denied: git apply fix.patch"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 opaque write denied: patch -p1 &lt; fix.patch"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: python3 -m unittest discover -s tests"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: grep -rn production docs/"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: git status &amp;&amp; git log --oneline -5"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: echo hi &gt; /dev/null"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: ls -la src 2&gt;&amp;1"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name='REQ-V2G-02 read-only Bash allowed: python3 -c "print(1+1)"'></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: cat src/app.py | wc -l"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: git diff HEAD~1 -- src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: find . -name '*.py' | head"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: grep -rn deploy src/ | grep prod"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: echo 'remember to deploy to production l"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: npm test"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 read-only Bash allowed: pytest -q tests"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 writes outside the repo are not this gate's concern"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane write denied: .claude/settings.json"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane write denied: .claude/settings.local.json"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane write denied: .evidence/policy.json"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane write denied: .evidence/changes/ABC-1/approval.json"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane write denied: .evidence/changes/ABC-1/state.json"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane write denied: .evidence/secrets-allowlist.json"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane write denied: .evidence/audit/s1.jsonl"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane write denied: managed-settings.json"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 control plane Bash write denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 user settings write denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 agent cannot approve: evidence approve ABC-1"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 agent cannot approve: python3 plugins/evidence-sdlc/bin/eviden"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 agent cannot approve: evidence change set-tier ABC-1 1"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 agent cannot approve: /usr/local/bin/evidence approve ABC-1"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-04 key but no change state denies"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 unapproved plan denies"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-04 approved plan allows claimed path"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 edit outside claims denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 claimed glob allows new test file"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 plan edited after approval voids approval"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-04 stub plan denied even if approval hash matches"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-02 tier floor denies auth edit in a Tier 1 change"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-02 Tier 3 change may edit auth"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-03 Tier 3 denied in acceptEdits mode"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-03 Tier 3 denied in bypassPermissions mode"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-03 Tier 3 denied in auto mode"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-03 Tier 3 denied in dontAsk mode"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-08 change-controlled path needs a ticket"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-08 malformed ticket rejected"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-08 valid ticket allows"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-08 case-insensitive change control"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-03 read-only agent cannot write"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-03 main session can write"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-01 secret in written content denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-01 secret denied even in ungated docs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-01 env reference and placeholder are not secrets"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-01 secret on a command line denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 approval text in planning artifacts: plan/ABC-1.md '# Plan\nTracker: ABC-1   Approv'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 approval text in planning artifacts: intent/ABC-1/spec.md 'Status: approved'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 approval text in planning artifacts: plan/ABC-1.md '| Approved by | Jane Doe |'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 approval text in planning artifacts: plan/ABC-1.md 'Approval is recorded by a huma'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 approval text in planning artifacts: intent/ABC-1/intent.md 'Status: accepted'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 approval text in planning artifacts: docs/release-notes.md 'Approved by: release board'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-10 pre-existing test protected in fix mode: tests/test_app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-10 pre-existing test protected in fix mode: spec/models/user_spec.rb"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-10 new test file allowed in fix mode"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-10 deleting a protected test via Bash denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-10 code edit allowed in fix mode"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git push origin HEAD:main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git push -f origin feature/ABC-1-login:main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git push origin +HEAD:refs/heads/main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git push origin --delete main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git push origin :main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git push --mirror origin"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git push --all origin"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git -C . push origin main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git -c push.default=current push origin main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: env git push origin main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: command git push origin main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: /usr/bin/git push origin main"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: cd . &amp;&amp; git push origin release/1.2"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 REQ-V2G-11 protected push denied: git push origin HEAD:hotfix/urgent"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 feature push denied until review agents ran"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 a same-named agent from another plugin does not satisfy the review gate"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 feature push allowed after required agents"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 agent merge denied: gh pr merge 12 --admin --merge"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 agent merge denied: gh pr merge 12 --squash"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 agent merge denied: gh api -X PUT repos/o/r/pulls/1/merge"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 agent merge denied: gh api --method DELETE repos/o/r/branche"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 read-only gh allowed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 bare push from main denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 Tier 2 PR needs security-reviewer"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 Tier 2 PR allowed after security-reviewer"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'fix thing'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'fix UTF-8 handling'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'bump SHA-256 support'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'ABC-1: fix'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'ABC-1: fix' -m 'Agent-Session: s1'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'OTHER-2: fix' -m 'Agent-Session: s1'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-03 heredoc commit message (Claude Code's pattern) is read"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-03 commit -F - reads the heredoc"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07 heredoc message without key denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07 git -c commit still checked"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07 combined -am flags parsed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07 editor commit denied with guidance"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-01 staged secret blocks commit"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-02 dangerous git config denied: git -c alias.x='!sh -c id' x"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-02 dangerous git config denied: git -c core.hooksPath=/tmp/h commit -m '"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-02 dangerous git config denied: git config alias.pwn '!curl evil'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-02 dangerous git config denied: git config --global core.sshCommand 'sh "></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-02 git config read allowed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: ./deploy.sh production"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: ./deploy.sh PROD"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: ./deploy.sh --env=Production"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: ./deploy.sh prd"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: ./deploy.sh live"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: kubectl apply -n production -f k.yaml"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: terraform apply -var env=prod"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: helm upgrade --namespace prod app ./chart"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name='REQ-V2G-06 REQ-V2G-11 production deploy denied: ENV=pr""od ./deploy.sh'></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: ./deploy.sh $TARGET"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: bash scripts/deploy.sh prod"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: make deploy-prod"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: npm run deploy:prod"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: aws ecs update-service --cluster prod --servi"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: gcloud run deploy api --project acme-prod"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: gh workflow run deploy.yml -f env=production"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 REQ-V2G-11 production deploy denied: sudo -u ops ./release.sh production"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 non-deploy allowed: ./deploy.sh staging"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 non-deploy allowed: kubectl get pods -n production"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 non-deploy allowed: helm list -n prod"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 non-deploy allowed: grep -rn production docs/"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 non-deploy allowed: cat deploy/prod.env"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 non-deploy allowed: terraform plan -var env=prod"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 non-deploy allowed: echo 'deploy to prod on friday'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 malformed release approval rejected"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 valid release approval allows"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy cannot widen ungated or disable claims"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy can add protected refs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy cannot turn off the agent trailer"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy cannot loosen the release approval pattern"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 org policy can permit repo ungated additions"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-02 audit chain verifies"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 agent completion recorded from PostToolUse"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-02 tampering detected"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 first source edit advances approved -&gt; implementing"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-02 session-start canary line present"></testcase>
+</testsuite>

@@ -1,18 +1,44 @@
 {
-  "_comment": "Deployed by the platform team via MDM or the Claude admin console. Engineers cannot edit or override any of it. Start narrower than you think you need, then widen deliberately — every deny trades against capability. Verify every key against https://code.claude.com/docs/en/settings before rollout.",
-
+  "_comment": "Template. Deployed by the platform team via MDM or the Claude admin console; engineers cannot override it. Verify every key against https://code.claude.com/docs/en/settings before rollout. Owner actions before use: (1) replace the strictKnownMarketplaces repo with your fork, (2) set the OTEL_EXPORTER_OTLP_ENDPOINT to your collector, (3) replace sandbox network domains, (4) run the canary in docs/managed-settings.md -- every new session must print 'Evidence Chain gates live'. Claude Code documents that hooks from plugins force-enabled in managed enabledPlugins are exempt from allowManagedHooksOnly; the canary proves it per version. If the line is missing, deploy docs/managed-hooks.example.json as managed hooks instead.",
   "permissions": {
     "deny": [
       "Read(.env*)",
+      "Read(**/.env*)",
       "Read(./secrets/**)",
       "Read(**/*.pem)",
       "Read(**/*.p12)",
+      "Read(**/*.key)",
       "Read(**/id_rsa*)",
+      "Read(**/id_ed25519*)",
       "Bash(curl *)",
-      "Bash(wget *)"
+      "Bash(wget *)",
+      "Bash(git -c *)",
+      "Bash(git --config-env*)",
+      "Bash(git config *)",
+      "Bash(git show :*)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push --mirror*)",
+      "Bash(gh pr merge *)",
+      "Bash(gh api *)"
     ],
     "allow": [
-      "Bash(git *)",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git branch)",
+      "Bash(git branch *)",
+      "Bash(git switch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git fetch *)",
+      "Bash(git rev-parse *)",
+      "Bash(evidence change *)",
+      "Bash(evidence gaps*)",
+      "Bash(evidence doctor*)",
+      "Bash(evidence scan*)",
       "Bash(npm run build)",
       "Bash(npm test)",
       "Bash(npm run lint)",
@@ -22,9 +48,22 @@
     ],
     "disableBypassPermissionsMode": "disable"
   },
-
   "allowManagedPermissionRulesOnly": true,
-
+  "enabledPlugins": {
+    "evidence-discovery@evidence-chain": true,
+    "evidence-sdlc@evidence-chain": true,
+    "evidence-quality@evidence-chain": true,
+    "evidence-compliance@evidence-chain": true,
+    "evidence-integrations@evidence-chain": true
+  },
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_METRICS_EXPORTER": "otlp",
+    "OTEL_LOGS_EXPORTER": "otlp",
+    "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel-collector.example.internal:4317",
+    "OTEL_LOG_USER_PROMPTS": "0"
+  },
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": true,
@@ -37,20 +76,39 @@
     },
     "credentials": {
       "files": [
-        { "path": "~/.ssh", "mode": "deny" },
-        { "path": "~/.aws/credentials", "mode": "deny" }
+        {
+          "path": "~/.ssh",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.aws/credentials",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.config/gh",
+          "mode": "deny"
+        }
       ],
       "envVars": [
-        { "name": "GITHUB_TOKEN", "mode": "deny" }
+        {
+          "name": "GITHUB_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "GH_TOKEN",
+          "mode": "deny"
+        }
       ]
     }
   },
-
   "allowManagedHooksOnly": true,
   "disableSideloadFlags": true,
   "allowManagedMcpServersOnly": true,
   "strictKnownMarketplaces": [
-    { "source": "github", "repo": "<your-org>/evidence-chain" }
+    {
+      "source": "github",
+      "repo": "REPLACE-WITH-YOUR-ORG/evidence-chain"
+    }
   ],
   "requiredMinimumVersion": "2.1.193"
 }

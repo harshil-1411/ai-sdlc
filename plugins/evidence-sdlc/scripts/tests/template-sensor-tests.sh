@@ -8,7 +8,7 @@
 set -u
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
-SCRIPT="$REPO_ROOT/plugins/evidence-sdlc/scripts/template-sensor.sh"
+SCRIPT="$REPO_ROOT/plugins/evidence-sdlc/scripts/engine/hook.sh"
 SCRATCH=$(mktemp -d)
 trap 'rm -rf "$SCRATCH"' EXIT
 
@@ -21,22 +21,27 @@ json_path() {
 }
 
 # run_case <label> <target_file_abspath> <expect: silent|finding>
+junit_cases=()
+record() {  # record <label> <pass|fail>
+  junit_cases+=("$2	$1")
+}
+
 run_case() {
   local label="$1" target="$2" expect="$3"
   local out
-  out=$(bash "$SCRIPT" <<<"$(json_path "$target")" 2>&1)
+  out=$(bash "$SCRIPT" sensor <<<"$(json_path "$target")" 2>&1)
   if [ "$expect" = "silent" ]; then
     if [ -z "$out" ]; then
-      pass=$((pass + 1)); echo "PASS: $label"
+      pass=$((pass + 1)); echo "PASS: $label"; record "$label" pass
     else
-      fail=$((fail + 1)); failures+=("$label (expected silence, got output)")
+      fail=$((fail + 1)); failures+=("$label (expected silence, got output)"); record "$label" fail
       echo "FAIL: $label (expected silence) -- output: $out"
     fi
   else
     if echo "$out" | grep -q '"additionalContext"'; then
-      pass=$((pass + 1)); echo "PASS: $label"
+      pass=$((pass + 1)); echo "PASS: $label"; record "$label" pass
     else
-      fail=$((fail + 1)); failures+=("$label (expected an additionalContext finding, got: $out)")
+      fail=$((fail + 1)); failures+=("$label (expected an additionalContext finding, got: $out)"); record "$label" fail
       echo "FAIL: $label (expected a finding) -- output: $out"
     fi
   fi
@@ -102,14 +107,14 @@ cat > "$F6/plan/TRACE-99.md" <<'EOF'
 <Every path this plan is going to touch, so a concurrent session in another
 worktree can see it is already spoken for before it starts.>
 EOF
-run_case "namespaced plan/<KEY>.md with unfilled placeholder -> finding" "$F6/plan/TRACE-99.md" finding
+run_case "REQ-V2D-08 namespaced plan/<KEY>.md with unfilled placeholder -> finding" "$F6/plan/TRACE-99.md" finding
 
 F7="$SCRATCH/f7"; mkdir -p "$F7/plan"
 cat > "$F7/plan/TRACE-99.md" <<'EOF'
 ## Files claimed
 - src/orders.py
 EOF
-run_case "namespaced plan/<KEY>.md with real content -> silent" "$F7/plan/TRACE-99.md" silent
+run_case "REQ-V2D-08 namespaced plan/<KEY>.md with real content -> silent" "$F7/plan/TRACE-99.md" silent
 
 echo "=== plan.md: mid-flight checkpoint (Tier 2/3) ==="
 F10="$SCRATCH/f10"; mkdir -p "$F10"
@@ -126,7 +131,7 @@ cat > "$F10/plan.md" <<'EOF'
 2. **[CHECKPOINT]** Re-confirm scope against spec.md before continuing.
 3. Finish the thing.
 EOF
-run_case "Tier 2 plan.md WITH a CHECKPOINT step -> silent" "$F10/plan.md" silent
+run_case "REQ-CKPT-03 Tier 2 plan.md WITH a CHECKPOINT step -> silent" "$F10/plan.md" silent
 
 F11="$SCRATCH/f11"; mkdir -p "$F11"
 cat > "$F11/spec.md" <<'EOF'
@@ -141,7 +146,7 @@ cat > "$F11/plan.md" <<'EOF'
 1. Do the thing.
 2. Finish the thing.
 EOF
-run_case "Tier 3 plan.md with NO CHECKPOINT step -> finding" "$F11/plan.md" finding
+run_case "REQ-CKPT-03 Tier 3 plan.md with NO CHECKPOINT step -> finding" "$F11/plan.md" finding
 
 F12="$SCRATCH/f12"; mkdir -p "$F12"
 cat > "$F12/spec.md" <<'EOF'
@@ -156,7 +161,7 @@ cat > "$F12/plan.md" <<'EOF'
 1. Do the thing.
 2. Finish the thing.
 EOF
-run_case "Tier 1 plan.md with no CHECKPOINT step -> silent (not required)" "$F12/plan.md" silent
+run_case "REQ-CKPT-03 Tier 1 plan.md with no CHECKPOINT step -> silent (not required)" "$F12/plan.md" silent
 
 F13="$SCRATCH/f13"; mkdir -p "$F13"
 cat > "$F13/plan.md" <<'EOF'
@@ -167,7 +172,7 @@ cat > "$F13/plan.md" <<'EOF'
 1. Do the thing.
 2. Finish the thing.
 EOF
-run_case "plan.md with no sibling spec.md at all -> silent (nothing to check tier against)" "$F13/plan.md" silent
+run_case "REQ-CKPT-03 plan.md with no sibling spec.md at all -> silent (nothing to check tier against)" "$F13/plan.md" silent
 
 echo "=== SKILL.md: eval case exists ==="
 F14="$SCRATCH/f14"; mkdir -p "$F14/plugins/widgets/skills/frobnicate" "$F14/plugins/widgets/evals/frobnicate-fires-on-request"
@@ -177,7 +182,7 @@ name: frobnicate
 description: Frobnicate things.
 ---
 EOF
-run_case "new SKILL.md WITH a matching eval case dir -> silent" "$F14/plugins/widgets/skills/frobnicate/SKILL.md" silent
+run_case "REQ-EVAL-02 new SKILL.md WITH a matching eval case dir -> silent" "$F14/plugins/widgets/skills/frobnicate/SKILL.md" silent
 
 F15="$SCRATCH/f15"; mkdir -p "$F15/plugins/widgets/skills/frobnicate"
 cat > "$F15/plugins/widgets/skills/frobnicate/SKILL.md" <<'EOF'
@@ -186,7 +191,7 @@ name: frobnicate
 description: Frobnicate things.
 ---
 EOF
-run_case "new SKILL.md with NO evals/ directory at all -> finding" "$F15/plugins/widgets/skills/frobnicate/SKILL.md" finding
+run_case "REQ-EVAL-02 new SKILL.md with NO evals/ directory at all -> finding" "$F15/plugins/widgets/skills/frobnicate/SKILL.md" finding
 
 F16="$SCRATCH/f16"; mkdir -p "$F16/plugins/widgets/skills/frobnicate" "$F16/plugins/widgets/evals/unrelated-case"
 cat > "$F16/plugins/widgets/skills/frobnicate/SKILL.md" <<'EOF'
@@ -195,7 +200,7 @@ name: frobnicate
 description: Frobnicate things.
 ---
 EOF
-run_case "new SKILL.md with evals/ present but no matching case -> finding" "$F16/plugins/widgets/skills/frobnicate/SKILL.md" finding
+run_case "REQ-EVAL-02 new SKILL.md with evals/ present but no matching case -> finding" "$F16/plugins/widgets/skills/frobnicate/SKILL.md" finding
 
 echo "=== unrelated files must never fire ==="
 F8="$SCRATCH/f8"; mkdir -p "$F8"
@@ -206,24 +211,28 @@ F9="$SCRATCH/f9"; mkdir -p "$F9"
 echo "hello" > "$F9/some_plan.md"
 run_case "a file merely named *_plan.md, not in a plan/ dir -> silent" "$F9/some_plan.md" silent
 
-echo "=== jq missing: must degrade to silence, NOT fail closed -- this sensor has nothing to protect ==="
+echo "=== python3 missing: the advisory sensor degrades to silence, NOT a deny -- it has nothing to protect ==="
 NOJQ_BIN="$SCRATCH/nojq-bin"
 mkdir -p "$NOJQ_BIN"
 for tool in bash cat awk sed tr; do
   src=$(command -v "$tool") && ln -sf "$src" "$NOJQ_BIN/$(basename "$src")"
 done
-if PATH="$NOJQ_BIN" command -v jq >/dev/null 2>&1; then
-  echo "FATAL: jq is still resolvable under the constructed jq-free PATH ($NOJQ_BIN)."
+if PATH="$NOJQ_BIN" command -v python3 >/dev/null 2>&1; then
+  echo "FATAL: python3 is still resolvable under the constructed PATH ($NOJQ_BIN)."
   echo "The jq-missing case below would be meaningless. Aborting."
   exit 1
 fi
-out=$(PATH="$NOJQ_BIN" bash "$SCRIPT" <<<"$(json_path "$F2/spec.md")" 2>&1)
+out=$(PATH="$NOJQ_BIN" bash "$SCRIPT" sensor <<<"$(json_path "$F2/spec.md")" 2>&1)
 status=$?
 if [ -z "$out" ] && [ "$status" -eq 0 ]; then
-  pass=$((pass + 1)); echo "PASS: jq missing -> silent, exit 0 (not a deny -- nothing to fail closed on here)"
+  pass=$((pass + 1)); echo "PASS: python3 missing -> silent, exit 0 (not a deny -- nothing to fail closed on here)"
 else
-  fail=$((fail + 1)); failures+=("jq-missing case (expected silent exit 0, got status=$status output=$out)")
+  fail=$((fail + 1)); failures+=("python3-missing case (expected silent exit 0, got status=$status output=$out)")
   echo "FAIL: jq missing -> expected silent exit 0, got status=$status output=$out"
+fi
+
+if [ -n "${JUNIT_OUT:-}" ]; then
+  printf '%s\n' "${junit_cases[@]}" | python3 "$(dirname "${BASH_SOURCE[0]}")/junit_from_tsv.py" "template sensor" "$JUNIT_OUT"
 fi
 
 echo

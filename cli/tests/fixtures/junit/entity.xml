@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE lolz [<!ENTITY lol "lol">]>
+<testsuite name="x"><testcase classname="tests.test_ingest" name="test_ingested"/></testsuite>

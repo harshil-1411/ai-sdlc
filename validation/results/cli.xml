@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testsuite name="cli-fixtures" tests="80" failures="0" timestamp="2026-09-24T03:36:25">
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 1: requirement with no test -&gt; exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 1: the requirement is listed as NO COVERAGE"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 2: no requirements anywhere -&gt; exit 2"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 2: says nothing to assess"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-02 REQ-V2C-04: Fixture 3: marker-tagged test -&gt; exit 0"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-02 REQ-V2C-04: Fixture 3: NO COVERAGE (0)"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 3: tagged but never-run requirement listed under UNVERIFIED-RESULT"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-04: Fixture 3b: comment adjacent to a test is not coverage -&gt; exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-02: Fixture 4: loose mention (not structural) -&gt; still exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-02: Fixture 4: mentioned requirement still listed as NO COVERAGE"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-03: Fixture 5: uncorroborated CSV claim -&gt; still exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-03: Fixture 5: listed as NO COVERAGE with the reason"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-03: Fixture 6: corroborated CSV claim -&gt; exit 0"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-03: Fixture 6: NO COVERAGE (0)"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 7: structural tie + recorded CSV result -&gt; exit 0"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 7: UNVERIFIED-RESULT (0)"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 7: free-text CSV PASS is reported as SELF-ASSERTED"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 7: --strict makes SELF-ASSERTED blocking -&gt; exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-01: Fixture 8: malformed CSV -&gt; gaps still exits 1 (real NO COVERAGE), not a crash"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-03: Fixture 8: gaps warns about the malformed header"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-04: Fixture 8: doctor reports the header check as a critical FAIL"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-06: Fixture 8: export --write refuses rather than risk overwriting it"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-06: Fixture 8: malformed CSV left untouched on disk after refused export --write"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-02: Fixture 9: duplicate ID surfaced under DUPLICATE-ID"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-02: Fixture 9: both spec files named in the DUPLICATE-ID entry"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-04: Fixture 10: six structural forms covered, four non-structural not"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-04: Fixture 10: python comment is not coverage"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-04: Fixture 10: js comment is not coverage"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-04: Fixture 10: eval prompt prose is not coverage"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-04: Fixture 10: a commented-out test call is not coverage"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-04: Fixture 11: without .evidenceignore the fixture is ORPHANED"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-04: Fixture 11: with .evidenceignore it is not scanned"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 12: no ingested result -&gt; SELF-ASSERTED"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 12: --results with a passing JUnit testcase -&gt; PROVEN"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 12: ingested pass clears SELF-ASSERTED"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 12: --strict passes once every requirement is PROVEN"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 12: a later failing run of the covering test -&gt; FAILED, exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 12: FAILED names the failing testcase"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02 REQ-CLI-05: Fixture 12: adapter test_results_location is ingested"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02: Fixture 12: XML with DOCTYPE/ENTITY is refused, not parsed"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-02 REQ-V2C-04: Fixture 13: passing eval case with covers: -&gt; PROVEN"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-05 REQ-V2C-08: Fixture 14: adapter requirement_pattern/spec_glob/test_dir_segments honoured"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-05: Fixture 14: custom-pattern requirement counted"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-05: Fixture 15: unresolved [ASK] is a WARN, not a PASS"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-05: Fixture 15: missing profiles are a WARN that lists them"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-05 REQ-V2O-03: Fixture 15: referenced control set with Owner UNASSIGNED warns"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2O-03: Fixture 15: out-of-scope sets and README are not flagged"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-05 REQ-V2C-08: Fixture 15: WARN only -&gt; exit 0"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-05: Fixture 15: --strict turns WARN into exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-05 REQ-CLI-04: Fixture 15: python3 check present"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-04: Fixture 15: exec-form bash -c hook resolves to its script"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-04: Fixture 15: a hook referencing a missing script is a FAIL -&gt; exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06 REQ-V2O-04 REQ-CLI-06 REQ-V2C-08: Fixture 16: export --write succeeds"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06: Fixture 16: conflicts are reported on stdout"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06: Fixture 16: existing evidence_link not overwritten"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06: Fixture 16: existing requirement_summary not overwritten"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06: Fixture 16: existing result and test_run_id not overwritten"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06 REQ-CLI-06: Fixture 16: a row no spec mentions is never deleted"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06: Fixture 16: a new requirement is appended"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06: Fixture 16: --conflicts-only exits 1 while conflicts exist"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-06: Fixture 16: --conflicts-only lists the summary conflict"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-03: Fixture 17: approved_by from approval.json"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-03: Fixture 17: agent_sessions from commit trailers"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-03: Fixture 17: another key's session is not attributed"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-03: Fixture 17: implementing_commits lists the keyed commit"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-03: Fixture 17: implementing_commits excludes the spec commit"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-03: Fixture 17: --github adds PR approvals for PRs titled with the key"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-03: Fixture 17: approvals on PRs without the key are ignored"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-03: Fixture 17: approval of an edited plan is shown STALE"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-10: Fixture 18: tracker check of an existing issue -&gt; exit 0"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-10: Fixture 18: tracker check prints the issue"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-10: Fixture 18: tracker check of a missing issue -&gt; exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-10: Fixture 18: tracker link writes back -&gt; exit 0"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-10: Fixture 18: link sent as an issue comment through gh"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2C-10: Fixture 18: a key not matching tracker_key_to_issue -&gt; exit 2"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2X-02 REQ-CLI-07 REQ-V2C-08: Fixture 19: both participants carry a child chain -&gt; exit 0"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2X-02: Fixture 19: MISSING-CHILD (0) when complete"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2X-02: Fixture 19: a participant without a child chain -&gt; exit 1"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-V2X-02: Fixture 19: MISSING-CHILD names the parent and the repo"/>
+    <testcase classname="cli.tests.test_cli_fixtures" name="REQ-CLI-07: Fixture 19: scan --repos DIR joins sibling repos on the parent key"/>
+  </testsuite>
+</testsuites>
