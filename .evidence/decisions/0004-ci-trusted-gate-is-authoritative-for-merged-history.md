@@ -31,10 +31,16 @@ A new workflow, `.github/workflows/verify-range.yml`, runs on `pull_request_targ
 
    Fork and Dependabot PRs fail by design. The CLI reads policy, allow-lists and CODEOWNERS **from the base SHA**, never from the head.
 1. **Change and approval:**
-   - The change key is the single key in the PR head branch name (from the event). Every commit's message must carry it and an `Agent-Session:` trailer. There is no exception for commits authored by a code owner.
-   - That change's state at the head must be verified and not `released`, and it must not be released at the base.
-   - **Approval comes from GitHub:** an `APPROVED` review on the head SHA by a CODEOWNER (from the base's `.github/CODEOWNERS`) who is not the PR author. The claims are read from the plan whose sha256 matches the head's `approval.json`. The signature is checked, but the merge decision does not rest on it alone.
-2. **Paths:** every commit in `base..head` is checked, with `diff-tree -r -M --root --name-status`, plus `--cc` for merges and the net diff `base...head`. Every A/M/D/T/R path is checked against those claims. `.evidence/**` is judged by rules 4–5, not exempted.
+   - The change key is the single key in the PR head branch name, read from `$GITHUB_EVENT_PATH` and never interpolated into `run:`.
+   - Every non-merge commit's message carries that key, plus either an `Agent-Session:` trailer or a `Human-Commit: <github login>` trailer. There is no exception based on who the author is.
+   - That change's state at the head is verified and not `released`, and it is not released at the base.
+   - **Approval comes from GitHub:** an `APPROVED` review on the **head SHA** by a user who owns every changed path. Ownership is taken from the last matching rule in the base's `.github/CODEOWNERS`. Team owners are unsupported and fail. The approver must not be the PR author.
+   - The claims are read from the plan whose sha256 matches the head's `approval.json`. The signature is also checked, but the merge decision does not rest on it alone. The approving review covers every commit in the range, including `Human-Commit:` commits.
+2. **Paths:**
+   - Every commit in `base..head` is checked, with `diff-tree -r -M --root --name-status`, plus `--cc -M` for merges and the net diff `diff -M base...head`.
+   - Every A/M/D/T/R path outside `.evidence/**` is checked against the claims.
+   - **Merge commits:** a merge whose `--cc` output is empty and whose non-first parent is reachable from the base (a clean "Update branch" merge of `main`) passes without trailers. Any other merge is checked like a commit, and needs the key and a trailer.
+   - `.evidence/**` is exempt from claims and judged only by rules 4–5.
 3. **Secrets:** added blobs are scanned in 1 MiB chunks with overlap. A blob over the cap fails unless its path is on the org allow-list.
 4. **Audit logs:**
    - Every `Agent-Session` named in the range has its log at the head, and it verifies.
@@ -45,8 +51,23 @@ A new workflow, `.github/workflows/verify-range.yml`, runs on `pull_request_targ
    - None that exists at the base is deleted or type-changed.
    - The `state` stage never moves backwards across the range.
    - No violation that was open at the base, or earlier in the range, is missing or closed without a signed clear.
+   - Records of **other** changes may change only by a signed release (stage → `released`) or a signed clear (violations `open` → closed with `cleared_by`).
+6. **Re-run after approval.** `pull_request_target` does not fire on reviews. The same base-branch workflow accepts `workflow_dispatch` with a PR number, and the job can be re-run from the PR's checks. The owner re-runs it after approving.
+7. **Push report mode.** On `push` to `main`, `verify-range --push-report` runs over `event.before..event.after`. It checks rules 2–5, with claims taken from each commit's change key where one is present; it reports and never blocks. An all-zero `before` (first push) is skipped with a note. This catches admin direct pushes after the fact.
 
-On `push` to `main`, the same command runs over `event.before..event.after` and reports. This catches admin direct pushes after the fact, and does not block.
+### Third-review trace
+| Finding | Where it is closed |
+| --- | --- |
+| N1 PR runs its own workflow | `pull_request_target` base-branch workflow (Decision; spec REQ-IMH-21) |
+| N2 author-based exception | Rule 1: no author exception; `Human-Commit:` + head-SHA review |
+| N3 omitted, deleted or rolled-back records | Rules 4–5 |
+| N4 key compromise forges approval | Rule 1: approval from a GitHub review; ADR-0003 §4 corrected |
+| N5 no key / fork PRs | Rule 0: fail closed |
+| N6 old key replay | Rule 1: single key from the head branch, not released at base or head |
+| N7 two-dot net diff | Rule 2: `base...head` |
+| N8 PR-controlled policy / allow-lists | Rule 0: read from the base |
+| N9 push and dispatch events | Rules 0, 7 and event conditions in REQ-IMH-21 |
+| N10 fail-open bootstrap guard | No guard: `pull_request_target` uses `main`'s workflow, so PILOT-58's own PR isn't gated |
 
 The existing `sign-and-gate` job (results signing and `gaps --strict`) is unchanged.
 

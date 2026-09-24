@@ -34,8 +34,11 @@ Revision 3: after the second security design review. CI's trusted gate is author
 - `plugins/*/.claude-plugin/plugin.json`
 - `.claude-plugin/marketplace.json`
 - `validation/results/**` (only the human's refreshed results)
+- `.github/workflows/verify-range.yml` (human-authored in step 9; claimed so the claims check passes)
 
-The human writes `.github/workflows/verify-range.yml` (change-controlled; see Order of work step 9). The agent does not claim it. `ci.yml` is not changed.
+`ci.yml` is not changed.
+
+Revision 3.2 (code review): `verify-range.yml` is claimed; the manifests are listed; step 7 uses fixtures only; the MAN row carries its REQ ID; the exact subprocess allow-list; `github_repo` source; re-run after approval; merge and human commits.
 
 Revision 3.1 (third design review): the gate moves to a base-branch `pull_request_target` workflow. Approval comes from GitHub code-owner review. `verify-range` rules are tightened (fail closed, key source, per-parent audit prefix, record rollback).
 
@@ -57,10 +60,14 @@ Revision 3.1 (third design review): the gate moves to a base-branch `pull_reques
 - `plugins/evidence-sdlc/scripts/engine/hook.py`:
   - `run_post`: `audit-unwritable` (REQ-IMH-06) and `git-config-refused` handling (REQ-IMH-09);
   - `run_pre`: deny when `.git` is present but git fails (REQ-IMH-23).
-- `plugins/evidence-sdlc/scripts/engine/evidence_policy.py`: commit flag and one-command denials, and the spoof list (REQ-IMH-10); direct git calls go through `run_git`.
+- `plugins/evidence-sdlc/scripts/engine/evidence_policy.py`:
+  - commit flag and one-command denials, and the spoof list (REQ-IMH-10);
+  - direct git calls go through `run_git`;
+  - the release-verify command (`:552`, `shell=True`) runs with `env=_child_env()`, so the key isn't inherited (REQ-IMH-22).
 - `plugins/evidence-sdlc/scripts/engine/lifecycle.py`:
-  - `_gh` goes through `run_gh` with `--repo` (REQ-IMH-24);
-  - new `cmd_verify_range`, registered as `verify-range` (REQ-IMH-19).
+  - `_gh` goes through `run_gh` with `--repo`; no `gh repo view` fallback (`:497`), and an empty `github_repo` is refused locally (REQ-IMH-24);
+  - the `ps` probe (`:545`) gets `env=_child_env()` (REQ-IMH-22);
+  - new `cmd_verify_range`, registered as `verify-range`. It has a PR mode (reads `$GITHUB_EVENT_PATH`) and `--push-report` (REQ-IMH-19, ADR-0004 rules 0–7).
 - `plugins/evidence-sdlc/bin/evidence`: add `verify-range` to the `LIFECYCLE` dispatch set.
 - `plugins/evidence-sdlc/policy/default-policy.json`:
   - `git_allowed_config` (the four exact git-lfs pairs);
@@ -70,12 +77,12 @@ Revision 3.1 (third design review): the gate moves to a base-branch `pull_reques
 - `plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py`: `verify-range` fixture repositories (REQ-IMH-19).
 - `tests/content_acceptance_tests.py`: REQ-IMH-18 and REQ-IMH-21 (the workflow step is present).
 - Docs, governance and release (REQ-IMH-18):
-  - `docs/gates-reference.md` and `docs/managed-settings.md`: the local push gate is advisory, `sign-and-gate` is authoritative, and the allow-list path;
+  - `docs/gates-reference.md` and `docs/managed-settings.md`: the local push gate is advisory, the `verify-range` `pull_request_target` job is authoritative (`sign-and-gate` unchanged), the re-run after approval, and the allow-list path;
   - `docs/policy-reference.md`: the new keys;
   - `governance/control-mapping.md` and `governance/supplier-audit-packet.md`: change control rests on the CI gate, and the ADR-0003 §4 residual risk is stated;
   - `HANDOFF.md`;
   - `CHANGELOG.md` `## 2.1.0`, with a redeploy note and the Known issues left to PILOT-59/60/61;
-  - versions go to 2.1.0.
+  - versions go to 2.1.0 in `plugins/evidence-sdlc/.claude-plugin/plugin.json`, `plugins/evidence-discovery/.claude-plugin/plugin.json`, `plugins/evidence-quality/.claude-plugin/plugin.json`, `plugins/evidence-compliance/.claude-plugin/plugin.json`, `plugins/evidence-integrations/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`.
 
 ## Order of work
 1. Write the failing tests for every Proof row. Run them and record why each fails.
@@ -84,7 +91,7 @@ Revision 3.1 (third design review): the gate moves to a base-branch `pull_reques
 4. REQ-IMH-05, 06, 07, 20.
 5. **CHECKPOINT:** re-read spec.md and ADR-0003/0004. Run the full engine suite: every existing case passes, or is listed here with the reason. Then run the **security-reviewer on steps 2–4 alone**.
 6. REQ-IMH-10 and REQ-IMH-11. Run `evidence audit verify` on this repository's real logs: they must pass, with only the three known fork notes.
-7. REQ-IMH-19: `verify-range` with fixture-repository tests. Run it on this branch against `origin/main`, and it must pass.
+7. REQ-IMH-19: `verify-range` with fixture-repository tests, with the GitHub API stubbed and a test key. One fixture is built from this branch's own history, so the real shape passes. There is no live run from the agent: that needs a PR, a token, the key and a review, so the live run is MAN-IMH-01 on the next PR.
 8. REQ-IMH-18: docs, governance, CHANGELOG, versions.
 9. **Human step (change-controlled file):** write `.github/workflows/verify-range.yml` from the spec (REQ-IMH-21 Design). The agent drafts the exact YAML in the PR description for the human to copy. The human commits it on this branch. REQ-IMH-21's content test then passes.
 10. Run the engine, lifecycle and content suites directly (no JUNIT_OUT). Confirm nothing under `validation/` changed.
@@ -129,14 +136,14 @@ Step 5.
 | REQ-IMH-09 | Engine git neutralised; `GIT_*` and the key removed from children; config refusal per ADR-0003 §2; marker scripts never run | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-09 …" | CI engine.xml |
 | REQ-IMH-10 | Commit flag and one-command denials; index and object environment variables are spoofing | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-10 …" | CI engine.xml |
 | REQ-IMH-11 | Replayed and cross-session audit entries break verification | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-11 …" | CI engine.xml |
-| REQ-IMH-19 | `verify-range` per ADR-0004 rev. 2. Each fixture fails: evil merge, trailer-less or CODEOWNER-authored trailer-less commit, unclaimed A/M/D/T/R, truncated, omitted or deleted audit log, violations rollback, state regression, replayed key, no key, empty SHA, no approving review, secret. A clean branch after `main` moved passes | CLI | yes | — | `plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py` "REQ-IMH-19 …" (GitHub API stubbed) | CI lifecycle.xml |
+| REQ-IMH-19 | `verify-range` per ADR-0004 rules 0–7. The full fixture list is in the spec's REQ-IMH-19 Acceptance (every rule 0–5 failure, the passing shapes, push mode) | CLI | yes | — | `plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py` "REQ-IMH-19 …" (GitHub API stubbed, test key) | CI lifecycle.xml |
 | REQ-IMH-20 | The audit-log prefix hash detects truncation, rewrite and replacement; new logs must verify | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-20 …" | CI engine.xml |
-| REQ-IMH-21 | `verify-range.yml` runs on `pull_request_target` from the base; no head checkout, no `continue-on-error` or `\|\| true`; permissions and event conditions set | content | yes | — | `tests/content_acceptance_tests.py` "REQ-IMH-21 …" | CI content.xml |
-| REQ-IMH-22 | No engine subprocess bypasses the approved helpers | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-22 …" | CI engine.xml |
+| REQ-IMH-21 | `verify-range.yml`: `pull_request_target` + `workflow_dispatch` + push; base-only checkout with `fetch-depth: 0` and `persist-credentials: false`; head fetched and compared with the event head; no `${{ github.event.pull_request.(head.ref\|title\|body) }}` in `run:`; no `continue-on-error` or `\|\| true`; permissions and event conditions set | content | yes | — | `tests/content_acceptance_tests.py` "REQ-IMH-21 …" | CI content.xml |
+| REQ-IMH-22 | Engine subprocess call sites match the exact allow-list (`run_git`, `run_gh`, the `ps` probe, release-verify), and none inherits the key | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-22 …" | CI engine.xml |
 | REQ-IMH-23 | Git failure fails closed: violation, filesystem restore, next pre denied | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-23 …" | CI engine.xml |
 | REQ-IMH-24 | `gh` pinned to `--repo`, with `GIT_*` and the key removed | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-24 …" | CI engine.xml |
 | REQ-IMH-18 | Docs, governance, HANDOFF and Known issues match: local advisory, CI authoritative, residual risk stated | content | yes | — | `tests/content_acceptance_tests.py` "REQ-IMH-18 …" | CI content.xml |
-| MAN-IMH-01 | Live: on the PR after this merges, `sign-and-gate` runs `verify-range` and fails a deliberately bad test branch | manual | no | MAN-IMH-01 | — | CI run link in the release note |
+| REQ-IMH-21 (live) | Live: on the first PR after this merges, the base-branch `verify-range` `pull_request_target` job fails a deliberately bad test branch, and passes after a code-owner approval and a re-run | manual | no | MAN-IMH-01 | — | CI run link in the release note |
 
 ## Considered and rejected
 - **ADR-0001, and the local push-time range check.** Both were rejected in the design reviews (see the spec's scope history).
