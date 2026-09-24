@@ -35,7 +35,9 @@ Revision 3: after the second security design review. CI's trusted gate is author
 - `.claude-plugin/marketplace.json`
 - `validation/results/**` (only the human's refreshed results)
 
-The human edits `.github/workflows/ci.yml` (change-controlled; see Order of work step 9). The agent does not claim it.
+The human writes `.github/workflows/verify-range.yml` (change-controlled; see Order of work step 9). The agent does not claim it. `ci.yml` is not changed.
+
+Revision 3.1 (third design review): the gate moves to a base-branch `pull_request_target` workflow. Approval comes from GitHub code-owner review. `verify-range` rules are tightened (fail closed, key source, per-parent audit prefix, record rollback).
 
 ## Files that change
 - `plugins/evidence-sdlc/scripts/engine/state.py`:
@@ -84,14 +86,16 @@ The human edits `.github/workflows/ci.yml` (change-controlled; see Order of work
 6. REQ-IMH-10 and REQ-IMH-11. Run `evidence audit verify` on this repository's real logs: they must pass, with only the three known fork notes.
 7. REQ-IMH-19: `verify-range` with fixture-repository tests. Run it on this branch against `origin/main`, and it must pass.
 8. REQ-IMH-18: docs, governance, CHANGELOG, versions.
-9. **Human step (change-controlled file):** add the `verify-range` step to `.github/workflows/ci.yml` `sign-and-gate`, before "Traceability gaps (strict, trusted CLI)". The exact YAML is in the spec, REQ-IMH-21 Design. Commit it on this branch. REQ-IMH-21's content test then passes.
+9. **Human step (change-controlled file):** write `.github/workflows/verify-range.yml` from the spec (REQ-IMH-21 Design). The agent drafts the exact YAML in the PR description for the human to copy. The human commits it on this branch. REQ-IMH-21's content test then passes.
 10. Run the engine, lifecycle and content suites directly (no JUNIT_OUT). Confirm nothing under `validation/` changed.
 11. Reviewers one at a time, with no edits during a run: code-reviewer, security-reviewer, then the verifier last. Fix what this change introduced; list anything pre-existing for PILOT-59/60/61.
 12. Commit and push. The maintainer opens the PR from their own GitHub account. The human runs `run-tests.sh` twice and commits results (until PILOT-60).
 
-    **Bootstrap:** `sign-and-gate` uses the **base** branch's CLI, so `verify-range` does not exist on `main` yet, and the new step would fail on this PR. The step is guarded with `if [ -x … ] && evidence verify-range --help` so it skips on bases without it, and is enforced from the next PR on. This is stated in the PR.
+    **Bootstrap:** `pull_request_target` runs `main`'s workflows, so this PR itself is not gated by `verify-range`. No guard is needed, and it's enforced from the next PR. The human merges (admin) and releases.
 
-    The human merges (admin) and releases.
+    **Owner actions after the merge:**
+    - add `verify-range` as a required status check on `main`;
+    - confirm "Require review from Code Owners" is on.
 
 Steps 3 and 4 are independent after step 2. Step 7 is independent of steps 3–6.
 
@@ -102,12 +106,13 @@ Step 5.
 - Safe IO reuses `write_file` / `_dir_fd`; only `remove_file` is new.
 - The config deny set extends the policy `deny_git_config_keys`: one list for the `git -c` gate and the hook's own git.
 - `verify-range` reuses `plan_claims` / `claim_matches`, `secretscan`, `audit_verify` and `signing.verify`. It lives in the lifecycle CLI, which the trusted job already runs.
-- `sign-and-gate` is extended, not replaced. It already has the key, the trusted CLI and the true SHAs.
+- `sign-and-gate` is unchanged. The authoritative check lives in a separate base-branch `pull_request_target` workflow, because a `pull_request` workflow runs the PR's own workflow file (third review N1).
 
 ## Risks
 - **Step 2 can block this session.** Mitigation: `run_git` has the same return contract as `git()`, and the engine suite runs after each sub-step. Rollback: revert `state.py`.
 - **Step 7 false failures** (for example human merge commits from `main` into the branch). Commits reachable from the base are excluded by `base..head`. Merge commits are checked by `--cc`, which reports only paths that differ from every parent, so a clean merge of `main` reports nothing.
-- **Step 9 bootstrap:** the guard makes the first PR skip `verify-range`. That is stated in the PR and CHANGELOG. From the next PR, it's enforced.
+- **Bootstrap:** this PR is not gated by `verify-range` (it's not yet on `main`). This is stated in the PR and CHANGELOG, and MAN-IMH-01 checks the next PR live.
+- **A `pull_request_target` misuse** (checking out PR code) would hand secrets to PR code. The REQ-IMH-21 content test forbids a head checkout, and the security-reviewer checks the YAML.
 - **Refused local git config** in adopters' repositories: the message names the allow path, and the owner accepts this at approval.
 - **Size:** estimate 1,000–1,400 changed lines [NEEDS VERIFICATION after step 1].
 
@@ -124,9 +129,9 @@ Step 5.
 | REQ-IMH-09 | Engine git neutralised; `GIT_*` and the key removed from children; config refusal per ADR-0003 §2; marker scripts never run | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-09 …" | CI engine.xml |
 | REQ-IMH-10 | Commit flag and one-command denials; index and object environment variables are spoofing | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-10 …" | CI engine.xml |
 | REQ-IMH-11 | Replayed and cross-session audit entries break verification | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-11 …" | CI engine.xml |
-| REQ-IMH-19 | `verify-range` rejects evil merges, trailer-less commits, unclaimed A/M/D/T/R, rolled-back audit logs, secrets, missing state; a clean range passes | CLI | yes | — | `plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py` "REQ-IMH-19 …" | CI lifecycle.xml |
+| REQ-IMH-19 | `verify-range` per ADR-0004 rev. 2. Each fixture fails: evil merge, trailer-less or CODEOWNER-authored trailer-less commit, unclaimed A/M/D/T/R, truncated, omitted or deleted audit log, violations rollback, state regression, replayed key, no key, empty SHA, no approving review, secret. A clean branch after `main` moved passes | CLI | yes | — | `plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py` "REQ-IMH-19 …" (GitHub API stubbed) | CI lifecycle.xml |
 | REQ-IMH-20 | The audit-log prefix hash detects truncation, rewrite and replacement; new logs must verify | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-20 …" | CI engine.xml |
-| REQ-IMH-21 | `sign-and-gate` runs `verify-range` with the base-branch CLI and the event SHAs | content | yes | — | `tests/content_acceptance_tests.py` "REQ-IMH-21 …" | CI content.xml |
+| REQ-IMH-21 | `verify-range.yml` runs on `pull_request_target` from the base; no head checkout, no `continue-on-error` or `\|\| true`; permissions and event conditions set | content | yes | — | `tests/content_acceptance_tests.py` "REQ-IMH-21 …" | CI content.xml |
 | REQ-IMH-22 | No engine subprocess bypasses the approved helpers | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-22 …" | CI engine.xml |
 | REQ-IMH-23 | Git failure fails closed: violation, filesystem restore, next pre denied | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-23 …" | CI engine.xml |
 | REQ-IMH-24 | `gh` pinned to `--repo`, with `GIT_*` and the key removed | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-24 …" | CI engine.xml |
@@ -136,4 +141,4 @@ Step 5.
 ## Considered and rejected
 - **ADR-0001, and the local push-time range check.** Both were rejected in the design reviews (see the spec's scope history).
 - **The agent editing `ci.yml`** without a `CHANGE_TICKET` session. It's change-controlled, so step 9 is a human edit.
-- **Running `verify-range` from the PR's own CLI on the first PR.** That's untrusted code; the bootstrap guard skips instead.
+- **A `verify-range` step in `ci.yml` `sign-and-gate`.** On `pull_request`, the PR's own workflow file runs, so a PR could remove the gate (third review N1).

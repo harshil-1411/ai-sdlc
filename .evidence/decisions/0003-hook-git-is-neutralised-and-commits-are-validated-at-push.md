@@ -36,9 +36,11 @@ decision is a new ADR.
    - It refuses if an allow-listed key's value contains a newline or carriage return.
    - An exact key=value in the org `git_allowed_config` passes (the git-lfs defaults).
 3. **Git failure fails closed.** If the pre-snapshot saw a repository and git now fails, the monitor records `git-unavailable` and still restores the control plane and checks audit prefixes through the filesystem. A `.git` entry at or above the root with git failing is a deny.
-4. **Residual risk, accepted and stated.** A command started by the agent can still change repository config or attributes between the hook's check and its git call (a race). In the worst case, git then runs a command while the hook process holds the key. Removing the key from child environments means such a command doesn't inherit it. It can still read the parent's environment where the OS allows same-user inspection (`/proc/<pid>/environ`, `ps eww`).
-   - Mitigations: the OS sandbox limits what the agent's commands can reach, and CI's server-side gate (ADR-0004) is authoritative for what merges.
-   - The structural fix is a separate signer that never runs git (PILOT-61).
+4. **Residual risk, accepted and stated.** The key can be exposed to the agent in two ways:
+   - **A race.** A command the agent started can change repository config or attributes between the hook's check and its git call, so git runs a command. Removing the key from child environments means that command doesn't inherit it.
+   - **Reading the environment, with no git involved.** Any same-user process that can inspect the hook process while any hook runs can read its environment, where the OS allows same-user inspection (`/proc/<pid>/environ`, `ps eww`). The regex denial of `printenv` and similar commands doesn't stop a script file doing this. Whether the OS sandbox blocks it depends on the platform [NEEDS VERIFICATION: Seatbelt / bubblewrap process-inspection rules].
+
+   **With the key, an agent can forge every signed local record** (approvals, state, audit entries). CI does **not** mitigate that for records: the key is symmetric and shared with CI. The merge decision is protected independently, by ADR-0004: approval comes from a GitHub code-owner review, not from the signed `approval.json` alone. The structural fix is a separate signer that never runs git or exposes the key in its environment (PILOT-61).
 
 ## Consequences
 - Easier: one audited place where the engine starts external programs. Most repository-controlled execution paths are closed.
