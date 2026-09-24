@@ -3,6 +3,86 @@
 All five plugins are versioned together. Every change to a plugin's files needs a
 version bump (enforced in CI by `scripts/ci/check-version-bump.sh`) and an entry here.
 
+## 2.0.1 — 2026-09-24 (PILOT-57)
+
+The first real session with the signing key deployed could not complete a change. Every earlier
+v2 commit had been made from a session running v1 hooks. Spec and plan:
+`intent/2026-09-24-signed-lifecycle-fixes/`.
+
+### Gates (evidence-sdlc)
+- Human terminal actions (`approve`, `change set-tier`, `change release`, `change clear-violations`)
+  failed on a real terminal with "no terminal to confirm on". `/dev/tty` was opened as a read-write
+  text stream, which Python refuses on a non-seekable device. It is now opened as separate read and
+  write streams.
+- Those actions now refuse to write an unsigned record into a repository whose records are signed,
+  and say how to supply the key for one command.
+- An agent's `evidence change start` / `evidence change advance` is performed by the PreToolUse hook
+  with the engine's key, so the change state is signed. Before, the agent's shell (which cannot see
+  the key) wrote unsigned state that signed sessions rejected, and refused Tier 2+ as "UNSIGNED MODE".
+  Chaining these calls with other programs is refused with a clear message, instead of producing a
+  false integrity violation.
+- Agent commits on an active change were impossible, because the session audit log gains an entry
+  after every call. A staged log may now be behind the file by at most two appended entries. It is
+  still denied if altered, truncated or never staged.
+- The integrity monitor no longer reports unstaging a file (which moves it into an untracked
+  directory) as a write. Untracked directories are now recorded file by file.
+- Hardening from this change's security review, since the hook that performs lifecycle calls is not sandboxed:
+  - `--intent`, `--spec` and `--plan` must name a `.md` file inside the repository, outside `.git/`,
+    `.evidence/`, `.claude/` and the control plane.
+  - `--quick` never overwrites a file and never follows a symlinked `plan/` directory out of the repository.
+  - The hook acts only in the session's own repository (`CLAUDE_PROJECT_DIR`), not at all in plan mode, and
+    never for read-only review agents.
+  - The hook performs only `change start <KEY> --tier --kind` and `change advance <KEY> <stage>`. Agents write
+    the plan with the Write tool; `--quick/--plan/--spec/--intent` remain for humans. The artifact-path check
+    is case-insensitive.
+  - A change key must match the tracker pattern and contain only letters, digits, `-` and `_`, for
+    every CLI subcommand and in `state.change_dir`, so a key can no longer be a path to another
+    repository's state. A state stored under another key's directory is rejected on load.
+  - The hook fails closed when `CLAUDE_PROJECT_DIR` is unset, and changes directory to the session
+    repository itself (not the agent's path).
+  - `advance` refuses to re-sign state whose signature fails. Hook-performed history entries record
+    `via: hook` and the agent session.
+- Engine writes (state, approvals, violations, audit log, integrity restores) no longer follow a
+  symlink or hard link planted in `.evidence/` or anywhere on the path. They run outside the agent's
+  sandbox with the key, so a planted link could previously redirect them. This also affected 2.0.0.
+- In PostToolUse, an unreadable change state or a write the engine cannot judge is recorded as a
+  violation and an `engine-error` audit entry, instead of silently dropping the monitor's findings.
+- A commit may leave only this session's own `tool` audit entries unstaged, and only ones that chain,
+  hash and verify correctly. A deny or violation entry, even one rewritten in place, must be committed.
+- An audit log the engine cannot append to (hard-linked, read-only, replaced by a non-file) is moved
+  aside and kept. A fresh log records the replacement and an `audit-tamper` violation is opened. If
+  the log cannot be written at all, every call is denied.
+- A failure inside the integrity check is recorded as an `integrity-check-error` violation instead
+  of silently skipping the check.
+- The session audit log no longer forks under concurrent tool calls: appends hold an exclusive lock.
+  `evidence audit verify` reports a fork left by older versions as a note, not a failure. It counts
+  as a fork only when two different entries of the log's own session were appended from the same
+  predecessor, both valid; duplicates and another session's chain spliced in still fail. Deleted, altered or badly signed entries still fail.
+- Tests changed to match: two REQ-V2S-01 cases (re-audit golden path; round 4 `--quick`) now expect the
+  hook to perform `change start`, instead of the agent's shell.
+
+### Known issues (not fixed here; also present in 2.0.0)
+- The integrity monitor's removal of a newly created control-plane file follows symlinked
+  directories, so an agent could have files outside the repository deleted (High).
+- A directory or other non-file planted at a violations-record path stops violations being
+  recorded, and the push gate then reads none (High).
+- `git commit -- <paths>` / `--only` bypass the index-based evidence, claims and secret checks.
+- `audit verify` checks a fork only against the immediate predecessor. This is reachable only where
+  the audit lock is unavailable.
+- Integrity snapshots in the shared temp directory are written without symlink checks, and deleting
+  a file inside an untracked directory is not judged.
+- The control-plane globs cover files under `.evidence/audit/` and similar, but not the directories
+  themselves, so a `chmod` of a directory is judged as an ordinary write (the pre-hook still denies
+  every call once the audit directory cannot be traversed).
+- A plan re-approval is recorded in `approval.json` and the approval audit log, but not in
+  `state.json`'s history once the change is implementing.
+- The integrity monitor is not safe under concurrent tool calls (parallel subagents). One call's snapshot
+  can capture another call's writes and misattribute them, or restore a violation record over a newer
+  one. Avoid parallel agents until this is fixed.
+- Hooks run `git` outside the sandbox, in the session's repository, with the signing key in their
+  environment. Repository-level git configuration that runs commands (`core.fsmonitor`, hooks) is not yet
+  neutralised. Not confirmed exploitable; tracked for the next change.
+
 ## 2.0.0 — 2026-09-24 (PILOT-53, PILOT-51, PILOT-52)
 
 v2 addresses every finding of the v1 enterprise audit; the v1-vs-v2 audit report lists what was

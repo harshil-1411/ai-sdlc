@@ -7,6 +7,7 @@ throwaway git repository. Cases are grouped by requirement ID. Run:
 
     python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py [-v] [-k substring]
 """
+import glob
 import hashlib
 import json
 import os
@@ -63,7 +64,9 @@ def sh(cmd, cwd, env=None, check=True):
 
 def run_hook(repo, payload, event="pre", env_extra=None, raw=None):
     env = dict(BASE_ENV)
+    env["CLAUDE_PROJECT_DIR"] = repo  # Claude Code sets it for every hook
     env.update(env_extra or {})
+    env = {k: v for k, v in env.items() if v is not None}
     data = raw if raw is not None else json.dumps(payload)
     r = subprocess.run([sys.executable, HOOK, event], input=data, cwd=repo, capture_output=True, text=True, env=env)
     out = r.stdout.strip()
@@ -765,18 +768,17 @@ def suite_reaudit_fixes():
     case("REQ-V2S-01 re-audit: a released change no longer unlocks edits", r, t, i, "deny", rule_hint="released")
     shutil.rmtree(r)
 
-    # the golden path: the agent runs the CLI; the integrity monitor must not revert it
+    # the golden path: the agent asks for `evidence change start`; the hook performs it (PILOT-57), and
+    # Claude Code neither runs the command nor calls PostToolUse, so there is nothing for the monitor to revert
     r = make_repo(branch="feature/ABC-5-thing")
     evidence = os.path.join(HERE, "..", "..", "bin", "evidence")
     cmd = f"python3 {evidence} change start ABC-5 --tier 1 --kind feature"
     pre = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": "g1",
            "permission_mode": "default"}
     obj, _ = run_hook(r, pre)
-    subprocess.run(cmd, shell=True, cwd=r, env=BASE_ENV, capture_output=True)
-    obj2, _ = run_hook(r, dict(pre, hook_event_name="PostToolUse"), event="post")
-    note = obj2.get("hookSpecificOutput", {}).get("additionalContext", "")
-    check("REQ-V2S-01 re-audit: agent-run `evidence change start` is not reverted by the integrity monitor",
-          os.path.isfile(os.path.join(r, ".evidence", "changes", "ABC-5", "state.json")) and "Integrity" not in note, note)
+    check("REQ-V2S-01 re-audit: agent-run `evidence change start` creates the change (performed by the hook)",
+          os.path.isfile(os.path.join(r, ".evidence", "changes", "ABC-5", "state.json"))
+          and "Done by the gate engine" in decision(obj)[1], obj)
     # missing snapshot is a violation, not a silent pass
     pre2 = dict(pre, tool_input={"command": "./vendor/tool"}, tool_use_id="g2")
     run_hook(r, pre2)
@@ -879,11 +881,15 @@ def suite_round4():
     pre = {"session_id": "s3", "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": "q1",
            "permission_mode": "default"}
     obj0, _ = run_hook(r, pre)
-    subprocess.run(cmd, shell=True, cwd=r, env=BASE_ENV, capture_output=True)
-    obj, _ = run_hook(r, dict(pre, hook_event_name="PostToolUse"), event="post")
-    check("REQ-V2S-01 round4: the plugin's own CLI is allowed wherever the plugin is installed", decision(obj0)[0] == "allow", obj0)
-    check("REQ-V2S-01 round4: `change start --quick` creates the plan without an integrity violation",
-          os.path.isfile(os.path.join(r, "plan", "ABC-8.md")) and "Integrity" not in json.dumps(obj), obj)
+    check("REQ-V2S-01 round4: the plugin's own CLI is recognised wherever the plugin is installed; an agent's "
+          "`--quick` is refused with guidance (PILOT-57: the hook writes only state.json)",
+          "Write the plan with the Write tool" in decision(obj0)[1] and not os.path.exists(os.path.join(r, "plan")), obj0)
+    human = {k: v for k, v in BASE_ENV.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
+    subprocess.run(cmd, shell=True, cwd=r, env=human, capture_output=True)
+    check("REQ-V2S-01 round4: `change start --quick` from a human terminal creates the plan",
+          os.path.isfile(os.path.join(r, "plan", "ABC-8.md")))
+    t, i = bash(f"python3 {evidence} change status ABC-8")
+    case("REQ-V2S-01 round4: read-only CLI calls still run in the agent's shell", r, t, i, "allow")
     shutil.rmtree(r)
 
 
@@ -934,8 +940,454 @@ def suite_round5():
     shutil.rmtree(r)
 
 
+def suite_signed_lifecycle():
+    """PILOT-57: defects found by the first real signed-deployment session (spec D2-D6)."""
+    KEY = {"EVIDENCE_SIGNING_KEY": "k" * 40}
+    NOORG = {"EVIDENCE_ORG_POLICY": "/nonexistent"}  # the default: unsigned sessions stop at Tier 1
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import importlib
+    import signing
+    evidence = os.path.realpath(os.path.join(HERE, "..", "..", "bin", "evidence"))
+
+    def pre_post(r, cmd, tid, env=None, mutate=None, session="s7"):
+        pre = {"session_id": session, "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": tid,
+               "permission_mode": "default"}
+        obj, _ = run_hook(r, pre, env_extra=env)
+        if decision(obj)[0] == "deny":  # Claude Code runs neither the command nor PostToolUse
+            return decision(obj), ""
+        if mutate:
+            mutate()
+        obj2, _ = run_hook(r, dict(pre, hook_event_name="PostToolUse", tool_response={"stdout": ""}), event="post",
+                           env_extra=env)
+        return decision(obj), obj2.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+    def signed(path):
+        os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+        try:
+            importlib.reload(signing)
+            return signing.verify(json.load(open(path))) is True
+        finally:
+            del os.environ["EVIDENCE_SIGNING_KEY"]
+
+    # REQ-SLF-04: the hook performs `change start` / `change advance`, signed with the engine's key
+    r = make_repo(branch="fix/ABC-9-thing")
+    sp = os.path.join(r, ".evidence", "changes", "ABC-9", "state.json")
+    (got, reason), note = pre_post(r, f"python3 {evidence} change start ABC-9 --tier 2 --kind fix", "l1", env=KEY)
+    check("REQ-SLF-04 agent `change start` is performed by the hook and its state is signed",
+          got == "deny" and "Done by the gate engine" in reason and "Started ABC-9" in reason
+          and os.path.isfile(sp) and signed(sp) and note == "", (got, reason, note))
+    os.makedirs(os.path.join(r, "intent", "x"), exist_ok=True)
+    open(os.path.join(r, "intent", "x", "spec.md"), "w").write("# Spec\nTracker: ABC-9\n")
+    (got, reason), _ = pre_post(r, f"cd {r} && evidence change advance ABC-9 plan", "l2", env=KEY)
+    check("REQ-SLF-04 agent `change advance` is performed by the hook and stays signed",
+          "Done by the gate engine" in reason and json.load(open(sp)).get("stage") == "plan" and signed(sp), reason)
+    shutil.rmtree(r)
+    r = make_repo(branch="fix/ABC-9-thing")
+    sp = os.path.join(r, ".evidence", "changes", "ABC-9", "state.json")
+    (got, reason), _ = pre_post(r, "git switch -c fix/ABC-9-x && evidence change start ABC-9 --tier 1 --kind fix", "l3", env=KEY)
+    check("REQ-SLF-04 a lifecycle call chained with another program is denied and writes nothing",
+          got == "deny" and "own command" in reason and not os.path.exists(sp), reason)
+    (got, reason), _ = pre_post(r, "evidence change start ABC-9 --tier 2 --kind fix", "l4", env=NOORG)
+    check("REQ-SLF-04 without a key, the hook refuses a Tier 2 start (unsigned-mode cap)",
+          got == "deny" and "UNSIGNED MODE" in reason and not os.path.exists(sp), reason)
+    pre = {"session_id": "s7", "cwd": r, "tool_name": "Bash", "permission_mode": "plan",
+           "tool_input": {"command": "evidence change start ABC-9 --tier 1 --kind fix"}, "tool_use_id": "l4p"}
+    got, reason = decision(run_hook(r, pre, env_extra=KEY)[0])
+    check("REQ-SLF-04 in plan mode the hook performs nothing", got == "deny" and "Plan mode" in reason and not os.path.exists(sp), reason)
+    (got, reason), _ = pre_post(r, "evidence change start ABC-9 --tier 1 --kind fix", "l5", env=NOORG)
+    check("REQ-SLF-04 without a key, a Tier 1 start is performed", "Started ABC-9" in reason and os.path.isfile(sp), reason)
+    shutil.rmtree(r)
+    r = make_repo(branch="fix/ABC-9-thing")
+    sp = os.path.join(r, ".evidence", "changes", "ABC-9", "state.json")
+    fake = os.path.join(r, "evidence")
+    open(fake, "w").write("import os\nos.makedirs('.evidence/changes/ABC-9', exist_ok=True)\n"
+                          "open('.evidence/changes/ABC-9/state.json','w').write('{\"stage\": \"approved\"}')\n")
+    (got, reason), _ = pre_post(r, "python3 ./evidence change start ABC-9 --tier 1 --kind fix", "l6", env=KEY)
+    check("REQ-SLF-04 the hook runs its own engine, never the agent's ./evidence script",
+          os.path.isfile(sp) and json.load(open(sp)).get("stage") == "plan" and signed(sp), reason)
+    shutil.rmtree(r)
+    # security review: the hook is unsandboxed, so what it writes and where it signs is constrained
+    r = make_repo(branch="fix/ABC-9-thing")
+    outside = os.path.realpath(tempfile.mkdtemp(prefix="evidence-outside-"))
+    victim = os.path.join(r, ".claude", "settings.json")
+    os.makedirs(os.path.dirname(victim))
+    open(victim, "w").write("{}")
+    for label, target in (("absolute path outside the repo", os.path.join(outside, "x.md")),
+                          ("`..` escape", "../" + os.path.basename(outside) + "/y.md"),
+                          ("control-plane file", ".claude/settings.json"), ("non-Markdown path", "src/app.py")):
+        (got, reason), _ = pre_post(r, f"evidence change start ABC-9 --tier 1 --kind fix --quick 'x' --files src/app.py --plan '{target}'",
+                                    "p-" + label[:6], env=KEY)
+        check(f"REQ-SLF-04 security: --plan {label} is refused and nothing is written",
+              got == "deny" and "Done by the gate engine" not in reason and not os.listdir(outside) and open(victim).read() == "{}"
+              and open(os.path.join(r, "src", "app.py")).read() == "a = 1\n"
+              and not os.path.exists(os.path.join(r, ".evidence", "changes", "ABC-9")), reason)
+    os.makedirs(os.path.join(r, "plan"))
+    open(os.path.join(r, "plan", "ABC-9.md"), "w").write("keep\n")
+    human = {k: v for k, v in BASE_ENV.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
+    res = subprocess.run([sys.executable, evidence, "change", "start", "ABC-9", "--tier", "1", "--kind", "fix", "--quick", "x",
+                          "--files", "src/app.py"], cwd=r, capture_output=True, text=True, env=human)
+    check("REQ-SLF-04 security: --quick (human CLI) never overwrites an existing plan",
+          res.returncode != 0 and open(os.path.join(r, "plan", "ABC-9.md")).read() == "keep\n", res.stdout + res.stderr)
+    shutil.rmtree(os.path.join(r, "plan"))
+    os.symlink(outside, os.path.join(r, "plan"))
+    (got, reason), _ = pre_post(r, "evidence change start ABC-9 --tier 1 --kind fix --quick 'x' --files src/app.py", "p-ln", env=KEY)
+    check("REQ-SLF-04 security: --quick will not follow a symlinked plan/ directory out of the repository",
+          got == "deny" and "Done by the gate engine" not in reason and not os.listdir(outside), reason)
+    os.remove(os.path.join(r, "plan"))
+    other = make_repo(branch="fix/ABC-9-thing")
+    (got, reason), _ = pre_post(r, f"cd {other} && evidence change start ABC-9 --tier 1 --kind fix", "p-cd", env=KEY)
+    check("REQ-SLF-04 security: the hook will not start or sign a change in another repository",
+          got == "deny" and "own repository" in reason and not os.path.exists(os.path.join(other, ".evidence")), reason)
+    os.makedirs(os.path.join(r, ".evidence", "changes", "ABC-9"), exist_ok=True)
+    forged = os.path.join(r, ".evidence", "changes", "ABC-9", "state.json")
+    json.dump({"key": "ABC-9", "tier": 1, "kind": "fix", "stage": "spec", "fix_base": "deadbeef"}, open(forged, "w"))
+    (got, reason), _ = pre_post(r, "evidence change advance ABC-9 plan", "p-adv", env=KEY)
+    check("REQ-SLF-04 security: advance refuses to re-sign unsigned (agent-written) state",
+          "refused" in reason and not signed(forged), reason)
+    shutil.rmtree(r)
+    shutil.rmtree(other)
+    shutil.rmtree(outside)
+
+    # REQ-SLF-03: a status change without a content change is not a write
+    r = make_repo()
+    start_change(r, claims=("src/app.py",))
+    sh("git add -A && git commit -q -m 'ABC-1: c'", r)
+    os.makedirs(os.path.join(r, "notes"))
+    open(os.path.join(r, "notes", "draft.md"), "w").write("x\n")
+    sh("git add notes/draft.md", r)
+    _, note = pre_post(r, "git reset -q", "i1", session="s1", mutate=lambda: sh("git reset -q", r))
+    check("REQ-SLF-03 unstaging a file (staged -> untracked directory) is not reported as a write", note == "", note)
+    _, note = pre_post(r, "./vendor/tool", "i2", session="s1",
+                       mutate=lambda: open(os.path.join(r, "notes", "new.py"), "w").write("x\n"))
+    check("REQ-SLF-03 a new file inside an untracked directory is still judged", "notes/new.py" in note, note)
+    shutil.rmtree(r)
+
+    # REQ-SLF-02: the session audit log may be ahead of the index by what was appended after staging
+    r = make_repo()
+    start_change(r)
+    log = os.path.join(r, ".evidence", "audit", "s1.jsonl")
+    record_agent(r, "ABC-1", "evidence-sdlc:verifier")
+    import uuid
+    pre_post(r, "git add -A .evidence", "c-" + uuid.uuid4().hex, session="s1", mutate=lambda: sh("git add -A .evidence", r))
+    t, i = bash("git commit -m 'ABC-1: x' -m 'Agent-Session: s1'")
+    case("REQ-SLF-02 commit allowed when the audit log only gained the `git add` call's entry since staging", r, t, i, "allow")
+    lines = open(log).read().splitlines(True)
+    open(log, "w").write(lines[0].replace('"s1"', '"s9"', 1) + "".join(lines[1:]))
+    case("REQ-SLF-02 commit denied when the staged audit log is not a prefix (altered)", r, t, i, "deny", rule_hint="git add")
+    open(log, "w").write("".join(lines))
+    for n in range(3):
+        run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": f"ls {n}"}}, event="post")
+    case("REQ-SLF-02 commit denied when the audit log is more than two entries ahead of the index", r, t, i, "deny",
+         rule_hint="git add")
+    sh("git add -A .evidence", r)
+    sp = os.path.join(r, ".evidence", "changes", "ABC-1", "state.json")
+    stj = json.load(open(sp)); stj["note"] = "later"; json.dump(stj, open(sp, "w"))
+    case("REQ-SLF-02 state.json changed after staging still denies", r, t, i, "deny", rule_hint="state.json")
+    shutil.rmtree(r)
+    r = make_repo()
+    start_change(r)
+    record_agent(r, "ABC-1", "evidence-sdlc:verifier")
+    sh("git add -A .evidence/changes", r)
+    case("REQ-SLF-02 commit denied when the audit log was never staged", r, t, i, "deny", rule_hint="git add")
+    shutil.rmtree(r)
+
+
+def suite_audit_concurrency_and_hook_scope():
+    """PILOT-57 revision 2: audit forks (REQ-SLF-07/08) and the narrowed hook path (REQ-SLF-09)."""
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import importlib
+    import signing
+    import state as st
+    KEY = {"EVIDENCE_SIGNING_KEY": "k" * 40}
+
+    # REQ-SLF-07: concurrent appends from separate processes do not fork the chain
+    r = make_repo()
+    engine = os.path.join(HERE, "..", "engine")
+    code = f"import sys; sys.path.insert(0, {engine!r}); import state; state.audit_append({r!r}, 'c1', {{'event': 'x'}})"
+    procs = [subprocess.Popen([sys.executable, "-c", code], env=BASE_ENV, stderr=subprocess.PIPE) for _ in range(20)]
+    errs = [p.communicate()[1].decode() for p in procs]
+    codes = [p.returncode for p in procs]
+    warnings = []
+    ok, problems = st.audit_verify(os.path.join(r, ".evidence", "audit", "c1.jsonl"), warnings)
+    n = len(open(os.path.join(r, ".evidence", "audit", "c1.jsonl")).read().splitlines())
+    aside = glob.glob(os.path.join(r, ".evidence", "audit", "*.unwritable-*"))
+    check("REQ-SLF-07 20 concurrent audit appends on a fresh repository keep one unbroken chain: every entry, no fork, "
+          "no false tamper recovery", ok and not warnings and n == 20 and not any(codes) and not aside,
+          (problems, warnings, n, codes, aside, [e for e in errs if e][:2]))
+    shutil.rmtree(r)
+
+    # REQ-SLF-08: a sibling fork is a warning; deletion, alteration and a bad signature still fail
+    def entry(prev, i, session="s1"):
+        e = {"event": "x", "i": i, "prev": prev, "session": session}
+        e["hash"] = st.entry_hash(e, prev)
+        return signing.sign(e)
+
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    importlib.reload(signing)
+    try:
+        a = entry("", 1)
+        b = entry(a["hash"], 2)
+        c = entry(a["hash"], 3)  # sibling of b: written concurrently from the same last hash
+        d = entry(c["hash"], 4)
+        d2 = dict(d); d2["i"] = 99  # altered
+        forged = {k: v for k, v in entry(a["hash"], 5).items() if k != "sig"}
+        forged["sig"] = "0" * 64  # hash-correct sibling, bad signature
+        tmp = tempfile.mkdtemp(prefix="evidence-audit-")
+
+        def verify(lines):
+            p = os.path.join(tmp, "x.jsonl")
+            open(p, "w").write("".join(json.dumps(e, sort_keys=True) + "\n" for e in lines))
+            w = []
+            ok, probs = st.audit_verify(p, w)
+            return ok, probs, w
+
+        ok, probs, w = verify([a, b, c, d])
+        check("REQ-SLF-08 a concurrent sibling fork verifies, reported as a named warning", ok and any("fork" in x for x in w), (probs, w))
+        ok, probs, w = verify([a, c, d][:1] + [d])
+        check("REQ-SLF-08 a deleted entry still fails verification", not ok, (probs, w))
+        ok, probs, w = verify([a, b, c, d2])
+        check("REQ-SLF-08 an altered entry still fails verification", not ok, (probs, w))
+        ok, probs, w = verify([a, b, forged])
+        check("REQ-SLF-08 a forked sibling with a bad signature fails", not ok, (probs, w))
+        ok, probs, w = verify([a, b, entry(b["hash"], 6), entry(a["hash"], 7)])
+        check("REQ-SLF-08 an entry pointing further back than its sibling is a break, not a fork", not ok, (probs, w))
+        ok, probs, w = verify([a, b, b, d])
+        check("REQ-SLF-08 an entry duplicated right after itself is a break, not a fork", not ok, (probs, w))
+        y1 = entry("", 1, session="s2")
+        ok, probs, w = verify([a, y1, entry(y1["hash"], 2, session="s2")])
+        check("REQ-SLF-08 another session's chain spliced in after the first entry is a break, not a fork", not ok, (probs, w))
+        shutil.rmtree(tmp)
+    finally:
+        del os.environ["EVIDENCE_SIGNING_KEY"]
+        importlib.reload(signing)
+
+    # REQ-SLF-09: the hook-performed path is narrow
+    def pre(r, cmd, env=None, agent_type=None, tid="n"):
+        p = {"session_id": "s9", "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": tid,
+             "permission_mode": "default"}
+        if agent_type:
+            p["agent_type"], p["agent_id"] = agent_type, "a1"
+        return decision(run_hook(r, p, env_extra=env)[0])
+
+    r = make_repo(branch="fix/ABC-9-thing")
+    sp = os.path.join(r, ".evidence", "changes", "ABC-9", "state.json")
+    env = dict(KEY, CLAUDE_PROJECT_DIR=r)
+    for opt in ("--plan plan/x.md", "--spec intent/x/spec.md", "--intent intent/x/intent.md", "--quick 'x' --files src/app.py"):
+        got, reason = pre(r, f"evidence change start ABC-9 --tier 1 --kind fix {opt}", env=env, tid="o" + opt[2:6])
+        check(f"REQ-SLF-09 the hook refuses `{opt.split()[0]}` and writes nothing",
+              got == "deny" and "Done by the gate engine" not in reason and not os.path.exists(sp)
+              and not os.path.exists(os.path.join(r, "plan")), reason)
+    other = make_repo(branch="fix/ABC-9-thing")
+    got, reason = pre(r, "evidence change start ABC-9 --tier 1 --kind fix", env=dict(KEY, CLAUDE_PROJECT_DIR=other))
+    check("REQ-SLF-09 the hook refuses when the repository is not the session's project (CLAUDE_PROJECT_DIR)",
+          got == "deny" and "own repository" in reason and not os.path.exists(sp), reason)
+    shutil.rmtree(other)
+    got, reason = pre(r, "evidence change start ABC-9 --tier 1 --kind fix", env=env, agent_type="evidence-sdlc:security-reviewer")
+    check("REQ-SLF-09 a read-only agent cannot have the hook change lifecycle state", got == "deny" and not os.path.exists(sp), reason)
+    got, reason = pre(r, "evidence change start ABC-9 --tier 1 --kind fix", env=env, tid="ok")
+    hist = json.load(open(sp)).get("history", [{}]) if os.path.isfile(sp) else [{}]
+    check("REQ-SLF-09 a hook-performed start records via: hook and the agent session",
+          "Done by the gate engine" in reason and hist[-1].get("via") == "hook" and hist[-1].get("session") == "s9", (reason, hist))
+    shutil.rmtree(r)
+
+    # the KEY is a path component: absolute, `..` and slash keys are refused, and another repo's state is untouched
+    human = {k: v for k, v in BASE_ENV.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
+    evidence = os.path.realpath(os.path.join(HERE, "..", "..", "bin", "evidence"))
+    r = make_repo(branch="fix/ABC-9-thing")
+    other = make_repo(branch="fix/ABC-3-x")
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    importlib.reload(signing)
+    st.save_state(other, "ABC-3", {"key": "ABC-3", "tier": 1, "kind": "fix", "stage": "verified"})
+    del os.environ["EVIDENCE_SIGNING_KEY"]
+    importlib.reload(signing)
+    osp = os.path.join(other, ".evidence", "changes", "ABC-3", "state.json")
+    before = open(osp).read()
+    rel_other = os.path.relpath(os.path.join(other, ".evidence", "changes", "ABC-3"), os.path.join(r, ".evidence", "changes"))
+    for label, k in (("absolute", os.path.join(other, ".evidence", "changes", "ABC-3")), ("`..`", rel_other), ("slash", "ABC-3/x")):
+        got, reason = pre(r, f"evidence change advance {k} plan", env=KEY, tid="k" + label[:3])
+        check(f"REQ-SLF-09 an {label} change key is refused by the hook and another repository's state is untouched",
+              got == "deny" and "Done by the gate engine" not in reason and open(osp).read() == before, reason)
+    res = subprocess.run([sys.executable, evidence, "change", "advance", os.path.join(other, ".evidence", "changes", "ABC-3"), "plan"],
+                         cwd=r, capture_output=True, text=True, env=human)
+    check("REQ-SLF-09 the CLI refuses a path as a change key for every subcommand", res.returncode != 0 and open(osp).read() == before,
+          res.stdout + res.stderr)
+    os.makedirs(os.path.join(r, ".evidence", "changes", "ABC-9"))
+    shutil.copy(osp, os.path.join(r, ".evidence", "changes", "ABC-9", "state.json"))
+    try:
+        st.load_state(r, "ABC-9")
+        loaded = True
+    except ValueError:
+        loaded = False
+    check("REQ-SLF-09 a signed state copied under another key's directory is rejected on load", not loaded)
+    got, reason = pre(r, "evidence change start ABC-8 --tier 1 --kind fix", env=dict(KEY, CLAUDE_PROJECT_DIR=None), tid="nopd")
+    check("REQ-SLF-09 without CLAUDE_PROJECT_DIR the hook performs nothing (fails closed)",
+          got == "deny" and not os.path.exists(os.path.join(r, ".evidence", "changes", "ABC-8")), reason)
+    shutil.rmtree(r)
+    shutil.rmtree(other)
+
+    # N1: engine writes never follow a symlink or a hard link planted by the agent's shell
+    r = make_repo(branch="fix/ABC-9-thing")
+    outside = os.path.realpath(tempfile.mkdtemp(prefix="evidence-outside-"))
+    os.makedirs(os.path.join(r, ".evidence", "changes"))
+    os.symlink(outside, os.path.join(r, ".evidence", "changes", "ABC-9"))
+    got, reason = pre(r, "evidence change start ABC-9 --tier 1 --kind fix", env=KEY, tid="sl1")
+    check("REQ-SLF-09 security: a symlinked change directory does not redirect the hook's signed write",
+          "Done by the gate engine" not in reason and "own repository" not in reason and not os.listdir(outside), reason)
+    os.remove(os.path.join(r, ".evidence", "changes", "ABC-9"))
+    victim = os.path.join(outside, "victim.txt")
+    open(victim, "w").write("keep\n")
+    os.makedirs(os.path.join(r, ".evidence", "audit"), exist_ok=True)
+    os.symlink(victim, os.path.join(r, ".evidence", "audit", "s8.jsonl"))
+    run_hook(r, {"session_id": "s8", "cwd": r, "tool_name": "Edit", "tool_input": {"file_path": "README.md"}}, event="post")
+    check("REQ-SLF-09 security: the audit append does not follow a symlinked log", open(victim).read() == "keep\n")
+    os.remove(os.path.join(r, ".evidence", "audit", "s8.jsonl"))
+    os.link(victim, os.path.join(r, ".evidence", "audit", "s8.jsonl"))
+    run_hook(r, {"session_id": "s8", "cwd": r, "tool_name": "Edit", "tool_input": {"file_path": "README.md"}}, event="post")
+    check("REQ-SLF-09 security: the audit append refuses a hard-linked log", open(victim).read() == "keep\n")
+    os.remove(os.path.join(r, ".evidence", "audit", "s8.jsonl"))
+    got, reason = pre(r, "evidence change start ABC-9 --tier 1 --kind fix", env=KEY, tid="sl2")
+    sp9 = os.path.join(r, ".evidence", "changes", "ABC-9", "state.json")
+    os.remove(sp9)
+    os.link(victim, sp9)
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    importlib.reload(signing)
+    st.save_state(r, "ABC-9", {"key": "ABC-9", "tier": 1, "kind": "fix", "stage": "plan"})
+    del os.environ["EVIDENCE_SIGNING_KEY"]
+    importlib.reload(signing)
+    check("REQ-SLF-09 security: saving state replaces a hard-linked state.json instead of writing through it",
+          open(victim).read() == "keep\n" and json.load(open(sp9)).get("stage") == "plan")
+    shutil.rmtree(r)
+    shutil.rmtree(outside)
+
+    # N2: an unreadable change state does not swallow the violations the monitor found
+    r = make_repo()
+    start_change(r, claims=("src/app.py",))
+    sh("git add -A && git commit -q -m 'ABC-1: c'", r)
+    p = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": "n2",
+         "permission_mode": "default"}
+    run_hook(r, p)
+    open(os.path.join(r, "src", "sneaky.py"), "w").write("x\n")
+    open(os.path.join(r, ".evidence", "changes", "ABC-1", "state.json"), "w").write("{not json")
+    run_hook(r, dict(p, hook_event_name="PostToolUse"), event="post")
+    vfiles = glob.glob(os.path.join(r, ".evidence", "violations", "*")) + glob.glob(os.path.join(r, ".evidence", "changes", "*", "violations.json"))
+    log = open(os.path.join(r, ".evidence", "audit", "s1.jsonl")).read()
+    check("REQ-SLF-09 an unreadable change state still records the monitor's violations and an engine-error entry",
+          any("sneaky.py" in open(f).read() for f in vfiles) and "engine-error" in log and "integrity-violation" in log, (vfiles, log[-400:]))
+    shutil.rmtree(r)
+
+    # N3: the tolerated unstaged tail may hold only this session's `tool` entries, never a deny
+    r = make_repo()
+    start_change(r)
+    record_agent(r, "ABC-1", "evidence-sdlc:verifier")
+    sh("git add -A .evidence", r)
+    st.audit_append(r, "s1", {"event": "deny", "rule": "x", "tool": "Bash"})
+    t, i = bash("git commit -m 'ABC-1: x' -m 'Agent-Session: s1'")
+    case("REQ-SLF-02 a deny entry left out of the staged audit log blocks the commit", r, t, i, "deny", rule_hint="git add")
+    shutil.rmtree(r)
+
+    # F3: a log the engine cannot append to is moved aside, a fresh log records it, and a violation is opened
+    r = make_repo()
+    start_change(r, claims=("src/app.py",))
+    outside = os.path.realpath(tempfile.mkdtemp(prefix="evidence-outside-"))
+    log = os.path.join(r, ".evidence", "audit", "s6.jsonl")
+    st.audit_append(r, "s6", {"event": "tool"})
+    os.link(log, os.path.join(outside, "copy.jsonl"))
+    before = open(os.path.join(outside, "copy.jsonl")).read()
+    run_hook(r, {"session_id": "s6", "cwd": r, "tool_name": "Edit", "tool_input": {"file_path": "README.md"}}, event="post")
+    first = json.loads(open(log).read().splitlines()[0])
+    vtext = "".join(open(f).read() for f in glob.glob(os.path.join(r, ".evidence", "violations", "*")))
+    check("REQ-SLF-07 security: a hard-linked audit log is moved aside, a fresh log records it, and a violation is opened",
+          first.get("event") == "audit-log-replaced" and glob.glob(log + ".unwritable-*") and "audit-tamper" in vtext
+          and open(os.path.join(outside, "copy.jsonl")).read() == before, (first, vtext))
+    os.chmod(log, 0o444)
+    run_hook(r, {"session_id": "s6", "cwd": r, "tool_name": "Edit", "tool_input": {"file_path": "README.md"}}, event="post")
+    check("REQ-SLF-07 security: a read-only audit log is moved aside the same way",
+          json.loads(open(log).read().splitlines()[0]).get("event") == "audit-log-replaced"
+          and len(glob.glob(log + ".unwritable-*")) == 2)
+    adir = os.path.join(r, ".evidence", "audit")
+    os.chmod(log, 0o000)
+    os.chmod(adir, 0o555)
+    try:
+        got, reason = decision(run_hook(r, {"session_id": "s6", "cwd": r, "hook_event_name": "PreToolUse", "tool_name": "Read",
+                                            "tool_input": {"file_path": "README.md"}, "permission_mode": "default"})[0])
+    finally:
+        os.chmod(adir, 0o755)
+        os.chmod(log, 0o644)
+    check("REQ-SLF-07 security: when the audit log cannot be written at all, every call is denied", got == "deny"
+          and "audit log cannot be written" in reason, reason)
+    readp = {"session_id": "s5", "cwd": r, "hook_event_name": "PreToolUse", "tool_name": "Read",
+             "tool_input": {"file_path": "README.md"}, "permission_mode": "default"}
+    os.chmod(adir, 0o000)
+    try:
+        got, reason = decision(run_hook(r, readp)[0])
+    finally:
+        os.chmod(adir, 0o755)
+    check("REQ-SLF-07 security: an unreadable audit directory (the log itself not yet seen) denies every call",
+          got == "deny" and "audit log cannot be written" in reason, reason)
+    os.chmod(adir, 0o555)
+    try:
+        got, reason = decision(run_hook(r, dict(readp, session_id="fresh1"))[0])
+    finally:
+        os.chmod(adir, 0o755)
+    check("REQ-SLF-07 security: a read-only audit directory denies a new session whose log cannot be created",
+          got == "deny" and "audit log cannot be written" in reason
+          and not os.path.exists(os.path.join(adir, "fresh1.jsonl")), reason)
+    shutil.move(adir, adir + ".real")
+    open(adir, "w").write("not a directory\n")
+    got, reason = decision(run_hook(r, readp)[0])
+    os.remove(adir)
+    shutil.move(adir + ".real", adir)
+    check("REQ-SLF-07 security: an audit directory replaced by a file denies every call",
+          got == "deny" and "audit log cannot be written" in reason, reason)
+    shutil.rmtree(r)
+    shutil.rmtree(outside)
+
+    # F5: an entry edited in place (deny -> tool, same length) does not pass as the tolerated tail
+    r = make_repo()
+    start_change(r)
+    record_agent(r, "ABC-1", "evidence-sdlc:verifier")
+    sh("git add -A .evidence", r)
+    st.audit_append(r, "s1", {"event": "deny", "rule": "x", "tool": "Bash"})
+    lp = os.path.join(r, ".evidence", "audit", "s1.jsonl")
+    text = open(lp).read()
+    open(lp, "w").write(text[: text.rstrip("\n").rfind("\n") + 1] + text[text.rstrip("\n").rfind("\n") + 1:].replace('"event": "deny"', '"event": "tool"'))
+    t, i = bash("git commit -m 'ABC-1: x' -m 'Agent-Session: s1'")
+    case("REQ-SLF-02 a deny entry rewritten in place as a `tool` entry does not pass as the unstaged tail", r, t, i, "deny",
+         rule_hint="git add")
+    shutil.rmtree(r)
+
+    # F2: an integrity check the agent makes fail is recorded, not swallowed
+    r = make_repo()
+    start_change(r, claims=("src/app.py",))
+    sh("git add -A && git commit -q -m 'ABC-1: c'", r)
+    p = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": "f2",
+         "permission_mode": "default"}
+    run_hook(r, p, env_extra=KEY)
+    bang = os.path.join(r, "!")
+    os.makedirs(bang)
+    open(os.path.join(bang, "managed-settings.json"), "w").write("{}")
+    os.chmod(bang, 0o555)
+    try:
+        obj, _ = run_hook(r, dict(p, hook_event_name="PostToolUse"), event="post", env_extra=KEY)
+    finally:
+        os.chmod(bang, 0o755)
+    note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+    vtext = json.dumps([open(f).read() for f in glob.glob(os.path.join(r, ".evidence", "**", "violations*"), recursive=True)])
+    check("REQ-SLF-09 security: a failing integrity check is recorded as a violation, not swallowed",
+          "integrity check for that command failed" in note and "integrity-check-error" in vtext, (note, vtext))
+    shutil.rmtree(r)
+
+    # the human CLI's artifact-path check is case-insensitive (macOS/Windows filesystems)
+    r = make_repo(branch="fix/ABC-9-thing")
+    for p in (".Claude/commands/x.md", ".EVIDENCE/x.md", ".Git/x.md"):
+        res = subprocess.run([sys.executable, evidence, "change", "start", "ABC-9", "--tier", "1", "--kind", "fix", "--plan", p],
+                             cwd=r, capture_output=True, text=True, env=human)
+        check(f"REQ-SLF-09 `--plan {p}` is refused whatever its case", res.returncode != 0 and not os.path.exists(sp), res.stdout + res.stderr)
+    shutil.rmtree(r)
+
+
 if __name__ == "__main__":
-    for fn in [suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
+    for fn in [suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle, suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
                suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]:
         fn()
     print(f"\n{results['pass']} passed, {results['fail']} failed")

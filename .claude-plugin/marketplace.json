@@ -9,35 +9,35 @@
       "name": "evidence-discovery",
       "source": "./plugins/evidence-discovery",
       "description": "Discovers a repository's technology stack, deployment stack, toolchain, design system and agreed test strategy, and writes them to .evidence/context/ so every other skill reads facts instead of assuming them. Never guesses — asks.",
-      "version": "2.0.0"
+      "version": "2.0.1"
     },
     {
       "name": "evidence-sdlc",
       "source": "./plugins/evidence-sdlc",
       "description": "The Evidence Chain control plane: a fail-closed gate engine (plan approval, claims, tier floors, change control, test protection, secrets, protected pushes and releases), lifecycle state, human-only approval, a hash-chained audit log, the `evidence` CLI, review agents and skills.",
-      "version": "2.0.0"
+      "version": "2.0.1"
     },
     {
       "name": "evidence-quality",
       "source": "./plugins/evidence-quality",
       "description": "Test strategy, test-case authoring into the test management system, automation, E2E UI (Playwright/Selenium/Cypress), accessibility, performance (load/stress/soak/spike), security testing, static analysis, continuous testing, and the traceability ID chain that links tracker to test case to commit to evidence.",
-      "version": "2.0.0"
+      "version": "2.0.1"
     },
     {
       "name": "evidence-compliance",
       "source": "./plugins/evidence-compliance",
       "description": "Regulatory controls for regulated records and the derivation of validation deliverables from the artifact chain.",
-      "version": "2.0.0"
+      "version": "2.0.1"
     },
     {
       "name": "evidence-integrations",
       "source": "./plugins/evidence-integrations",
       "description": "Third-party and partner integration change management: contracts, versioning, sandboxes, contract tests, failure modes and the regulated-record implications of data leaving the platform.",
-      "version": "2.0.0"
+      "version": "2.0.1"
     }
   ],
   "metadata": {
     "description": "Evidence Chain: AI-native SDLC controls for teams that must prove what they shipped — gates that run when the agent acts, human-only approval, traceability and audit evidence.",
-    "version": "2.0.0"
+    "version": "2.0.1"
   }
 }

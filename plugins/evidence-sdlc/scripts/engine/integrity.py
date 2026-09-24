@@ -87,11 +87,11 @@ def _dirty(root):
             i += 1  # rename/copy: next field is the source path
         full = os.path.join(root, path)
         if os.path.isdir(full):
-            h = hashlib.sha256()
+            # One entry per file, keyed like a staged file, so staging or unstaging a file
+            # (which moves it in and out of a collapsed directory entry) is not a change.
             for dp, _, fns in os.walk(full):
                 for fn in sorted(fns)[:2000]:
-                    h.update((os.path.relpath(os.path.join(dp, fn), root) + str(_hash(os.path.join(dp, fn)))).encode())
-            files[path.rstrip("/")] = h.hexdigest()
+                    files[os.path.relpath(os.path.join(dp, fn), root)] = _hash(os.path.join(dp, fn))
         else:
             files[path] = _hash(full) if os.path.isfile(full) else None
         i += 1
@@ -115,12 +115,9 @@ def cli_writes(ctx):
         args = [a for a in s.argv[1:] if not a.startswith("-")]
         if s.prog != "evidence":
             args = args[1:]
-        if args[:2] in (["change", "start"], ["change", "advance"]) and len(args) > 2:
-            allowed.add(f".evidence/changes/{args[2]}/state.json")
-        elif args[:1] == ["approve"] and len(args) > 1 and any(a.startswith("--github-pr") for a in s.argv):
+        # `change start|advance` never reach the shell: the hook performs them (hook.lifecycle_decision).
+        if args[:1] == ["approve"] and len(args) > 1 and any(a.startswith("--github-pr") for a in s.argv):
             allowed.update({f".evidence/changes/{args[1]}/approval.json", f".evidence/changes/{args[1]}/state.json"})
-        if args[:2] == ["change", "start"] and len(args) > 2 and "--quick" in s.argv:
-            allowed.update({f"plan/{args[2]}.md", "plan"})  # git collapses a new untracked plan/ directory
     return allowed
 
 
@@ -241,8 +238,10 @@ def check(ctx, judge):
         can_restore = signing.enabled()
         if rel in before and old is not None and cur != old:
             if can_restore:
-                with open(full, "wb") as f:
-                    f.write(base64.b64decode(old))
+                try:
+                    st.write_file(root, rel, base64.b64decode(old))  # never through a planted symlink
+                except (OSError, ValueError):
+                    can_restore = False
             notes.append(f"{rel} (control plane) was changed by that command" + (" and has been restored." if can_restore else "."))
             violations.append({"path": rel, "rule": "control-plane", "action": "restored" if can_restore else "recorded"})
         elif rel not in before and cur is not None:

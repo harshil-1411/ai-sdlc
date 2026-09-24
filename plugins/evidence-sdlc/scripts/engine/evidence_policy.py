@@ -5,6 +5,7 @@ closed on any error. Rules are driven by the merged policy (state.load_policy)
 and the active change's state (.evidence/changes/<KEY>/).
 """
 import fnmatch
+import json
 import os
 import re
 import subprocess
@@ -357,6 +358,46 @@ def _check_git(ctx, s, bodies=()):
     return None
 
 
+AUDIT_TAIL_MAX = 2  # entries the engine itself appends between `git add` and `git commit`
+
+
+def _log_tail_only(root, rel):
+    """True when the working audit log is the staged one plus at most AUDIT_TAIL_MAX appended
+    lines. The engine appends to the session log on every tool call, including the call that
+    staged it, so an exact match is impossible; an altered, truncated or long-unstaged log
+    still fails."""
+    try:
+        staged = subprocess.run(["git", "show", f":{rel}"], cwd=root, capture_output=True, timeout=20).stdout
+        current = open(os.path.join(root, rel), "rb").read()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if not current.startswith(staged) or (staged and not staged.endswith(b"\n")):
+        return False
+    tail = current[len(staged):].decode("utf-8", "replace").splitlines()
+    if len(tail) > AUDIT_TAIL_MAX:
+        return False
+    # Only the engine's own after-the-call entries may be left for the next commit; a deny or a
+    # violation must go into this one (staging an older prefix cannot hide it).
+    session = os.path.basename(rel)[:-len(".jsonl")]
+    import signing
+    try:
+        prev = json.loads(staged.decode("utf-8", "replace").splitlines()[-1]).get("hash", "") if staged else ""
+    except (ValueError, IndexError):
+        return False
+    for line in tail:
+        try:
+            e = json.loads(line)
+        except ValueError:
+            return False
+        if e.get("event") != "tool" or re.sub(r"[^A-Za-z0-9_-]", "_", str(e.get("session")))[:80] != session:
+            return False
+        # an entry edited in place (a deny turned into a "tool") breaks its hash or signature
+        if e.get("prev") != prev or st.entry_hash(e, prev) != e.get("hash") or signing.verify(e) is False:
+            return False
+        prev = e.get("hash")
+    return True
+
+
 def _check_commit(ctx, sargs, bodies=()):
     pol = ctx.policy
     heredoc = "\n".join(bodies)
@@ -396,11 +437,14 @@ def _check_commit(ctx, sargs, bodies=()):
         need = []
         safe = re.sub(r"[^A-Za-z0-9_-]", "_", ctx.session or "")[:80]
         unstaged = set((st.git(["diff", "--name-only"], ctx.root) or "").split())
-        for rel in (f".evidence/audit/{safe}.jsonl", f".evidence/changes/{key}/state.json",
+        session_log = f".evidence/audit/{safe}.jsonl"
+        for rel in (session_log, f".evidence/changes/{key}/state.json",
                     f".evidence/changes/{key}/approval.json", f".evidence/audit/approval-{key}.jsonl"):
             if not os.path.isfile(os.path.join(ctx.root, rel)):
                 continue
-            if (rel not in staged and rel not in tracked) or rel in unstaged:
+            if rel not in staged and rel not in tracked:
+                need.append(rel)
+            elif rel in unstaged and not (rel == session_log and _log_tail_only(ctx.root, rel)):
                 need.append(rel)
         if need:
             return deny("commit-evidence",
@@ -540,6 +584,65 @@ def _launches_claude(s):
     if s.prog in cmdparse.INTERPRETERS and re.search(r"(^|[\s/'\"])claude(-code)?(\s|['\"]|$)", joined) and "-c" in s.argv:
         return True
     return False
+
+
+ENGINE_LIFECYCLE = (["change", "start"], ["change", "advance"])
+
+
+def lifecycle_call(ctx, cmd):
+    """Classify a Bash command that runs `evidence change start|advance`.
+
+    Returns None when it does not, ("run", argv, cwd) when it is the whole command (after any
+    `cd` glue), and ("chained", None, None) otherwise. The hook performs "run" itself, with the
+    engine's own code and signing key, because the agent's shell cannot see the key and would
+    write unsigned state that a signed deployment rejects."""
+    simples, ok, _ = cmdparse.split_simple(cmd)
+    found, other = [], False
+    cwd = ctx.cwd
+    for s in simples:
+        if _is_evidence_cli(s):
+            args = [a for a in s.argv[1:] if not a.startswith("-")]
+            if s.prog != "evidence":
+                args = args[1:]
+            if args[:2] in ENGINE_LIFECYCLE:
+                found.append((s, cwd))
+                continue
+        if s.prog == "cd" and len(s.argv) == 2 and not s.env:
+            nxt = os.path.expanduser(s.argv[1])
+            cwd = os.path.realpath(nxt if os.path.isabs(nxt) else os.path.join(cwd, nxt))
+            continue
+        other = True
+    if not found:
+        return None
+    s, cwd = found[0]
+    if len(found) > 1 or other or not ok or s.env or s.piped_in:
+        return ("chained", None, None)
+    # The hook signs what it writes, so it only acts in the session's own repository. Claude Code
+    # sets CLAUDE_PROJECT_DIR for hooks; the agent cannot move it, unlike the call's cwd.
+    project = os.environ.get("CLAUDE_PROJECT_DIR")
+    if not project or st.repo_root(cwd) != ctx.root or ctx.root != st.repo_root(os.path.realpath(project)):
+        return ("elsewhere", None, None)
+    argv = s.argv[1:] if s.prog == "evidence" else s.argv[2:]
+    # Only `change start KEY --tier N --kind K` and `change advance KEY STAGE`: the hook is not
+    # sandboxed, so it writes nothing but .evidence/changes/<KEY>/state.json.
+    rest, i = [], 2
+    while i < len(argv):
+        a = argv[i]
+        if argv[1] == "start" and a in ("--tier", "--kind") and i + 1 < len(argv):
+            i += 2
+            continue
+        if argv[1] == "start" and re.fullmatch(r"--(tier|kind)=\S+", a):
+            i += 1
+            continue
+        if a.startswith("-"):
+            return ("options", None, None)
+        rest.append(a)
+        i += 1
+    if len(rest) != (1 if argv[1] == "start" else 2):
+        return ("options", None, None)
+    if not st.SAFE_KEY.fullmatch(rest[0]) or not re.fullmatch(ctx.policy["key_pattern"], rest[0]):
+        return ("badkey", None, None)
+    return ("run", argv, ctx.root)
 
 
 def _is_evidence_cli(s):

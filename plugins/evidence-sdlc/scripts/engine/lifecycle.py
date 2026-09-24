@@ -24,13 +24,82 @@ class HumanOnly(Exception):
     pass
 
 
-def _human_tty():
+class _Tty:
+    """The controlling terminal as separate read and write text streams. A terminal is not
+    seekable, and Python refuses a read-write text stream ("r+") on one."""
+
+    def __init__(self, path):
+        self.r = open(path, "r")
+        try:
+            self.w = open(path, "w")
+        except OSError:
+            self.r.close()
+            raise
+
+    def write(self, s):
+        self.w.write(s)
+
+    def flush(self):
+        self.w.flush()
+
+    def readline(self):
+        return self.r.readline()
+
+
+def _human_tty(path="/dev/tty"):
     if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
         raise HumanOnly("this runs inside a Claude Code session")
     try:
-        return open("/dev/tty", "r+")
+        return _Tty(path)
     except OSError:
         raise HumanOnly("there is no terminal to confirm on")
+
+
+def _require_key_if_signed(root, what):
+    """A signed deployment rejects unsigned records, so a human action from a terminal without
+    the key would write something the gates then refuse. Stop before writing it."""
+    import glob
+    import signing
+    if signing.enabled():
+        return
+    ev = os.path.join(root, ".evidence")
+    for p in (glob.glob(os.path.join(ev, "changes", "*", "state.json")) + glob.glob(os.path.join(ev, "changes", "*", "approval.json"))
+              + glob.glob(os.path.join(ev, "changes", "*", "violations.json")) + glob.glob(os.path.join(ev, "violations", "*"))):
+        try:
+            if "sig" in json.load(open(p)):
+                break
+        except (OSError, ValueError):
+            continue
+    else:
+        return
+    sys.exit(f"`{what}` would write an unsigned record, but this repository's records are signed, so the gates would "
+             "reject it. Supply the signing key to this one command without printing it, e.g.\n"
+             "  export EVIDENCE_SIGNING_KEY=\"$(python3 -c 'import json; print(json.load(open(\"/Library/Application "
+             "Support/ClaudeCode/managed-settings.json\"))[\"env\"][\"EVIDENCE_SIGNING_KEY\"])')\"\n"
+             f"  {what} …; unset EVIDENCE_SIGNING_KEY\n"
+             "(on Linux the file is /etc/claude-code/managed-settings.json). To approve a plan, sending "
+             "`/evidence-sdlc:approve <KEY> <plan-sha>` in the Claude Code prompt needs no key.")
+
+
+def _artifact_path(root, policy, p):
+    """An --intent/--spec/--plan path: a Markdown file inside the repository, outside the
+    control plane and .git. It is written by --quick and recorded in signed state."""
+    rel = os.path.relpath(os.path.realpath(os.path.join(root, p)), os.path.realpath(root))
+    low = rel.lower()  # macOS and Windows filesystems are case-insensitive: .Claude/ is .claude/
+    if (os.path.isabs(p) or rel == ".." or rel.startswith(".." + os.sep) or not low.endswith(".md")
+            or low.split(os.sep)[0] in (".git", ".evidence", ".claude")
+            or st.glob_match(low, [g.lower() for g in policy.get("control_plane", [])])):
+        sys.exit(f"'{p}' is not allowed as an artifact path: use a .md file inside the repository, outside "
+                 ".git/, .evidence/ and .claude/.")
+    return rel
+
+
+def _hist(h):
+    """A history entry; when the gate engine's hook performed the call for an agent, say so."""
+    via = os.environ.get("EVIDENCE_LIFECYCLE_VIA", "")
+    if via.startswith("hook:"):
+        h.update(via="hook", session=via[5:])
+    return h
 
 
 def _who(root):
@@ -45,6 +114,9 @@ def _ctx():
 
 def _key_arg(args, root, policy):
     if getattr(args, "key", None):
+        if not st.SAFE_KEY.fullmatch(args.key) or not re.fullmatch(policy["key_pattern"], args.key):
+            sys.exit(f"'{args.key}' does not look like a tracker key (pattern {policy['key_pattern']}; letters, digits, "
+                     "'-' and '_' only).")
         return args.key
     key, src = st.active_key(root, policy)
     if not key:
@@ -198,17 +270,25 @@ def cmd_change(args):
                      "policy that raises unsigned_max_tier.")
         first = {3: "intent", 2: "spec", 1: "plan"}[tier]
         state = {"key": key, "tier": tier, "kind": args.kind, "stage": first, "created_at": st.now(),
-                 "created_by": _who(root), "history": [{"stage": first, "at": st.now(), "by": _who(root)}]}
+                 "created_by": _who(root), "history": [_hist({"stage": first, "at": st.now(), "by": _who(root)})]}
         for a in ("intent", "spec", "plan"):
             v = getattr(args, a, None)
             if v:
-                state[a] = v
+                state[a] = _artifact_path(root, policy, v)
         if getattr(args, "quick", None):
             if tier != 1 or not args.files:
                 sys.exit("--quick is for Tier 1 changes and needs --files <glob> [...]")
-            plan_rel = state.get("plan") or f"plan/{key}.md"
-            os.makedirs(os.path.join(root, os.path.dirname(plan_rel)), exist_ok=True)
-            with open(os.path.join(root, plan_rel), "w") as f:
+            # the default path is checked too: a symlinked plan/ directory would otherwise lead outside
+            plan_rel = _artifact_path(root, policy, state.get("plan") or f"plan/{key}.md")
+            parent = os.path.join(root, os.path.dirname(plan_rel))
+            os.makedirs(parent, exist_ok=True)
+            if os.path.commonpath([os.path.realpath(parent), os.path.realpath(root)]) != os.path.realpath(root):
+                sys.exit(f"{os.path.dirname(plan_rel)}/ leads outside the repository; --quick will not write there.")
+            try:
+                fd = os.open(os.path.join(root, plan_rel), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0))
+            except FileExistsError:
+                sys.exit(f"{plan_rel} already exists; --quick never overwrites a file.")
+            with os.fdopen(fd, "w") as f:
                 f.write(f"# Plan: {args.quick}\nTracker: {key}   Date: {st.now()[:10]}\nRisk tier: 1 — quick change\n\n"
                         "## Files claimed\n" + "".join(f"- `{g}`\n" for g in args.files) +
                         f"\n## Order of work\n1. {args.quick}\n2. Run the tests that cover the claimed files and the verifier.\n\n"
@@ -230,6 +310,10 @@ def cmd_change(args):
     if not state:
         sys.exit(f"No change state for {key}. Start it with: evidence change start {key} --tier <n> --kind <kind>")
     if sub == "advance":
+        import signing
+        if signing.verify(state) is False:
+            sys.exit(f"The change state for {key} is not signed by the gate engine, so it will not be re-signed. "
+                     f"A human restarts the change (`evidence change start {key} …` with the key).")
         target = args.stage
         if target in ("approved", "released"):
             sys.exit(f"'{target}' is set by a human: approval with `evidence approve`, release with `evidence change release`.")
@@ -254,11 +338,12 @@ def cmd_change(args):
             if need in st.required_artifacts(state.get("tier", 1)) and not s["artifacts"].get(need):
                 sys.exit(f"Cannot advance to {target}: {need}.md is required for this tier and missing.")
         state["stage"] = target
-        state.setdefault("history", []).append({"stage": target, "at": st.now(), "by": _who(root)})
+        state.setdefault("history", []).append(_hist({"stage": target, "at": st.now(), "by": _who(root)}))
         st.save_state(root, key, state)
         print(f"{key} -> {target}")
         return 0
     if sub in ("set-tier", "release", "override"):
+        _require_key_if_signed(root, f"evidence change {sub}")
         try:
             tty = _human_tty()
         except HumanOnly as e:
@@ -285,6 +370,7 @@ def cmd_change(args):
 
 
 def _clear_violations(root, key):
+    _require_key_if_signed(root, "evidence change clear-violations")
     try:
         tty = _human_tty()
     except HumanOnly as e:
@@ -305,7 +391,7 @@ def _clear_violations(root, key):
             for v in data:
                 if v.get("open"):
                     v.update(open=False, cleared_by=_who(root), cleared_at=st.now())
-            st.write_violations(p, data)
+            st.write_violations(p, data, root)
     st.audit_append(root, "clear-violations", {"event": "violations-cleared", "key": key, "by": _who(root), "count": len(vs)})
     print(f"Cleared {len(vs)} violation(s).")
     return 0
@@ -318,11 +404,8 @@ def write_approval(root, key, plan, approver, method, extra=None):
     rec.update(extra or {})
     import signing
     rec = signing.sign(rec)
-    d = st.change_dir(root, key)
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "approval.json"), "w") as f:
-        json.dump(rec, f, indent=2, sort_keys=True)
-        f.write("\n")
+    st.change_dir(root, key)  # validates the key
+    st.write_file(root, f".evidence/changes/{key}/approval.json", json.dumps(rec, indent=2, sort_keys=True) + "\n")
     if state and state.get("stage") in ("intent", "spec", "plan"):
         state["stage"] = "approved"
         state.setdefault("history", []).append({"stage": "approved", "at": rec["approved_at"], "by": approver, "via": method})
@@ -347,6 +430,8 @@ def _preflight_approval(root, policy, key):
 def cmd_approve(args):
     root, policy = _ctx()
     key = _key_arg(args, root, policy)
+    if not args.github_pr:
+        _require_key_if_signed(root, "evidence approve")
     plan = _preflight_approval(root, policy, key)
     sha = st.sha256_file(plan)
     if args.github_pr:
@@ -518,8 +603,11 @@ def cmd_audit(args):
     for p in paths:
         if not p.endswith(".jsonl"):
             continue
-        ok, problems = st.audit_verify(p)
+        warnings = []
+        ok, problems = st.audit_verify(p, warnings)
         print(f"{'OK  ' if ok else 'FAIL'} {_rel(root, p)}" + ("" if ok else ": " + "; ".join(problems[:5])))
+        for w in warnings[:5]:
+            print(f"     note: {w}")
         bad += 0 if ok else 1
     if not paths:
         print("No audit logs found.")

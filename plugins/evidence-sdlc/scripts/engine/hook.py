@@ -64,7 +64,10 @@ def _model(ctx):
 
 def _audit(ctx, entry):
     try:
-        key, _ = ctx.change()
+        try:
+            key, _ = ctx.change()
+        except Exception:
+            key = None  # an unreadable change state must not suppress the audit entry
         base = {"tool": ctx.tool, "key": key, "agent_type": ctx.agent_type or None,
                 "agent_id": ctx.payload.get("agent_id"), "permission_mode": ctx.permission_mode,
                 "engine": st.ENGINE_VERSION, "model": _model(ctx)}
@@ -75,9 +78,78 @@ def _audit(ctx, entry):
         traceback.print_exc(file=sys.stderr)
 
 
+def run_lifecycle(argv, cwd):
+    """Run `evidence <argv>` in this process: the engine's own code, with the hook's key."""
+    import contextlib
+    import io
+    import lifecycle
+    out, msg, code = io.StringIO(), "", 0
+    old = os.getcwd()
+    try:
+        os.chdir(cwd)
+        # checked after the chdir: from here the process cwd is fixed, whatever happens to the path
+        if os.path.realpath(os.getcwd()) != os.path.realpath(cwd) or st.repo_root(os.getcwd()) != cwd:
+            return 1, "the session repository moved while the call was being checked; refused."
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            try:
+                code = lifecycle.main(argv) or 0
+            except SystemExit as e:
+                code, msg = (e.code, "") if isinstance(e.code, int) or e.code is None else (1, str(e.code))
+                code = code or 0
+    finally:
+        os.chdir(old)
+    return code, (out.getvalue() + msg).strip()
+
+
+def lifecycle_decision(ctx):
+    call = ep.lifecycle_call(ctx, ctx.tool_input.get("command") or "")
+    if call is None:
+        return None
+    kind, argv, cwd = call
+    if kind == "chained":
+        return ep.deny("lifecycle-chained",
+                       "Run `evidence change start` / `evidence change advance` as its own command (a `cd` before it "
+                       "is fine). The gate engine performs it, so it cannot be combined with other programs.")
+    if ctx.agent_type and ctx.agent_type in ctx.policy.get("read_only_agents", []):
+        return ep.deny("read-only-agent", f"{ctx.agent_type} is a read-only review agent and cannot change a change's lifecycle.")
+    if kind == "options":
+        return ep.deny("lifecycle-options",
+                       "The gate engine performs only `evidence change start <KEY> --tier <n> --kind <kind>` and "
+                       "`evidence change advance <KEY> <stage>`. Write the plan with the Write tool (plan/<KEY>.md) "
+                       "instead of --quick/--plan/--spec/--intent.")
+    if kind == "badkey":
+        return ep.deny("lifecycle-key", "The change key must be a tracker key (letters, digits, '-' and '_'), not a path.")
+    if ctx.permission_mode == "plan":
+        # the hook acts before Claude Code's permission step, so it must not act where nothing may change
+        return ep.deny("lifecycle-plan-mode", "Plan mode changes nothing: leave plan mode, then run the `evidence change` call.")
+    if kind == "elsewhere":
+        return ep.deny("lifecycle-elsewhere",
+                       "`evidence change start|advance` is performed by the gate engine only in this session's own "
+                       "repository. Run it from there.")
+    os.environ["EVIDENCE_LIFECYCLE_VIA"] = f"hook:{ctx.session}"
+    try:
+        code, text = run_lifecycle(argv, cwd)
+    finally:
+        os.environ.pop("EVIDENCE_LIFECYCLE_VIA", None)
+    shown = "evidence " + " ".join(argv)
+    if code == 0:
+        return ep.deny("lifecycle-by-engine",
+                       f"Done by the gate engine: it ran `{shown}` itself, so the change state is signed with the "
+                       f"engine's key; the command was not run in your shell. This is not a failure.\n{text}")
+    return ep.deny("lifecycle-refused", f"The gate engine ran `{shown}` and it refused:\n{text}")
+
+
 def run_pre(payload):
     ctx = ep.Ctx(payload)
+    try:
+        st.audit_ready(ctx.root, ctx.session)
+    except Exception as e:
+        return pre_response(ep.deny("audit-unwritable",
+                                    f"This session's audit log cannot be written ({e}), so nothing it does could be "
+                                    "recorded. A human restores write access to .evidence/audit/."))
     decision = ep.decide_pre(ctx)
+    if decision.allow and ctx.tool == "Bash":
+        decision = lifecycle_decision(ctx) or decision
     if decision.allow and ctx.tool == "Bash":
         try:
             import integrity
@@ -134,16 +206,31 @@ def run_integrity(ctx):
                 content = open(full, encoding="utf-8", errors="replace").read()
         except OSError:
             pass
-        return ep.check_write(ctx, full, content=content, kind="write" if os.path.exists(full) else "delete",
-                              detail="unparsed program")
+        try:
+            return ep.check_write(ctx, full, content=content, kind="write" if os.path.exists(full) else "delete",
+                                  detail="unparsed program")
+        except Exception as e:  # a write the engine cannot judge is a violation, never a silent pass
+            return ep.deny("engine-error", f"the gate engine could not judge it ({e})"[:300])
 
-    notes, violations, changed = integrity.check(ctx, judge)
+    try:
+        notes, violations, changed = integrity.check(ctx, judge)
+    except Exception as e:  # a check the agent can make fail must not become a silent pass
+        notes = [f"the integrity check for that command failed ({e}), so its effects were not checked."[:300]]
+        violations, changed = [{"path": "(integrity check)", "rule": "integrity-check-error", "action": "recorded"}], []
     if not violations:
         return None, changed
-    key, state = ctx.change()
+    try:
+        key, state = ctx.change()
+    except Exception as e:  # unreadable or mismatched state must not swallow the violations
+        key, state = None, None
+        _audit(ctx, {"event": "engine-error", "error": f"change state unreadable: {e}"[:300]})
     for v in violations:
         _audit(ctx, {"event": "integrity-violation", "violation_path": v["path"], "rule": v["rule"], "action": v["action"]})
-    st.record_violations(ctx.root, key, state, ctx.branch, violations, ctx.session)
+    try:
+        st.record_violations(ctx.root, key, state, ctx.branch, violations, ctx.session)
+    except Exception as e:
+        _audit(ctx, {"event": "engine-error", "error": f"violations not written: {e}"[:300]})
+        notes.append(f"(The violations file could not be written: {e}; they are in the audit log.)")
     msg = ("Integrity monitor: " + " ".join(notes) + " Push and pull requests are blocked for this change until the "
            "unapproved changes are reverted and a human clears the record with `evidence change clear-violations "
            f"{key or '<KEY>'}` in their own terminal.")
