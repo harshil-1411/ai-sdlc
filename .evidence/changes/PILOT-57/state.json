@@ -17,11 +17,18 @@
       "at": "2026-09-24T08:46:13Z",
       "by": "engine",
       "stage": "implementing"
+    },
+    {
+      "at": "2026-09-24T16:02:04Z",
+      "by": "suparn.bector@msbdocs.com",
+      "stage": "released",
+      "tier": 2,
+      "via": "tty"
     }
   ],
   "key": "PILOT-57",
   "kind": "fix",
-  "sig": "4632e0a94e2a3a1fd36724cf521facf55e17a232da7c9c8625f20e77c2ecff05",
-  "stage": "implementing",
+  "sig": "a4f0f2b796e0941e1aba17a48369cbdf89a1e78a937e3cbf8d3bc2b7feb9160a",
+  "stage": "released",
   "tier": 2
 }

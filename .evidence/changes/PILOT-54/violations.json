@@ -1,0 +1,25 @@
+{
+  "entries": [
+    {
+      "path": "validation/results/sensor.log",
+      "rule": "change-controlled",
+      "action": "recorded",
+      "at": "2026-09-24T15:29:24Z",
+      "session": "3b7fff2f-2100-4817-baeb-62a8fa447505",
+      "open": false,
+      "cleared_by": "suparn.bector@msbdocs.com",
+      "cleared_at": "2026-09-24T16:01:21Z"
+    },
+    {
+      "path": "validation/results/cli.log",
+      "rule": "change-controlled",
+      "action": "recorded",
+      "at": "2026-09-24T15:29:28Z",
+      "session": "3b7fff2f-2100-4817-baeb-62a8fa447505",
+      "open": false,
+      "cleared_by": "suparn.bector@msbdocs.com",
+      "cleared_at": "2026-09-24T16:01:21Z"
+    }
+  ],
+  "sig": "4aaf094eacb604d200ae9fdc396e4de0a361937ac8bb2d5cb2453c673345fb19"
+}
