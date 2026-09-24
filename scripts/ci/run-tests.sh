@@ -10,7 +10,7 @@ rc=0
 run() {  # run <name> <command...>
   local name="$1"; shift
   echo "== $name"
-  JUNIT_OUT="$out/$name.xml" "$@" > "$out/$name.log" 2>&1 || { rc=1; echo "   FAILED (see $out/$name.log)"; }
+  env -u EVIDENCE_SIGNING_KEY JUNIT_OUT="$out/$name.xml" "$@" > "$out/$name.log" 2>&1 || { rc=1; echo "   FAILED (see $out/$name.log)"; }
   tail -1 "$out/$name.log"
 }
 run engine     python3 "$root/plugins/evidence-sdlc/scripts/tests/engine-tests.py"

@@ -46,6 +46,12 @@ jobs:
       - name: All suites (engine, lifecycle, sensor, CLI, content) -> fresh JUnit in validation/results
         run: bash scripts/ci/run-tests.sh
 
+      - name: Signing is required when the repository says so
+        if: vars.EVIDENCE_REQUIRE_SIGNED == 'true' && env.EVIDENCE_SIGNING_KEY == ''
+        run: |
+          echo "EVIDENCE_REQUIRE_SIGNED is true but the EVIDENCE_SIGNING_KEY secret is not available to this run."
+          exit 1
+
       - name: Sign the results this run produced (only CI holds the key)
         if: env.EVIDENCE_SIGNING_KEY != ''
         run: python3 plugins/evidence-sdlc/bin/evidence results sign validation/results/*.xml

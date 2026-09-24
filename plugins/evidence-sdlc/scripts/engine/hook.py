@@ -102,12 +102,14 @@ def run_post(payload):
     out = None
     if ctx.tool in ("Edit", "Write", "MultiEdit"):
         out = run_sensor(payload, ctx)
+    bash_changed = []
     if ctx.tool == "Bash":
-        out = run_integrity(ctx) or out
+        res = run_integrity(ctx)
+        out, bash_changed = (res[0] or out), res[1]
     if ctx.tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"):
         p = ctx.tool_input.get("file_path") or ctx.tool_input.get("notebook_path")
         rel = st.normalize(p, ctx.cwd, ctx.root)[0] if p else None
-        gated = bool(rel and not st.glob_match(rel, ctx.policy.get("ungated", []))) or ctx.tool == "Bash"
+        gated = bool(rel and not st.glob_match(rel, ctx.policy.get("ungated", []))) or bool(bash_changed)
         _audit(ctx, {"event": "tool", "gated": gated})
         # First source edit inside an approved change moves it to "implementing".
         key, state = ctx.change()
@@ -135,9 +137,9 @@ def run_integrity(ctx):
         return ep.check_write(ctx, full, content=content, kind="write" if os.path.exists(full) else "delete",
                               detail="unparsed program")
 
-    notes, violations = integrity.check(ctx, judge)
+    notes, violations, changed = integrity.check(ctx, judge)
     if not violations:
-        return None
+        return None, changed
     key, state = ctx.change()
     for v in violations:
         _audit(ctx, {"event": "integrity-violation", "violation_path": v["path"], "rule": v["rule"], "action": v["action"]})
@@ -145,7 +147,7 @@ def run_integrity(ctx):
     msg = ("Integrity monitor: " + " ".join(notes) + " Push and pull requests are blocked for this change until the "
            "unapproved changes are reverted and a human clears the record with `evidence change clear-violations "
            f"{key or '<KEY>'}` in their own terminal.")
-    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}}
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}}, changed
 
 
 def run_sensor(payload, ctx=None):

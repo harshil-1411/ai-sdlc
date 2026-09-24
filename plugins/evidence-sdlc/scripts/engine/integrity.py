@@ -120,7 +120,7 @@ def cli_writes(ctx):
         elif args[:1] == ["approve"] and len(args) > 1 and any(a.startswith("--github-pr") for a in s.argv):
             allowed.update({f".evidence/changes/{args[1]}/approval.json", f".evidence/changes/{args[1]}/state.json"})
         if args[:2] == ["change", "start"] and len(args) > 2 and "--quick" in s.argv:
-            allowed.add(f"plan/{args[2]}.md")
+            allowed.update({f"plan/{args[2]}.md", "plan"})  # git collapses a new untracked plan/ directory
     return allowed
 
 
@@ -140,6 +140,7 @@ def snapshot(ctx):
             pass
     dirty = _dirty(root)
     snap = {"cp": cp, "dirty": dirty if isinstance(dirty, dict) else {}, "timeout": dirty == "timeout",
+            "tool_use_id": ctx.payload.get("tool_use_id") or "last", "session": ctx.session, "taken_at": st.now(),
             "audit": _audit_sizes(root), "cli_writes": sorted(cli_writes(ctx)), "root": root}
     with open(_snap_path(ctx.session, ctx.payload.get("tool_use_id")), "w") as f:
         json.dump(signing.sign(snap), f)
@@ -163,13 +164,13 @@ def check(ctx, judge):
     import signing
     root, pol = ctx.root, ctx.policy
     if not _is_git(root):
-        return [], []
+        return [], [], []
     p = _snap_path(ctx.session, ctx.payload.get("tool_use_id"))
     if not os.path.isfile(p):
         # pre always snapshots an allowed Bash call in a git repo; a missing snapshot means
         # something removed it, so what the command did cannot be checked.
         return (["the integrity snapshot for that command is missing, so its effects could not be checked."],
-                [{"path": "(integrity snapshot)", "rule": "integrity-snapshot-missing", "action": "recorded"}])
+                [{"path": "(integrity snapshot)", "rule": "integrity-snapshot-missing", "action": "recorded"}], [])
     try:
         snap = json.load(open(p))
     finally:
@@ -177,11 +178,14 @@ def check(ctx, judge):
             os.remove(p)
         except OSError:
             pass
-    notes, violations = [], []
+    notes, violations, changed_gated = [], [], []
+    if snap.get("tool_use_id") != (ctx.payload.get("tool_use_id") or "last") or snap.get("session") != ctx.session:
+        notes.append("the integrity snapshot for that command belongs to a different command (replayed), so its effects could not be checked.")
+        return notes, [{"path": "(integrity snapshot)", "rule": "integrity-snapshot-replayed", "action": "recorded"}], []
     if signing.verify(snap) is False:
         notes.append("the integrity snapshot for that command was altered, so its effects could not be checked.")
         violations.append({"path": "(integrity snapshot)", "rule": "integrity-snapshot-altered", "action": "recorded"})
-        return notes, violations
+        return notes, violations, []
     if snap.get("timeout"):
         notes.append("the working tree was too large to snapshot within the time limit, so that command's effects were not checked.")
         violations.append({"path": "(working tree)", "rule": "integrity-timeout", "action": "recorded"})
@@ -200,15 +204,20 @@ def check(ctx, judge):
                 cur = base64.b64encode(open(full, "rb").read()).decode()
             except OSError:
                 cur = None
+        # Restoring writes snapshot content back into the control plane, so it is only done
+        # when the snapshot is signed; in unsigned mode the change is recorded, never "restored".
+        can_restore = signing.enabled()
         if rel in before and old is not None and cur != old:
-            with open(full, "wb") as f:
-                f.write(base64.b64decode(old))
-            notes.append(f"{rel} (control plane) was changed by that command and has been restored.")
-            violations.append({"path": rel, "rule": "control-plane", "action": "restored"})
+            if can_restore:
+                with open(full, "wb") as f:
+                    f.write(base64.b64decode(old))
+            notes.append(f"{rel} (control plane) was changed by that command" + (" and has been restored." if can_restore else "."))
+            violations.append({"path": rel, "rule": "control-plane", "action": "restored" if can_restore else "recorded"})
         elif rel not in before and cur is not None:
-            os.remove(full)
-            notes.append(f"{rel} (control plane) was created by that command and has been removed.")
-            violations.append({"path": rel, "rule": "control-plane", "action": "removed"})
+            if can_restore:
+                os.remove(full)
+            notes.append(f"{rel} (control plane) was created by that command" + (" and has been removed." if can_restore else "."))
+            violations.append({"path": rel, "rule": "control-plane", "action": "removed" if can_restore else "recorded"})
     # 2. audit logs may only grow, never shrink or be replaced
     for name, size in snap.get("audit", {}).items():
         full = os.path.join(st.audit_dir(root), name)
@@ -224,6 +233,8 @@ def check(ctx, judge):
         for rel, h in sorted(after.items()):
             if prev.get(rel, "<absent>") == h:
                 continue
+            if not st.glob_match(rel, pol.get("ungated", [])) and not rel.startswith(".evidence"):
+                changed_gated.append(rel)
             if st.glob_match(rel, pol.get("control_plane", [])) or rel in cli_ok:
                 continue
             if rel == ".evidence" or rel.startswith(".evidence/"):
@@ -235,4 +246,4 @@ def check(ctx, judge):
         for rel in sorted(set(prev) - set(after)):
             # a previously dirty file now clean: reverted to HEAD, which is allowed
             pass
-    return notes, violations
+    return notes, violations, changed_gated

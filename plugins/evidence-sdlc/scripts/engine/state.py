@@ -220,7 +220,7 @@ def active_key(root, policy, branch=None):
     if env:
         return env.strip(), "EVIDENCE_ACTIVE_CHANGE"
     branch = current_branch(root) if branch is None else branch
-    if not branch:
+    if not branch and any(os.environ.get(v) for v in ("CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "JENKINS_URL")):
         for var in ("GITHUB_HEAD_REF", "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", "CI_COMMIT_REF_NAME",
                     "BUILDKITE_BRANCH", "BRANCH_NAME", "GIT_BRANCH"):
             if os.environ.get(var):
@@ -247,6 +247,8 @@ def load_state(root, key):
 
 
 def save_state(root, key, state):
+    import signing
+    state = signing.sign(dict(state))
     d = change_dir(root, key)
     os.makedirs(d, exist_ok=True)
     tmp = os.path.join(d, ".state.json.tmp")

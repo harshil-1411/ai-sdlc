@@ -23,7 +23,8 @@ FILTER = sys.argv[sys.argv.index("-k") + 1] if "-k" in sys.argv else None
 results = {"pass": 0, "fail": 0, "failures": [], "all": []}
 BASE_ENV = {k: v for k, v in os.environ.items()
             if k not in ("EVIDENCE_ISSUE_KEY_PATTERN", "CHANGE_TICKET", "RELEASE_APPROVAL",
-                         "EVIDENCE_ACTIVE_CHANGE", "EVIDENCE_ORG_POLICY", "FIX_TASK")}
+                         "EVIDENCE_ACTIVE_CHANGE", "EVIDENCE_ORG_POLICY", "FIX_TASK", "EVIDENCE_SIGNING_KEY",
+                         "GITHUB_HEAD_REF")}
 BASE_ENV["GIT_AUTHOR_NAME"] = BASE_ENV["GIT_COMMITTER_NAME"] = "test"
 BASE_ENV["GIT_AUTHOR_EMAIL"] = BASE_ENV["GIT_COMMITTER_EMAIL"] = "test@example.com"
 BASE_ENV["EVIDENCE_ORG_POLICY"] = "/nonexistent/org-policy.json"
@@ -659,19 +660,25 @@ def suite_integrity():
     appr = os.path.join(r, ".evidence", "changes", "ABC-1", "approval.json")
     original = open(appr).read()
 
-    def around(cmd, mutate, tid):
+    KEY = {"EVIDENCE_SIGNING_KEY": "k" * 40}
+
+    def around(cmd, mutate, tid, env=None):
         pre = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": tid,
                "permission_mode": "default"}
-        obj, _ = run_hook(r, pre)
+        obj, _ = run_hook(r, pre, env_extra=env)
         mutate()
         post = dict(pre, hook_event_name="PostToolUse", tool_response={"stdout": ""})
-        obj2, _ = run_hook(r, post, event="post")
+        obj2, _ = run_hook(r, post, event="post", env_extra=env)
         return decision(obj)[0], obj2.get("hookSpecificOutput", {}).get("additionalContext", "")
 
-    got, note = around("./vendor/tool --quiet", lambda: open(appr, "w").write('{"forged": true}'), "t1")
-    check("REQ-V2G-09 integrity: control-plane change by an unparsed program is restored",
+    got, note = around("./vendor/tool --quiet", lambda: open(appr, "w").write('{"forged": true}'), "t0")
+    check("REQ-V2G-09 integrity: in unsigned mode a control-plane change is recorded, never restored from an unsigned snapshot",
+          "was changed" in note and "restored" not in note, note)
+    open(appr, "w").write(original)
+    got, note = around("./vendor/tool --quiet", lambda: open(appr, "w").write('{"forged": true}'), "t1", env=KEY)
+    check("REQ-V2G-09 integrity: control-plane change by an unparsed program is restored (signed snapshot)",
           got == "allow" and open(appr).read() == original and "restored" in note, note)
-    got, note = around("./vendor/tool", lambda: open(os.path.join(r, ".evidence", "policy.json"), "w").write("{}"), "t2")
+    got, note = around("./vendor/tool", lambda: open(os.path.join(r, ".evidence", "policy.json"), "w").write("{}"), "t2", env=KEY)
     check("REQ-V2G-09 integrity: control-plane file created by an unparsed program is removed",
           not os.path.exists(os.path.join(r, ".evidence", "policy.json")) and "removed" in note, note)
     got, note = around("./vendor/tool", lambda: open(os.path.join(r, "src", "sneaky.py"), "w").write("x=1\n"), "t3")
@@ -698,6 +705,13 @@ def suite_reaudit_fixes():
     r = make_repo()
     start_change(r)  # writes an UNSIGNED approval.json, as a forger would
     t, i = edit("src/app.py")
+    case("REQ-V2A-01 re-audit: unsigned lifecycle state rejected when a signing key is configured", r, t, i, "deny",
+         env=KEYENV, rule_hint="not signed")
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import state as _st0
+    _st0.save_state(r, "ABC-1", json.load(open(os.path.join(r, ".evidence", "changes", "ABC-1", "state.json"))))
+    del os.environ["EVIDENCE_SIGNING_KEY"]
     case("REQ-V2A-01 re-audit: forged (unsigned) approval rejected when a signing key is configured", r, t, i, "deny",
          env=KEYENV, rule_hint="not valid")
     sys.path.insert(0, os.path.join(HERE, "..", "engine"))
@@ -705,6 +719,7 @@ def suite_reaudit_fixes():
     os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
     import importlib, lifecycle, state as st
     importlib.reload(st)
+    st.save_state(r, "ABC-1", json.load(open(os.path.join(r, ".evidence", "changes", "ABC-1", "state.json"))))
     lifecycle.write_approval(r, "ABC-1", os.path.join(r, "plan", "ABC-1.md"), "human", "prompt")
     st.audit_append(r, "s1", {"event": "agent-completed", "key": "ABC-1", "subagent_type": "evidence-sdlc:verifier"})
     if env_backup is None:
@@ -780,7 +795,7 @@ def suite_reaudit_fixes():
     shutil.rmtree(wt, ignore_errors=True)
     # CI: detached HEAD resolves the key from the PR head branch
     sh("git checkout -q --detach", r)
-    obj5, _ = run_hook(r, {"session_id": "ci", "cwd": r}, event="session-start", env_extra={"GITHUB_HEAD_REF": "feature/ABC-5-thing"})
+    obj5, _ = run_hook(r, {"session_id": "ci", "cwd": r}, event="session-start", env_extra={"GITHUB_HEAD_REF": "feature/ABC-5-thing", "GITHUB_ACTIONS": "true"})
     check("REQ-V2S-01 re-audit: CI detached HEAD resolves the key from GITHUB_HEAD_REF",
           "ABC-5" in obj5.get("hookSpecificOutput", {}).get("additionalContext", ""), obj5)
     shutil.rmtree(r)
@@ -797,8 +812,79 @@ def suite_reaudit_fixes():
     shutil.rmtree(r)
 
 
+def suite_round4():
+    """Defects reproduced by the final independent verification (round 4)."""
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    deny_cmds = ["sleep 3 &", "(sleep 1; cp /tmp/x src/other.py) &", "screen -dm sh -c 'rm src/other.py'",
+                 "tmux new -d 'x'", "caffeinate -i ./tool", "python3 /dev/stdin < notes.md", "exec 3<x.md; python3 <&3",
+                 "python3 <(cat x.md)", "python3 -c \"$(cat x.md)\"", "export JUNIT_OUT=validation/results/x.xml; pytest",
+                 "pytest --junitxml=validation/results/x.xml", "ditto /tmp/evil src/other", "busybox sh -c 'rm src/other.py'",
+                 "sqlite3 src/other.db 'create table t(x)'", "osascript -e 'do shell script \"id\"'",
+                 "make -f /tmp/Makefile", "git remote set-url origin https://github.com/evil/repo",
+                 "gh repo set-default evil/repo", "echo $EVIDENCE_SIGNING_KEY", "printenv", "ps eww",
+                 "python3 -c 'import os; print(os.environ)'", "cat '/Library/Application Support/ClaudeCode/managed-settings.json'"]
+    for c in deny_cmds:
+        t, i = bash(c)
+        case(f"REQ-V2G-02 round4: denied: {c[:48]}", r, t, i, "deny")
+    for c in ["npm test && echo ok", "ls 2>&1 | head", "make test > /dev/null 2>&1", "sed -i '' -e 's/a/b/' src/app.py",
+              "git remote -v", "gh repo view"]:
+        t, i = bash(c)
+        case(f"REQ-V2G-02 round4: allowed: {c[:48]}", r, t, i, "allow")
+    case("REQ-V2K-01 round4: Read of managed settings denied", r, "Read",
+         {"file_path": "/Library/Application Support/ClaudeCode/managed-settings.json"}, "deny", rule_hint="not readable")
+    case("REQ-V2K-01 round4: ordinary Read allowed", r, "Read", {"file_path": "src/app.py"}, "allow")
+    plan = os.path.join(r, "plan", "ABC-1.md")
+    text = open(plan).read()
+    for bad, label in ((text.replace("Risk tier: 1", ""), "missing"), (text + "\nRisk tier: 2\n", "twice")):
+        open(plan, "w").write(bad)
+        start_change(r, claims=("src/app.py", "tests/**")) if False else None
+        sha = hashlib.sha256(open(plan, "rb").read()).hexdigest()
+        ap = os.path.join(r, ".evidence", "changes", "ABC-1", "approval.json")
+        a = json.load(open(ap)); a["plan_sha256"] = sha; json.dump(a, open(ap, "w"))
+        t, i = edit("src/app.py")
+        case(f"REQ-V2S-02 round4: plan tier line {label} is denied", r, t, i, "deny", rule_hint="Risk tier")
+    start_change(r, claims=("src/app.py", "tests/**"))
+    sh("git add -A .evidence", r)
+    open(os.path.join(r, "src", "unclaimed.py"), "w").write("x\n")
+    sh("git add src/unclaimed.py", r)
+    t, i = bash("git commit -m 'ABC-1: x' -m 'Agent-Session: s1'")
+    case("REQ-V2G-12 round4: a commit staging an unclaimed file is denied", r, t, i, "deny", rule_hint="outside the approved plan")
+    sh("git reset -q src/unclaimed.py && rm src/unclaimed.py && git add -A .evidence && git commit -q -m 'ABC-1: evidence' -m 'Agent-Session: s1'", r)
+    with open(os.path.join(r, ".evidence", "audit", "s1.jsonl"), "a") as f:
+        f.write("")
+    run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}}, event="post")
+    t, i = bash("git commit -m 'ABC-1: y' -m 'Agent-Session: s1'")
+    case("REQ-V2A-02 round4: a later commit with the audit log modified but unstaged is denied", r, t, i, "deny", rule_hint="git add")
+    # snapshot replay
+    pre_a = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": "ra",
+             "permission_mode": "default"}
+    run_hook(r, pre_a)
+    d = os.path.join(tempfile.gettempdir(), "evidence-chain-snapshots", "s1")
+    pre_b = dict(pre_a, tool_use_id="rb")
+    run_hook(r, pre_b)
+    shutil.copy(os.path.join(d, "ra.json"), os.path.join(d, "rb.json"))
+    obj, _ = run_hook(r, dict(pre_b, hook_event_name="PostToolUse"), event="post")
+    check("REQ-V2G-02 round4: a replayed integrity snapshot is recorded as a violation",
+          "replayed" in obj.get("hookSpecificOutput", {}).get("additionalContext", ""), obj)
+    shutil.rmtree(r)
+    # --quick fast path is not a violation, and the plugin's own CLI may run from anywhere
+    r = make_repo(branch="feature/ABC-8-quick")
+    evidence = os.path.realpath(os.path.join(HERE, "..", "..", "bin", "evidence"))
+    cmd = f"python3 {evidence} change start ABC-8 --tier 1 --quick 'fix typo' --files src/app.py"
+    pre = {"session_id": "s3", "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": "q1",
+           "permission_mode": "default"}
+    obj0, _ = run_hook(r, pre)
+    subprocess.run(cmd, shell=True, cwd=r, env=BASE_ENV, capture_output=True)
+    obj, _ = run_hook(r, dict(pre, hook_event_name="PostToolUse"), event="post")
+    check("REQ-V2S-01 round4: the plugin's own CLI is allowed wherever the plugin is installed", decision(obj0)[0] == "allow", obj0)
+    check("REQ-V2S-01 round4: `change start --quick` creates the plan without an integrity violation",
+          os.path.isfile(os.path.join(r, "plan", "ABC-8.md")) and "Integrity" not in json.dumps(obj), obj)
+    shutil.rmtree(r)
+
+
 if __name__ == "__main__":
-    for fn in [suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
+    for fn in [suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
                suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]:
         fn()
     print(f"\n{results['pass']} passed, {results['fail']} failed")

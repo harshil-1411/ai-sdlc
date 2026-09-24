@@ -380,6 +380,9 @@ def reverify_github(root, key, plan, approval):
     if not pr:
         return False
     policy = st.load_policy(root)
+    ap = policy.get("approval", {})
+    if ap.get("mode") != "github" or not ap.get("github_repo") or not ap.get("github_allowed_approvers"):
+        return False  # only a pinned repository and a named approver list can make a GitHub approval trustworthy
     try:
         _approve_github(root, policy, key, plan, st.sha256_file(plan), pr)
     except SystemExit:
@@ -401,6 +404,10 @@ def _approve_github(root, policy, key, plan, sha, pr):
     rel = _rel(root, plan)
     try:
         repo = policy.get("approval", {}).get("github_repo") or json.loads(_gh(["repo", "view", "--json", "nameWithOwner"]))["nameWithOwner"]
+        if policy.get("approval", {}).get("github_repo"):
+            data_repo = json.loads(_gh(["pr", "view", str(pr), "--repo", repo, "--json", "number"]))  # must exist in the pinned repo
+            if not data_repo:
+                sys.exit(f"PR {pr} not found in {repo}")
         blob = json.loads(_gh(["api", f"repos/{repo}/contents/{rel}?ref={data['headRefOid']}"]))
         remote_sha = __import__("hashlib").sha256(base64.b64decode(blob["content"])).hexdigest()
     except (RuntimeError, ValueError, KeyError, OSError) as e:

@@ -152,6 +152,11 @@ def check_gated(ctx, rel, kind="write", detail=""):
         return deny("no-change-state",
                     f"{what} needs change {key} to be started. Run `evidence change start {key} --tier <1|2|3> "
                     "--kind feature|fix|chore`, write the artifacts its tier requires, and ask a human to approve the plan.")
+    import signing
+    if signing.verify(state) is False:
+        return deny("state-unsigned",
+                    f"{what}: the lifecycle state for {key} is not signed by the gate engine, so it may have been "
+                    "altered. A human re-records it (`evidence change set-tier`, or start the change again).")
     tier = int(state.get("tier") or 1)
     missing = [a for a in st.required_artifacts(tier) if not st.find_artifact(ctx.root, key, a, state)]
     if missing:
@@ -164,10 +169,15 @@ def check_gated(ctx, rel, kind="write", detail=""):
     if problems:
         return deny("plan-stub", f"{what}: the plan for {key} ({os.path.relpath(plan, ctx.root)}) is not a real plan yet: "
                                  + "; ".join(problems) + ".")
-    m_tier = re.search(r"^Risk tier:\s*([123])\b", open(plan, encoding="utf-8", errors="replace").read(), re.M)
-    if m_tier and int(m_tier.group(1)) != tier:
+    tier_lines = re.findall(r"^Risk tier:\s*(\S+)", open(plan, encoding="utf-8", errors="replace").read(), re.M)
+    if len(tier_lines) != 1 or not re.fullmatch(r"[123]", tier_lines[0].rstrip("—-,;:")):
         return deny("tier-mismatch",
-                    f"{what}: the plan says Risk tier {m_tier.group(1)} but change {key} is recorded as Tier {tier}. "
+                    f"{what}: the plan must state its tier exactly once as `Risk tier: <1|2|3>` "
+                    f"(found {len(tier_lines)} line(s): {', '.join(tier_lines) or 'none'}).")
+    m_tier = re.match(r"[123]", tier_lines[0])
+    if m_tier and int(m_tier.group(0)) != tier:
+        return deny("tier-mismatch",
+                    f"{what}: the plan says Risk tier {m_tier.group(0)} but change {key} is recorded as Tier {tier}. "
                     f"A human reconciles them (`evidence change set-tier {key} <n>`, or fix the plan and re-approve).")
     if state.get("stage") == "released":
         return deny("change-released",
@@ -288,6 +298,10 @@ def _check_git(ctx, s, bodies=()):
                             "command review. Run the plain git command instead.")
         if opt == "--config-env":
             return deny("git-config", "`git --config-env` is not allowed in agent sessions.")
+    if sub == "remote" and sargs[:1] and sargs[0] in ("add", "set-url", "rename", "remove", "rm", "set-head", "set-branches"):
+        return deny("remote-change",
+                    "Changing git remotes is a human action: approvals and reviews are read from the remote, so an agent "
+                    "that could repoint it could choose where its approval comes from.")
     if sub == "config":
         setting, skip = [], False
         for a in sargs:
@@ -356,13 +370,26 @@ def _check_commit(ctx, sargs, bodies=()):
         tracked = set((st.git(["ls-files", ".evidence"], ctx.root) or "").split())
         need = []
         safe = re.sub(r"[^A-Za-z0-9_-]", "_", ctx.session or "")[:80]
+        unstaged = set((st.git(["diff", "--name-only"], ctx.root) or "").split())
         for rel in (f".evidence/audit/{safe}.jsonl", f".evidence/changes/{key}/state.json",
                     f".evidence/changes/{key}/approval.json", f".evidence/audit/approval-{key}.jsonl"):
-            if os.path.isfile(os.path.join(ctx.root, rel)) and rel not in staged and rel not in tracked:
+            if not os.path.isfile(os.path.join(ctx.root, rel)):
+                continue
+            if (rel not in staged and rel not in tracked) or rel in unstaged:
                 need.append(rel)
         if need:
             return deny("commit-evidence",
-                        "The change's evidence must be committed with it. Stage it first: git add " + " ".join(need))
+                        "The change's evidence must be committed with it, up to date. Stage it first: git add " + " ".join(need))
+        _, cstate = ctx.change()
+        plan = st.find_artifact(ctx.root, key, "plan", cstate) if cstate else None
+        if plan and pol.get("enforce_claims", True):
+            claims = st.plan_claims(open(plan, encoding="utf-8", errors="replace").read())
+            outside = [p for p in staged if not p.startswith(".evidence/") and not st.glob_match(p, pol.get("ungated", []))
+                       and not st.claim_matches(p, claims)]
+            if outside:
+                return deny("outside-claims",
+                            f"The commit includes files outside the approved plan's claims for {key}: "
+                            f"{', '.join(sorted(outside)[:6])}. Unstage them, or amend the plan and get it re-approved.")
     if pol.get("scan_secrets", True):
         diff = st.git(["diff", "--cached", "-U0", "--no-color"], ctx.root, timeout=20) or ""
         if "all" in flags:
@@ -399,6 +426,8 @@ def _check_gh(ctx, s):
                         f"`gh api -X {method} {endpoint}` changes merges, branch protection or refs. That is a human action.")
         if method is None and re.search(r"/merge\b", endpoint) and any(a in ("-f", "-F", "--field", "--raw-field", "--input") for a in args):
             return deny("agent-merge", "`gh api` with fields against a /merge endpoint is a merge; that is a human action.")
+    if words[:2] == ["repo", "set-default"]:
+        return deny("remote-change", "Changing the default GitHub repository is a human action (approvals are read from it).")
     if words[:2] == ["pr", "review"] and any(a in ("--approve", "-a") for a in args):
         return deny("self-approval", "Approving a pull request is a human reviewer's action, not the agent's.")
     if words[:2] in (["pr", "comment"], ["issue", "comment"]) and "/approve-plan" in " ".join(args):
@@ -533,6 +562,9 @@ def _check_script(ctx, script, cwd):
     if "$" in script or "`" in script:
         return deny("opaque-write", f"Running a script whose path is computed at run time ({script}) cannot be checked.")
     rel, real = st.normalize(script, cwd, ctx.root)
+    plugin_root = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    if real and real.startswith(plugin_root + os.sep):
+        return None
     if rel is None:
         tmp = tuple(os.path.realpath(d) + "/" for d in _TMP_DIRS if os.path.isdir(d))
         if real and (real.startswith(_TMP_DIRS) or real.startswith(tmp) or real.startswith(os.path.realpath(os.environ.get("TMPDIR", "/tmp")) + "/")):
@@ -547,8 +579,28 @@ def _check_script(ctx, script, cwd):
     return None
 
 
+_BG = re.compile(r"(?<![&>|<0-9])&(?![&>])")
+
+
+def _background(command):
+    """True if the command puts work in the background (`cmd &`, `(cmd &)`). Heredoc
+    bodies and quoted text are removed first, and `&&`, `>&`, `&>` are not backgrounding."""
+    stripped, _ = cmdparse._strip_heredocs(command)
+    stripped = re.sub(r"'[^']*'|\"(?:[^\"\\]|\\.)*\"", "''", stripped)
+    return bool(_BG.search(stripped))
+
+
 def check_bash(ctx, command):
     pol = ctx.policy
+    if re.search(r"EVIDENCE_SIGNING_KEY|/proc/[^\s]*/environ|\bps\b[^|;&]*\be(ww|w|e)\b|\bprintenv\b|^\s*env\s*$|os\.environ\b|process\.env\b|ENV\[|managed-settings\.json|ClaudeCode/", command):
+        return deny("secret-access",
+                    "This command could read the Evidence Chain signing key or the managed settings. Environment dumps "
+                    "and those files are not available to an agent session.")
+    if pol.get("deny_background", True) and _background(command):
+        return deny("background",
+                    "Running work in the background (`&`) is not available to an agent session: what it does after "
+                    "this command returns happens where the gates and the integrity monitor cannot see it. Run it in "
+                    "the foreground, or ask the human to start long-running processes.")
     simples, ok, bodies = cmdparse.split_simple(command)
     if not ok:
         return deny("unparseable",
@@ -581,6 +633,13 @@ def check_bash(ctx, command):
             cwd = os.path.realpath(nxt if os.path.isabs(nxt) else os.path.join(cwd, nxt))
             continue
         d = _check_script(ctx, cmdparse.script_execution(s), cwd)
+        if d is None:
+            for a in s.argv[1:]:
+                # `make -f /tmp/x`, `xcrun swift /tmp/x`, `go run /tmp/x.go`: a program from a temp directory
+                if a.startswith(tuple(_TMP_DIRS)) or a.startswith(os.path.realpath(os.environ.get("TMPDIR", "/tmp"))):
+                    d = _check_script(ctx, a, cwd)
+                    if d is not None:
+                        break
         if d is not None:
             return d
         if _is_evidence_cli(s):
@@ -679,6 +738,12 @@ def decide_pre(ctx):
         if not path:
             return deny("malformed", f"{tool} call has no file path; refusing rather than guessing.")
         return check_write(ctx, path, content=edit_content(tool, ti))
+    if tool in ("Read", "Grep", "Glob"):
+        p = ti.get("file_path") or ti.get("path") or ""
+        real = os.path.realpath(os.path.expanduser(p)) if p else ""
+        if re.search(r"^/proc/[^/]+/environ|/Library/Application Support/ClaudeCode|^/etc/claude-code|managed-settings\.json$", real):
+            return deny("secret-access", "Managed settings and process environments are not readable by an agent session.")
+        return ALLOW
     if tool == "Bash":
         cmd = ti.get("command")
         if not isinstance(cmd, str):

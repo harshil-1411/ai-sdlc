@@ -1,5 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence-sdlc gate engine" tests="287" failures="0">
+<testsuite name="evidence-sdlc gate engine" tests="327" failures="0">
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: sleep 3 &amp;"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: (sleep 1; cp /tmp/x src/other.py) &amp;"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: screen -dm sh -c 'rm src/other.py'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: tmux new -d 'x'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: caffeinate -i ./tool"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: python3 /dev/stdin &lt; notes.md"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: exec 3&lt;x.md; python3 &lt;&amp;3"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: python3 &lt;(cat x.md)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name='REQ-V2G-02 round4: denied: python3 -c "$(cat x.md)"'></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: export JUNIT_OUT=validation/results/x.xml; pytes"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: pytest --junitxml=validation/results/x.xml"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: ditto /tmp/evil src/other"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: busybox sh -c 'rm src/other.py'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: sqlite3 src/other.db 'create table t(x)'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: osascript -e 'do shell script &quot;id&quot;'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: make -f /tmp/Makefile"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: git remote set-url origin https://github.com/evi"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: gh repo set-default evil/repo"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: echo $EVIDENCE_SIGNING_KEY"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: printenv"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: ps eww"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: python3 -c 'import os; print(os.environ)'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: cat '/Library/Application Support/ClaudeCode/man"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: allowed: npm test &amp;&amp; echo ok"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: allowed: ls 2&gt;&amp;1 | head"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: allowed: make test &gt; /dev/null 2&gt;&amp;1"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: allowed: sed -i '' -e 's/a/b/' src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: allowed: git remote -v"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: allowed: gh repo view"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-01 round4: Read of managed settings denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-01 round4: ordinary Read allowed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-02 round4: plan tier line missing is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-02 round4: plan tier line twice is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 round4: a commit staging an unclaimed file is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-02 round4: a later commit with the audit log modified but unstaged is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: a replayed integrity snapshot is recorded as a violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 round4: the plugin's own CLI is allowed wherever the plugin is installed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 round4: `change start --quick` creates the plan without an integrity violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 re-audit: unsigned lifecycle state rejected when a signing key is configured"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 re-audit: forged (unsigned) approval rejected when a signing key is configured"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 re-audit: approval written by a human channel (signed) allows"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 re-audit: signed agent-completed entry satisfies the review gate"></testcase>
@@ -29,7 +68,8 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: integrity monitor runs inside a git worktree"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: CI detached HEAD resolves the key from GITHUB_HEAD_REF"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 re-audit: a verifier run older than the latest source edit does not count"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 integrity: control-plane change by an unparsed program is restored"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 integrity: in unsigned mode a control-plane change is recorded, never restored from an unsigned snapshot"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 integrity: control-plane change by an unparsed program is restored (signed snapshot)"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 integrity: control-plane file created by an unparsed program is removed"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 integrity: unclaimed source write by an unparsed program is recorded"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 integrity: open violation blocks push"></testcase>

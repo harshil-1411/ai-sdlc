@@ -17,7 +17,9 @@ REDIRECT_OPS = {">", ">>", ">|", "&>", "&>>", "<>"}
 WRAPPERS = {"command", "builtin", "exec", "nohup", "nice", "time", "stdbuf",
             "timeout", "sudo", "doas", "env", "xargs", "ionice", "chronic"}
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
-PERSISTENCE = {"nohup", "setsid", "disown", "at", "batch", "crontab", "launchctl", "systemd-run", "daemonize", "start-stop-daemon"}
+PERSISTENCE = {"nohup", "setsid", "disown", "at", "batch", "crontab", "launchctl", "systemd-run", "daemonize",
+               "start-stop-daemon", "screen", "tmux", "caffeinate", "script", "dtach", "abduco"}
+MULTICALL = {"busybox", "toybox"}
 INTERPRETERS = {"python", "python3", "python2", "node", "nodejs", "ruby", "perl",
                 "php", "deno", "bun", "pwsh", "powershell", "osascript"}
 INLINE_FLAGS = {"-c", "-e", "-E", "--eval", "-r", "--command", "-Command"}
@@ -139,6 +141,11 @@ def split_simple(cmd, _depth=0):
                 simples.extend(sub)
                 ok = ok and sub_ok
                 bodies.extend(sub_bodies)
+        if s.prog in ("export", "declare", "typeset", "readonly"):
+            for a in s.argv[1:]:
+                if "=" in a and not a.startswith("-"):
+                    k, v = a.split("=", 1)
+                    s.env[k] = v
         if s.prog == "alias":
             for a in s.argv[1:]:
                 if "=" in a:
@@ -214,6 +221,9 @@ def _strip_wrappers(argv, env):
             argv = argv[1:]
             continue
         prog = os.path.basename(argv[0])
+        if prog in MULTICALL and len(argv) > 1:
+            argv = argv[1:]
+            continue
         if prog not in WRAPPERS:
             break
         argv = argv[1:]
@@ -446,6 +456,23 @@ def writes_of(s):
     if not s.argv:
         return w
     prog, args = s.prog, s.argv[1:]
+    for a in args:
+        # output-file flags of common tools: pytest --junitxml=…, -o=…, --output=…, --report=…
+        m = re.match(r"^--?(junitxml|junit-xml|output|outfile|out|report|log-file|result-file|reports?-dir|coverage-xml|cov-report)=(.+)$", a)
+        if m and "/" in m.group(2) or (m and "." in m.group(2)):
+            w.append(Write(m.group(2).split(":", 1)[-1], "write", f"--{m.group(1)}="))
+    if prog == "ditto":
+        paths = _nonopts(args)
+        if len(paths) >= 2:
+            w.append(Write(paths[-1], "write", "ditto"))
+    elif prog == "pax" and "-r" in args:
+        w.append(Write(None, "opaque", "pax -r"))
+    elif prog in ("sqlite3", "duckdb") and args:
+        db = _nonopts(args)[:1]
+        if db:
+            w.append(Write(db[0], "write", prog))
+    elif prog == "osascript" and re.search(r"do shell script|write|delete", " ".join(args), re.I):
+        w.append(Write(None, "opaque", "osascript that runs shell commands or writes files"))
     if prog in ("cp", "install", "ln", "rsync", "scp"):
         paths = _nonopts(args)
         if len(paths) >= 2:
@@ -483,6 +510,18 @@ def writes_of(s):
             k = args.index("-i")
             if k + 1 < len(args) and args[k + 1] == "":
                 args = args[:k + 1] + args[k + 2:]  # BSD/macOS: sed -i '' expr file
+        if "-e" in args or "--expression" in args:
+            # every -e takes the following word as a script, not a file
+            cleaned, skip = [], False
+            for a in args:
+                if skip:
+                    skip = False
+                    continue
+                if a in ("-e", "--expression"):
+                    skip = True
+                    continue
+                cleaned.append(a)
+            args = cleaned + ["-e"]
         paths = [p for p in _nonopts(args) if p != ""]
         # first non-option is the script unless -e was given
         has_e = "-e" in args or "--expression" in args
@@ -570,12 +609,23 @@ def writes_of(s):
 
 
 def stdin_code(s):
-    """An interpreter or shell reading its program from a file redirect or a pipe
-    (`python3 < x.md`, `cat x | bash`): the program is not visible to the gates."""
+    """An interpreter or shell reading its program from a file redirect, a pipe, a file
+    descriptor or process substitution: the program is not visible to the gates."""
     if s.prog not in INTERPRETERS and s.prog not in SHELLS:
         return None
-    if script_execution(s) or any(a in INLINE_FLAGS or a in ("-m", "-n", "--version", "-V") for a in s.argv[1:]):
+    for i, a in enumerate(s.argv[1:]):
+        if a in INLINE_FLAGS and i + 2 <= len(s.argv[1:]) and ("$(" in s.argv[i + 2] or "`" in s.argv[i + 2]):
+            return Write(None, "opaque", f"{s.prog} running code assembled at run time")
+    if any(t in ("<&", "0<&") for t in s.raw.split()) or re.search(r"<&\s*\d|<\(", s.raw):
+        return Write(None, "opaque", f"{s.prog} reading its program from a file descriptor")
+    sc = script_execution(s)
+    if sc and sc.startswith(("/dev/stdin", "/dev/fd/", "/proc/self/fd")):
+        return Write(None, "opaque", f"{s.prog} reading its program from {sc}")
+    if sc or any(a in INLINE_FLAGS or a in ("-m", "-n", "--version", "-V") for a in s.argv[1:]):
         return None
+    script = script_execution(s)
+    if script and (script.startswith(("/dev/stdin", "/dev/fd/", "/proc/self/fd", "<(", "(")) or script in ("-", "")):
+        return Write(None, "opaque", f"{s.prog} reading its program from {script}")
     if s.stdin_file and s.stdin_file not in ("/dev/null", "HEREDOC"):
         return Write(None, "opaque", f"{s.prog} reading its program from {s.stdin_file}")
     if s.piped_in:

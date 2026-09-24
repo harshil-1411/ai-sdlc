@@ -15,7 +15,8 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 EVIDENCE = os.path.join(HERE, "..", "..", "bin", "evidence")
 HOOK = os.path.join(HERE, "..", "engine", "hook.py")
-ENV = {k: v for k, v in os.environ.items() if k not in ("EVIDENCE_ISSUE_KEY_PATTERN", "EVIDENCE_ACTIVE_CHANGE")}
+ENV = {k: v for k, v in os.environ.items() if k not in ("EVIDENCE_ISSUE_KEY_PATTERN", "EVIDENCE_ACTIVE_CHANGE",
+                                                        "EVIDENCE_SIGNING_KEY", "GITHUB_HEAD_REF")}
 ENV.update({"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t",
             "GIT_COMMITTER_EMAIL": "t@example.com", "EVIDENCE_ORG_POLICY": "/nonexistent"})
 res = {"pass": 0, "fail": 0, "all": []}

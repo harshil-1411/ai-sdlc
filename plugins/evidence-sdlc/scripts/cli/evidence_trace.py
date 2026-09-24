@@ -451,10 +451,22 @@ def result_sidecar_ok(path):
         return False, "unreadable signature"
     if rec.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
         return False, "file changed after signing"
+    head = os.environ.get("GITHUB_SHA") or os.environ.get("CI_COMMIT_SHA") or _git_head()
+    if rec.get("commit") and head and rec["commit"] != head:
+        return False, f"signed for commit {rec['commit'][:12]}, not the commit under test ({head[:12]})"
     v = _signing().verify(rec)
     if v is None:
         return False, "no signing key configured here"
     return (True, rec.get("signed_at", "")) if v else (False, "bad signature")
+
+
+def _git_head():
+    import subprocess
+    try:
+        r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 def require_signed_results():
@@ -1977,6 +1989,8 @@ def cmd_results(root, args):
     for f in args.files:
         p = Path(f)
         rec = signing.sign({"file": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest(), "signed_at": now,
+                            "commit": os.environ.get("GITHUB_SHA") or os.environ.get("CI_COMMIT_SHA") or _git_head(),
+                            "run_id": os.environ.get("GITHUB_RUN_ID") or os.environ.get("CI_PIPELINE_ID") or "",
                             "signer": os.environ.get("GITHUB_WORKFLOW") or os.environ.get("CI_JOB_NAME") or "local"})
         p.with_name(p.name + ".sig").write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
         print(f"signed {p}")

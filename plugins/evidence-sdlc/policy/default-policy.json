@@ -262,5 +262,6 @@
     "**/AGENTS.md"
   ],
   "deny_persistence": true,
-  "commit_requires_audit": true
+  "commit_requires_audit": true,
+  "deny_background": true
 }

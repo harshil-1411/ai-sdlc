@@ -37,6 +37,21 @@ fixed, what is partial, and what remains an owner action. Intent, spec and plan:
 - A hash-chained audit log in `.evidence/audit/`, including deny verdicts and
   review-agent runs.
 
+- Keyed integrity (`EVIDENCE_SIGNING_KEY`, readable by hooks, hidden from the
+  sandbox): approvals, lifecycle state, audit entries, integrity snapshots and CI
+  results are HMAC-signed; unsigned or altered records are rejected. Without a key,
+  sessions start in a declared UNSIGNED MODE.
+- Integrity monitor around every allowed Bash call: control-plane changes restored
+  (signed mode) or recorded, unapproved writes recorded and push/PR blocked until a
+  human clears them; snapshots bound to their command (replay detected), missing or
+  altered snapshots are violations, worktrees supported, timeouts recorded.
+- Denied: background execution (`&`, screen, tmux, nohup, at, crontab, launchctl),
+  programs read from stdin/pipes/file descriptors/process substitution, nested Claude
+  Code sessions, git remote changes, reading the signing key or managed settings.
+- Commits must include the change's current evidence and only claimed files; the plan
+  must state its tier once and match state; released changes stop unlocking edits;
+  reviews count only after the latest source change.
+
 ### Approval and lifecycle
 - Human-only approval through three channels: a human's chat message
   `/evidence-sdlc:approve <KEY> <sha>` (recorded by the UserPromptSubmit hook), the
