@@ -1,6 +1,6 @@
-# Plan: Integrity-monitor and engine git hardening (security set)
+# Plan: Integrity-monitor, engine git and merge-gate hardening (security set)
 Tracker: PILOT-58   From: intent/2026-09-24-integrity-monitor-hardening/spec.md   Date: 2026-09-24
-Risk tier: 3 — integrity monitor, audit log, commit and push gates, and git execution in unsandboxed, key-holding hooks; policy floor `**/audit/**`. A second human approves (Harshil).
+Risk tier: 3 — integrity monitor, audit log, git execution in unsandboxed key-holding hooks, and the CI merge gate; policy floors `**/audit/**`, `.github/workflows/**`. A second human approves (Harshil).
 
 Approval is not written in this file. A human records it with `/evidence-sdlc:approve <KEY> <plan-sha>`
 (or `evidence approve <KEY>` in their own terminal, or an approving review in GitHub
@@ -9,7 +9,7 @@ mode); it binds to this file's hash, so any edit after approval voids it.
 Any claim below not confirmed from a file, a command, or a named person is marked
 inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
 
-Revision 2: rewritten after the security design review. ADR-0001 was rejected; the change was split into PILOT-58/59/60 by the maintainer's decision.
+Revision 3: after the second security design review. CI's trusted gate is authoritative (ADR-0004); local hardening comes with a stated residual risk (ADR-0003 rev. 2). This is the maintainer's decision.
 
 ## Files claimed
 - `intent/2026-09-24-integrity-monitor-hardening/**`
@@ -19,8 +19,10 @@ Revision 2: rewritten after the security design review. ADR-0001 was rejected; t
 - `plugins/evidence-sdlc/scripts/engine/hook.py`
 - `plugins/evidence-sdlc/scripts/engine/evidence_policy.py`
 - `plugins/evidence-sdlc/scripts/engine/lifecycle.py`
+- `plugins/evidence-sdlc/bin/evidence`
 - `plugins/evidence-sdlc/policy/default-policy.json`
 - `plugins/evidence-sdlc/scripts/tests/engine-tests.py`
+- `plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py`
 - `tests/content_acceptance_tests.py`
 - `docs/managed-settings.md`
 - `docs/policy-reference.md`
@@ -31,92 +33,107 @@ Revision 2: rewritten after the security design review. ADR-0001 was rejected; t
 - `CHANGELOG.md`
 - `plugins/*/.claude-plugin/plugin.json`
 - `.claude-plugin/marketplace.json`
-- `validation/results/**` (only if the human commits refreshed results; the agent does not write here)
+- `validation/results/**` (only the human's refreshed results)
+
+The human edits `.github/workflows/ci.yml` (change-controlled; see Order of work step 9). The agent does not claim it.
 
 ## Files that change
 - `plugins/evidence-sdlc/scripts/engine/state.py`:
-  - `run_git` (REQ-IMH-09): replaces the body of `git()` at `:41`, which becomes a thin wrapper;
-  - `check_git_config` and `GIT_EXEC_DENY` (REQ-IMH-09);
-  - `remove_file` (REQ-IMH-01);
-  - `_read_violations` `lstat` check (REQ-IMH-02);
+  - `run_git`, `run_gh`, `_child_env()` (removes `GIT_*` and `EVIDENCE_SIGNING_KEY`), `check_git_config` (`-z --show-scope --show-origin --includes`) (REQ-IMH-09, 24);
+  - `remove_file` (REQ-IMH-01) and the `_read_violations` `lstat` check (REQ-IMH-02);
   - `audit_verify` seen-hash and session checks (REQ-IMH-11);
-  - `ENGINE_VERSION` becomes 2.1.0.
+  - `ENGINE_VERSION` becomes 2.1.0;
+  - `git()` at `:41` becomes a thin wrapper over `run_git`.
 - `plugins/evidence-sdlc/scripts/engine/integrity.py`:
-  - `_control_plane_files` no-follow walk; restore and remove through the safe helpers (REQ-IMH-01);
-  - `.evidence` directory `lstat` in `_extras` (REQ-IMH-05);
+  - the no-follow walk, safe restore and remove, and violations for symlinks, non-files and refused removals, audit paths included (REQ-IMH-01);
+  - directory identity in `_extras` (REQ-IMH-05);
   - untracked deletes (REQ-IMH-07);
-  - `_snap_path` hardening (REQ-IMH-08);
-  - audit prefix hash (REQ-IMH-20);
-  - its 5 direct git calls go through `st.run_git` (REQ-IMH-22).
-- `plugins/evidence-sdlc/scripts/engine/hook.py`: `run_post` records `audit-unwritable` (REQ-IMH-06); post-time `git-config-refused` handling (REQ-IMH-09).
-- `plugins/evidence-sdlc/scripts/engine/evidence_policy.py`:
-  - `_check_commit` flag and one-command denials (REQ-IMH-10);
-  - spoof-list additions (REQ-IMH-10);
-  - push gate: `range_problems` (REQ-IMH-19) and the missing-state denial (REQ-IMH-21);
-  - direct git calls go through `st.run_git`.
-- `plugins/evidence-sdlc/scripts/engine/lifecycle.py`: direct git calls (if any) go through `st.run_git` (REQ-IMH-22).
-- `plugins/evidence-sdlc/policy/default-policy.json`: `git_allowed_config` with the four exact git-lfs key=value pairs.
-- `plugins/evidence-sdlc/scripts/tests/engine-tests.py`: a new `suite_pilot58` covering every Proof row, with marker-script tests for REQ-IMH-09.
-- `tests/content_acceptance_tests.py`: REQ-IMH-18.
-- Docs and governance (REQ-IMH-18):
-  - `docs/policy-reference.md`: `git_allowed_config` and the extended deny set;
-  - `docs/gates-reference.md`: commit denials, the push-range check, the git-config refusal;
-  - `docs/managed-settings.md`: an allow-list note for LFS and other filters;
-  - `governance/control-mapping.md` and `governance/supplier-audit-packet.md`: change-control and audit claims;
-  - `HANDOFF.md`: state, and the PILOT-59/60 scope;
-  - `CHANGELOG.md` `## 2.1.0`: a redeploy note and the remaining Known issues;
-  - five plugin.json files and marketplace.json go to 2.1.0.
+  - the snapshot safe write, plus reads with O_NOFOLLOW, fstat and a size cap (REQ-IMH-08);
+  - the audit prefix hash, and new logs must verify (REQ-IMH-20);
+  - `is_git` / git-dir in the snapshot, with fail-closed handling (REQ-IMH-23);
+  - the 5 direct git calls go through `run_git`.
+- `plugins/evidence-sdlc/scripts/engine/hook.py`:
+  - `run_post`: `audit-unwritable` (REQ-IMH-06) and `git-config-refused` handling (REQ-IMH-09);
+  - `run_pre`: deny when `.git` is present but git fails (REQ-IMH-23).
+- `plugins/evidence-sdlc/scripts/engine/evidence_policy.py`: commit flag and one-command denials, and the spoof list (REQ-IMH-10); direct git calls go through `run_git`.
+- `plugins/evidence-sdlc/scripts/engine/lifecycle.py`:
+  - `_gh` goes through `run_gh` with `--repo` (REQ-IMH-24);
+  - new `cmd_verify_range`, registered as `verify-range` (REQ-IMH-19).
+- `plugins/evidence-sdlc/bin/evidence`: add `verify-range` to the `LIFECYCLE` dispatch set.
+- `plugins/evidence-sdlc/policy/default-policy.json`:
+  - `git_allowed_config` (the four exact git-lfs pairs);
+  - reconcile `deny_git_config_keys` with the spec's union;
+  - `verify_range_blob_cap_mb: 20` and `verify_range_allow_large: []`.
+- `plugins/evidence-sdlc/scripts/tests/engine-tests.py`: `suite_pilot58` with a case per engine Proof row, including marker scripts and the AST scan.
+- `plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py`: `verify-range` fixture repositories (REQ-IMH-19).
+- `tests/content_acceptance_tests.py`: REQ-IMH-18 and REQ-IMH-21 (the workflow step is present).
+- Docs, governance and release (REQ-IMH-18):
+  - `docs/gates-reference.md` and `docs/managed-settings.md`: the local push gate is advisory, `sign-and-gate` is authoritative, and the allow-list path;
+  - `docs/policy-reference.md`: the new keys;
+  - `governance/control-mapping.md` and `governance/supplier-audit-packet.md`: change control rests on the CI gate, and the ADR-0003 §4 residual risk is stated;
+  - `HANDOFF.md`;
+  - `CHANGELOG.md` `## 2.1.0`, with a redeploy note and the Known issues left to PILOT-59/60/61;
+  - versions go to 2.1.0.
 
 ## Order of work
-1. Write the failing tests for every Proof row in `suite_pilot58`. Run them and record why each fails.
-2. `state.run_git` + `check_git_config`; route every engine git call through it; the REQ-IMH-22 scan test. **Do this first:** later steps run git inside the hook, and a mistake here blocks this session's own calls, so run the suite after each sub-step.
-3. REQ-IMH-01, 02, 08: safe removal and restore, the no-follow walk, the violations `lstat` check, the snapshot directory.
-4. REQ-IMH-05, 06, 07, 20: directory checks, own-log failure, untracked deletes, audit prefix hash.
-5. **CHECKPOINT:** re-read spec.md and ADR-0003. Run the full engine suite: every existing case passes, or is listed here with the reason. Then run the **security-reviewer on steps 2–4 alone**, before the commit and push work.
-6. REQ-IMH-10, 19, 21: commit-time denials, the push-time range check, the missing-state push denial. This is the riskiest step for false denials on legitimate pushes.
-7. REQ-IMH-11: audit_verify seen-hash and session binding. Run `evidence audit verify` on this repository's real logs: they must still pass, with only the three known fork notes.
+1. Write the failing tests for every Proof row. Run them and record why each fails.
+2. `run_git`, `run_gh`, `_child_env` and `check_git_config`; route every engine subprocess through them; the AST scan test (REQ-IMH-09, 22, 24). **Do this first, in small steps, running the engine suite after each.** Hooks read this code live, and an error blocks this session's own calls.
+3. REQ-IMH-23 (fail-closed git), REQ-IMH-01, 02, 08.
+4. REQ-IMH-05, 06, 07, 20.
+5. **CHECKPOINT:** re-read spec.md and ADR-0003/0004. Run the full engine suite: every existing case passes, or is listed here with the reason. Then run the **security-reviewer on steps 2–4 alone**.
+6. REQ-IMH-10 and REQ-IMH-11. Run `evidence audit verify` on this repository's real logs: they must pass, with only the three known fork notes.
+7. REQ-IMH-19: `verify-range` with fixture-repository tests. Run it on this branch against `origin/main`, and it must pass.
 8. REQ-IMH-18: docs, governance, CHANGELOG, versions.
-9. Run the engine, lifecycle and content suites directly (no JUNIT_OUT). Confirm nothing under `validation/` changed.
-10. Reviewers one at a time, with no edits during a run: code-reviewer, security-reviewer, then the verifier last. Fix what this change introduced; list anything pre-existing for PILOT-59/60.
-11. Commit, then push. The push gate now runs REQ-IMH-19 on this branch itself. Open the PR with `gh` from the maintainer's own account (the second-person route). The human runs `run-tests.sh` twice and commits results (still needed until PILOT-60). The human merges and releases.
+9. **Human step (change-controlled file):** add the `verify-range` step to `.github/workflows/ci.yml` `sign-and-gate`, before "Traceability gaps (strict, trusted CLI)". The exact YAML is in the spec, REQ-IMH-21 Design. Commit it on this branch. REQ-IMH-21's content test then passes.
+10. Run the engine, lifecycle and content suites directly (no JUNIT_OUT). Confirm nothing under `validation/` changed.
+11. Reviewers one at a time, with no edits during a run: code-reviewer, security-reviewer, then the verifier last. Fix what this change introduced; list anything pre-existing for PILOT-59/60/61.
+12. Commit and push. The maintainer opens the PR from their own GitHub account. The human runs `run-tests.sh` twice and commits results (until PILOT-60).
 
-Steps 3 and 4 are independent after step 2. Step 7 is independent of step 6.
+    **Bootstrap:** `sign-and-gate` uses the **base** branch's CLI, so `verify-range` does not exist on `main` yet, and the new step would fail on this PR. The step is guarded with `if [ -x … ] && evidence verify-range --help` so it skips on bases without it, and is enforced from the next PR on. This is stated in the PR.
+
+    The human merges (admin) and releases.
+
+Steps 3 and 4 are independent after step 2. Step 7 is independent of steps 3–6.
 
 ## Mid-flight checkpoint (Tier 2/3)
 Step 5.
 
 ## Reuse decisions
-- Safe IO reuses `write_file` / `_dir_fd` (2.0.1); only `remove_file` is new.
-- The deny set extends the existing policy key `deny_git_config_keys` (docs/policy-reference.md:93), so the `git -c` gate and the hook's own git share one list.
-- The push-range check reuses the existing claims matcher (`st.claim_matches`), `secretscan`, and the evidence-file list from `_check_commit`.
-- Snapshot-restore is kept (no ADR-0001).
+- Safe IO reuses `write_file` / `_dir_fd`; only `remove_file` is new.
+- The config deny set extends the policy `deny_git_config_keys`: one list for the `git -c` gate and the hook's own git.
+- `verify-range` reuses `plan_claims` / `claim_matches`, `secretscan`, `audit_verify` and `signing.verify`. It lives in the lifecycle CLI, which the trusted job already runs.
+- `sign-and-gate` is extended, not replaced. It already has the key, the trusted CLI and the true SHAs.
 
 ## Risks
-- **Step 2 can block this session.** Hooks read engine code live, so a wrong `run_git` makes every PreToolUse fail closed. Mitigation: implement `run_git` as a drop-in with the same return contract as `git()`, and run the engine suite before the next edit. Rollback: revert `state.py`.
-- **Step 6 can deny legitimate pushes.** Examples: a base ref that isn't fetched, merge commits from `main`, or large binary blobs. Mitigations: with no base, fall back to the pre-commit rules and say so; merge commits from the base are skipped (only commits not reachable from the base are checked); blob scans are capped at 2 MiB each. Rollback: a policy flag `push_range_check: false` (org only).
-- **Refusing local credential helpers** may surprise some repositories. The message names the allow path. The owner accepts this at approval (spec Areas of concern).
-- **Size:** estimate 700–1000 changed lines [NEEDS VERIFICATION after step 1].
+- **Step 2 can block this session.** Mitigation: `run_git` has the same return contract as `git()`, and the engine suite runs after each sub-step. Rollback: revert `state.py`.
+- **Step 7 false failures** (for example human merge commits from `main` into the branch). Commits reachable from the base are excluded by `base..head`. Merge commits are checked by `--cc`, which reports only paths that differ from every parent, so a clean merge of `main` reports nothing.
+- **Step 9 bootstrap:** the guard makes the first PR skip `verify-range`. That is stated in the PR and CHANGELOG. From the next PR, it's enforced.
+- **Refused local git config** in adopters' repositories: the message names the allow path, and the owner accepts this at approval.
+- **Size:** estimate 1,000–1,400 changed lines [NEEDS VERIFICATION after step 1].
 
 ## Proof
 
 | REQ ID | Requirement | Layer | Automated? | Test case ID | Automated test | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| REQ-IMH-01 | No removal or restore through a symlinked component or outside the repository; a symlink at a control-plane path is a violation | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-01 …" | CI engine.xml |
+| REQ-IMH-01 | No removal or restore through symlinks or outside the repository; symlink, non-file and refused-removal violations | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-01 …" | CI engine.xml |
 | REQ-IMH-02 | A non-regular violations path is an open violation | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-02 …" | CI engine.xml |
-| REQ-IMH-05 | A change to a `.evidence` directory's type, mode or owner is a violation | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-05 …" | CI engine.xml |
+| REQ-IMH-05 | `.evidence` directory type, mode, owner and identity changes are violations | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-05 …" | CI engine.xml |
 | REQ-IMH-06 | An unwritable post-call audit entry records a violation, and the next call is denied | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-06 …" | CI engine.xml |
 | REQ-IMH-07 | Deleting an untracked file is judged | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-07 …" | CI engine.xml |
-| REQ-IMH-08 | The snapshot directory is safe; a planted link fails closed | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-08 …" | CI engine.xml |
-| REQ-IMH-09 | Engine git neutralised and `GIT_*` scrubbed; denied local/worktree config refused (exact-value allow-list); a marker script never runs | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-09 …" | CI engine.xml |
+| REQ-IMH-08 | Snapshots written and read safely; a link, non-file or oversize snapshot is a violation | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-08 …" | CI engine.xml |
+| REQ-IMH-09 | Engine git neutralised; `GIT_*` and the key removed from children; config refusal per ADR-0003 §2; marker scripts never run | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-09 …" | CI engine.xml |
 | REQ-IMH-10 | Commit flag and one-command denials; index and object environment variables are spoofing | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-10 …" | CI engine.xml |
 | REQ-IMH-11 | Replayed and cross-session audit entries break verification | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-11 …" | CI engine.xml |
-| REQ-IMH-19 | The push gate validates every commit's tree in the branch range: claims, evidence, secrets | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-19 …" | CI engine.xml |
-| REQ-IMH-20 | The audit-log prefix hash detects truncation, rewrite or replacement | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-20 …" | CI engine.xml |
-| REQ-IMH-21 | Push denied when a keyed change's state is missing or invalid | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-21 …" | CI engine.xml |
-| REQ-IMH-22 | No engine git call bypasses `run_git` | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-22 …" | CI engine.xml |
-| REQ-IMH-18 | Docs, governance, HANDOFF and Known issues match the shipped behaviour | content | yes | — | `tests/content_acceptance_tests.py` "REQ-IMH-18 …" | CI content.xml |
+| REQ-IMH-19 | `verify-range` rejects evil merges, trailer-less commits, unclaimed A/M/D/T/R, rolled-back audit logs, secrets, missing state; a clean range passes | CLI | yes | — | `plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py` "REQ-IMH-19 …" | CI lifecycle.xml |
+| REQ-IMH-20 | The audit-log prefix hash detects truncation, rewrite and replacement; new logs must verify | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-20 …" | CI engine.xml |
+| REQ-IMH-21 | `sign-and-gate` runs `verify-range` with the base-branch CLI and the event SHAs | content | yes | — | `tests/content_acceptance_tests.py` "REQ-IMH-21 …" | CI content.xml |
+| REQ-IMH-22 | No engine subprocess bypasses the approved helpers | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-22 …" | CI engine.xml |
+| REQ-IMH-23 | Git failure fails closed: violation, filesystem restore, next pre denied | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-23 …" | CI engine.xml |
+| REQ-IMH-24 | `gh` pinned to `--repo`, with `GIT_*` and the key removed | engine | yes | — | `plugins/evidence-sdlc/scripts/tests/engine-tests.py` "REQ-IMH-24 …" | CI engine.xml |
+| REQ-IMH-18 | Docs, governance, HANDOFF and Known issues match: local advisory, CI authoritative, residual risk stated | content | yes | — | `tests/content_acceptance_tests.py` "REQ-IMH-18 …" | CI content.xml |
+| MAN-IMH-01 | Live: on the PR after this merges, `sign-and-gate` runs `verify-range` and fails a deliberately bad test branch | manual | no | MAN-IMH-01 | — | CI run link in the release note |
 
 ## Considered and rejected
-- **ADR-0001 (signature validation instead of restore, a monitor lease).** Rejected in design review (replay, lease bypass). Concurrency moves to PILOT-59.
-- **Hand-parsing `.git/config`.** See ADR-0003's alternatives.
-- **Doing the usability items here.** Moved to PILOT-60 to keep this Tier 3 change reviewable.
+- **ADR-0001, and the local push-time range check.** Both were rejected in the design reviews (see the spec's scope history).
+- **The agent editing `ci.yml`** without a `CHANGE_TICKET` session. It's change-controlled, so step 9 is a human edit.
+- **Running `verify-range` from the PR's own CLI on the first PR.** That's untrusted code; the bootstrap guard skips instead.
