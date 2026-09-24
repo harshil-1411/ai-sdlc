@@ -21,8 +21,8 @@
       "Bash(git push --mirror*)",
       "Bash(gh pr merge *)",
       "Bash(gh api *)",
-      "Read(/Library/Application Support/ClaudeCode/**)",
-      "Read(/etc/claude-code/**)",
+      "Read(//Library/Application Support/ClaudeCode/**)",
+      "Read(//etc/claude-code/**)",
       "Bash(env*)",
       "Bash(printenv*)"
     ],
@@ -124,7 +124,7 @@
   "strictKnownMarketplaces": [
     {
       "source": "github",
-      "repo": "REPLACE-WITH-YOUR-ORG/evidence-chain"
+      "repo": "harshil-1411/ai-sdlc"
     }
   ],
   "requiredMinimumVersion": "2.1.193"

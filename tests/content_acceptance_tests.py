@@ -241,6 +241,50 @@ msd = read("docs", "managed-settings.md")
 check("REQ-SLF-06 managed-settings doc: hook-performed lifecycle calls, key for human terminal actions, commit tail rule",
       "Done by the gate engine" in msd and re.search(r'EVIDENCE_SIGNING_KEY="\$\(python3 .*\\\n\s*evidence change clear-violations', msd)
       and "clear-violations" in msd and re.search(r"at most two appended entries", msd))
+REPO = "https://github.com/harshil-1411/ai-sdlc"
+leftover = [f for f in subprocess.run(["git", "grep", "-l", "REPLACE-WITH-YOUR-ORG"], cwd=ROOT, capture_output=True, text=True).stdout.split()
+            if f not in ("CHANGELOG.md", "tests/content_acceptance_tests.py") and not f.startswith(("intent/", "plan/", "validation/", ".evidence/"))]
+check("REQ-P54-01 no REPLACE-WITH-YOUR-ORG placeholder is left; every plugin names the published repository",
+      not leftover and all(m.get("repository") == REPO and m.get("homepage") == REPO + "#readme" for m in man.values()),
+      leftover)
+co = read(".github", "CODEOWNERS")
+check("REQ-P54-02 CODEOWNERS has a default owner and covers the control plane and the engine, with no placeholder team",
+      re.search(r"^\*\s+@\S+", co, re.M) and all(p in co for p in ("/.evidence/policy.json", "/.claude/", "/managed-settings.json",
+                                                                   "/.github/", "/plugins/evidence-sdlc/scripts/engine/"))
+      and "@your-org" not in co, co[:300])
+mkt = json.load(open(P(".claude-plugin", "marketplace.json")))
+mver = {p["name"]: p["version"] for p in mkt.get("plugins", [])}
+check("REQ-P54-03 every plugin is 2.0.2 in plugin.json and marketplace.json, and CHANGELOG has the entry",
+      all(m.get("version") == "2.0.2" and mver.get(n) == "2.0.2" for n, m in man.items()) and "## 2.0.2" in read("CHANGELOG.md"),
+      (mver, {n: m.get("version") for n, m in man.items()}))
+
+
+def single_slash_rules(settings):
+    """Permission rules naming an absolute path with one leading slash, which Claude Code resolves
+    relative to the project (only `//path` is absolute)."""
+    rules = [r for k in ("allow", "deny", "ask") for r in settings.get("permissions", {}).get(k, [])]
+    return [r for r in rules if re.match(r"^\w+\(\s*/[^/]", r)]
+
+
+old_ms = subprocess.run(["git", "show", "1391408:managed-settings.json"], cwd=ROOT, capture_output=True, text=True).stdout
+deny = ms.get("permissions", {}).get("deny", [])
+check("REQ-P54-04 managed-settings permission rules use // for absolute paths, the managed directories are denied to "
+      "Read, and the pre-fix template is caught",
+      not single_slash_rules(ms) and any(r.startswith("Read(//Library/Application Support/ClaudeCode") for r in deny)
+      and any(r.startswith("Read(//etc/claude-code") for r in deny) and bool(old_ms) and single_slash_rules(json.loads(old_ms)),
+      (single_slash_rules(ms), single_slash_rules(json.loads(old_ms)) if old_ms else "old template unavailable"))
+gov = read("governance", "supplier-audit-packet.md")
+check("REQ-P54-05 managed-settings doc states the // rule with a Read-tool canary; the supplier packet covers the Read tool",
+      re.search(r"`//", msd) and re.search(r"canary", msd, re.I) and re.search(r"denied by your permission settings", msd)
+      and re.search(r"Read tool", gov))
+check("REQ-P54-06 the start command says to run `evidence change start` as its own command, performed by the gate engine",
+      re.search(r"own command", read("plugins", "evidence-sdlc", "commands", "start.md"))
+      and re.search(r"gate engine", read("plugins", "evidence-sdlc", "commands", "start.md")))
+gp = subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "gaps"], cwd=ROOT,
+                    capture_output=True, text=True).stdout
+orphan = gp.split("ORPHANED", 1)[1].split("\n\n", 1)[0] if "ORPHANED" in gp else ""
+check("REQ-P54-07 evidence gaps reads requirement IDs from Tier 1 plans (plan/*.md), so plan-only REQ IDs are not orphaned",
+      re.search(r"^\s*-\s*plan/\*\.md\s*$", read(".evidence", "adapter.yml"), re.M) and "REQ-P54" not in orphan, orphan[:300])
 check("REQ-V2C-01 the CLI ships in the plugin's bin/ and runs",
       subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "--version"], capture_output=True, text=True).returncode == 0)
 hj = json.load(open(P("plugins", "evidence-sdlc", "hooks", "hooks.json")))

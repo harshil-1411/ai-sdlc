@@ -2,6 +2,8 @@
 requirements_source: file_glob
 spec_glob:
   - intent/*/spec.md
+  # a Tier 1 change has no spec: its requirement IDs live in its plan's Proof table
+  - plan/*.md
 requirement_pattern: 'REQ-[A-Za-z0-9]+-[0-9]+'
 tracker_pattern: '[A-Z][A-Z0-9]+-[0-9]+'
 test_dir_segments: [tests, __tests__, qa, evals]

@@ -36,7 +36,12 @@ each rule:
 - The agent cannot record a *valid* approval itself, **when the organisation deploys a
   signing key and the sandbox** (the managed-settings template does both). Approvals and
   audit entries are HMAC-signed with `EVIDENCE_SIGNING_KEY`, which the hooks can read and
-  the sandboxed agent shell cannot; an unsigned or forged `approval.json` is rejected
+  the agent cannot. The sandboxed shell has the variable hidden and the file denied. The
+  Read tool is denied by permission rules with `//` absolute paths and by the engine's own
+  Read hook. (The 2.0.0 template wrote those rules with one `/`, which Claude Code resolves
+  relative to the project, so they did not deny the Read tool. A key was exposed that way
+  on 2026-09-24; fixed in the 2.0.2 template, with a canary step in
+  docs/managed-settings.md.) An unsigned or forged `approval.json` is rejected
   (cases V2A-01* "re-audit"). Every agent tool that writes files is also denied on
   `approval.json`/`state.json`, and `evidence approve` run by an agent is denied except
   to record a GitHub review by an allowed login who is not the PR author. **Without a

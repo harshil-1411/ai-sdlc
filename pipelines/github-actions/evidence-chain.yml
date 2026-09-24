@@ -73,7 +73,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Fetch the Evidence Chain CLI at a pinned version
-        run: git clone --depth 1 --branch "$EVIDENCE_CHAIN_REF" "https://github.com/${{ vars.EVIDENCE_CHAIN_REPO || 'REPLACE-WITH-YOUR-ORG/evidence-chain' }}" .evidence-chain
+        run: git clone --depth 1 --branch "$EVIDENCE_CHAIN_REF" "https://github.com/${{ vars.EVIDENCE_CHAIN_REPO || 'harshil-1411/ai-sdlc' }}" .evidence-chain
       - name: Sign this run's results (the agent's sandbox never sees this key)
         env:
           EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}

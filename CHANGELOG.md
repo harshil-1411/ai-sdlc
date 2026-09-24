@@ -3,6 +3,25 @@
 All five plugins are versioned together. Every change to a plugin's files needs a
 version bump (enforced in CI by `scripts/ci/check-version-bump.sh`) and an entry here.
 
+## 2.0.2 — 2026-09-24 (PILOT-54)
+
+Publication metadata and a security fix to the managed-settings template. Plan: `plan/PILOT-54.md`.
+
+- **Managed-settings template:** absolute paths in `permissions` rules now use `//`
+  (`Read(//Library/Application Support/ClaudeCode/**)`, `Read(//etc/claude-code/**)`). With one
+  `/`, Claude Code resolves the path relative to the project, so the 2.0.0/2.0.1 rules did not stop
+  the Read tool from reading the deployed file and its signing key. That happened on 2026-09-24,
+  and the key was rotated. Redeploy the template, or fix the rules in your deployed copy.
+  The marketplace `repo` is now `harshil-1411/ai-sdlc`.
+- The canary (docs/managed-settings.md) gains a Read-tool step: reading a missing file in the
+  managed directory must say "denied", not "file not found".
+- `homepage`/`repository` in every plugin, the README install line, and the reference pipeline's
+  default repo point at https://github.com/harshil-1411/ai-sdlc. No placeholders remain.
+- `.github/CODEOWNERS` added, so the "code-owner review" branch protection actually applies.
+- `/evidence-sdlc:start` now says `evidence change start` runs as its own command and is performed
+  by the gate engine.
+- The supplier audit packet's key-hiding claim now covers the Read tool, and records the defect.
+
 ## 2.0.1 — 2026-09-24 (PILOT-57)
 
 The first real session with the signing key deployed could not complete a change. Every earlier

@@ -63,7 +63,7 @@ catches the forms a glob can't see, such as `git -C x push origin HEAD:main`,
 Every session the engine runs in starts with a SessionStart context line that begins:
 
 ```
-Evidence Chain gates live (engine 2.0.0; policy: default + …).
+Evidence Chain gates live (engine 2.0.x; policy: default + …).
 ```
 
 **If that line isn't there, assume no gate is running.** This is how to test it:
@@ -78,12 +78,18 @@ Evidence Chain gates live (engine 2.0.0; policy: default + …).
    change, and none was found (branch main carries no tracker key)…"*.
 3. Ask Claude to run `echo 1 > src/y.py` in Bash. It must also be denied, with the
    same message prefixed `[via Bash: redirect]`.
+4. Ask Claude to **Read** a file that does not exist inside the managed-settings
+   directory, for example `/Library/Application Support/ClaudeCode/canary.txt`. The
+   answer must be *"denied by your permission settings"* (or the engine's "Managed
+   settings … are not readable"), **not** *"file not found"*. "File not found" means the
+   Read tool can see into the directory and would read the key. Check the `//` rule in
+   step 3 of "Signing key". The shell being blocked does not prove the Read tool is.
 
 `evidence doctor` runs a related check, "gate engine live canary". It feeds the
 shipped engine two writes in a throwaway repo and expects the source write to be
 denied and the docs write allowed. That proves the engine code works on this machine
 (python3, files, policy). It does **not** prove Claude Code is calling the engine, so
-steps 1–3 are still needed after every deployment.
+steps 1–4 are still needed after every deployment.
 
 If step 1 passes but step 2 doesn't, stop and report it: a gate that says it's live but
 doesn't deny is the worst possible failure. If both fail, the hooks aren't running. Go
@@ -153,6 +159,12 @@ is a key the hooks can read and the agent's commands cannot:
 3. Keep it from the agent: the template adds `EVIDENCE_SIGNING_KEY` to
    `sandbox.credentials.envVars` (deny), denies the sandbox and the Read tool access to
    the managed-settings directories, and denies `env`/`printenv`.
+   **In `permissions` rules an absolute path must start with `//`**
+   (`Read(//Library/Application Support/ClaudeCode/**)`, `Read(//etc/claude-code/**)`).
+   A single leading `/` is resolved relative to the project, so `Read(/Library/…)` protects
+   `<project>/Library/…` and leaves the real file readable. The 2.0.0 template had exactly
+   that defect, and a key was read through the Read tool on 2026-09-24. `sandbox.filesystem`
+   paths are real absolute paths and keep one slash.
 4. Give CI the same key as a protected secret so it can sign test results
    (`evidence results sign`) and verify approvals.
 
@@ -200,8 +212,10 @@ the template makes sure it is.
 A plugin can't do any of these. Each one is the owner's job, and each should be
 recorded with a name and a date.
 
-- [ ] **Publish the marketplace.** Push this repository to a git remote. Replace
-      `REPLACE-WITH-YOUR-ORG` in every `plugin.json` `homepage` and `repository`.
+- [ ] **Publish the marketplace.** Upstream is published at
+      `harshil-1411/ai-sdlc` (2026-09-24), and the manifests and template point there. If
+      you deploy from your own fork, push it, and change every `plugin.json` `homepage` and
+      `repository` and the template's marketplace `repo` to your remote.
 - [ ] **Set `strictKnownMarketplaces`** to the exact source you published. For GitHub:
       ```json
       "strictKnownMarketplaces": [ { "source": "github", "repo": "acme/evidence-chain" } ]
