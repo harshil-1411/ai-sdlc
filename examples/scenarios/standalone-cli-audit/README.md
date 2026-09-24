@@ -37,7 +37,7 @@ test_results_location: "CI artifact: junit.xml per run, not committed"
 ```
 
 **`evidence doctor` first** — not because this repo has this framework's gates (it
-doesn't), but because `jq` and basic file readability matter for anything downstream,
+doesn't), but because `python3` and basic file readability matter for anything downstream,
 and it costs nothing to check.
 
 **`evidence scan`** — with `requirements_source: tracker`, the CLI says so plainly:

@@ -30,16 +30,16 @@ named policy owner who must decide. Do not leave this empty by default.>
 The intent was to come back to it after sketching the design. Nobody flagged
 that out loud.
 
-**2 · The sensor fires, right after the Write lands.** `template-sensor.sh`
-reads the file from disk, finds `## Areas of concern`'s body is still exactly
-the template's own `<...>` placeholder, and emits an advisory note into
+**2 · The sensor fires, right after the Write lands.** The gate engine's
+PostToolUse sensor (`plugins/evidence-sdlc/scripts/engine/sensor.py`) reads the
+file from disk, finds `## Areas of concern`'s body is still exactly the
+template's own `<...>` placeholder, and emits an advisory note into
 context — not a denial, nothing is blocked, the session keeps going:
 
 > `intent/2026-11-03-saved-search-refresh/spec.md`'s "## Areas of concern"
 > section is missing or still looks like the unfilled template placeholder.
-> This operationalizes spec-and-design's own rule that this section being
-> empty is suspicious and should say so if it is. Advisory only — nothing was
-> blocked.
+> spec-and-design treats an empty section as suspicious; say so if there really
+> are none. Advisory only -- nothing was blocked.
 
 This is the sensor's entire job: it never asks permission and never stops
 anyone, it just makes sure the gap doesn't quietly survive to review because
@@ -107,8 +107,8 @@ remembering to check later.
   — the "Areas of concern" rule the sensor operationalizes
 - [`codebase-grounded-planning`](../../../plugins/evidence-sdlc/skills/codebase-grounded-planning/SKILL.md)
   — the "While implementing" section with the learning-loop rule
-- [`docs/gates-reference.md`](../../../docs/gates-reference.md) — `template-sensor.sh`'s
-  full decision logic, and why it's the one hook in this repo that's
+- [`docs/gates-reference.md`](../../../docs/gates-reference.md) — the sensor's
+  checks (under "Advisory hooks"), and why it's
   structurally incapable of denying anything
 - [Scenario: a new user story](../new-feature-non-regulated/README.md) — the
   Tier 1 lightest path, for comparison against this Tier 2 one

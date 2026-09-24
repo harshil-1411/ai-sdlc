@@ -72,7 +72,7 @@ cases are added beside the existing ones and are not committed separately from t
    `test-plan-section.md`, new `test-summary-report.md`.
    (REQ-TSD-04, REQ-COV-01, REQ-FLK-01, REQ-TSR-01, -02, REQ-INT-01)
 9. **[independent]** `require-repo-profile.sh` message text. (REQ-TSD-05)
-10. **[depends on 1–7]** 18 eval cases. (REQ-EVAL-01)
+10. **[depends on 1–7]** 18 eval cases. (REQ-TEVAL-01)
 11. **[depends on 1–9]** Docs and metadata. (REQ-DOC-01)
 12. Verify: `bash -n` + run `require-repo-profile.sh` with and without a profile
     and confirm exit 0 and valid JSON; `jq .` on edited JSON; frontmatter check on every
@@ -128,7 +128,7 @@ layers: `claude plugin eval` and direct shell execution.
 | REQ-A11Y-01 | eval (behavior) | Yes | `accessibility-testing-automated-scan-is-not-enough` | evals dir | eval run output |
 | REQ-COV-01, REQ-FLK-01, REQ-TSR-01, -02, REQ-INT-01 | manual — content review | No | — | skill/template diffs | PR review |
 | REQ-DOC-01 | manual — content review | No | — | doc diffs | PR review |
-| REQ-EVAL-01 | shell | Yes | — | count of new case dirs = 18, each with prompt.md + graders/ | command output |
+| REQ-TEVAL-01 | shell | Yes | — | count of new case dirs = 18, each with prompt.md + graders/ | command output |
 
 Non-trigger case per skill, each asserting the skill does not fire:
 `*-no-fire-on-*` (6 cases), evidence = eval run output.

@@ -112,6 +112,18 @@ and may be better implementations. The cartographer is deliberately thin so it w
 anywhere with no dependency. If a tool clearly wins in your environment, have the
 cartographer call it when present rather than replacing the skill.
 
+**Plugins that ship their own agents or hooks.** The gate engine judges every Edit,
+Write and Bash call, whichever agent or plugin makes it, so a third-party agent can't
+write outside an approved change or into the control plane. Be careful with agent names. The engine records a
+completed review by the agent's **bare name**: the plugin prefix is stripped, so
+`other-plugin:verifier` counts as `verifier`. Don't allow a plugin whose agents are
+named `verifier`, `security-reviewer`, `code-reviewer` or anything else in
+`required_agents`, because its runs would satisfy the review gate.
+Under `allowManagedHooksOnly`, a third-party plugin's hooks run only if you
+force-enable it in managed `enabledPlugins`. Decide that deliberately; don't do it
+just to make something work
+([managed-settings.md](managed-settings.md#allowmanagedhooksonly-and-plugin-hooks)).
+
 **General engineering skill libraries.** Frequently excellent, and the wrong thing to
 bundle into a governance framework. They double the surface area and encode someone
 else's opinions about code style into your control plane. Adopt them personally; keep
@@ -133,7 +145,7 @@ design system, these actively work against it.
 
 **Anything installed by a copy-pasted one-liner.** `strictKnownMarketplaces`,
 `allowManagedMcpServersOnly` and `disableSideloadFlags` exist precisely to prevent
-this. If install one-liners appear in your rollout documentation, your managed settings
+this, and the template sets all three ([managed-settings.md](managed-settings.md)). If install one-liners appear in your rollout documentation, your managed settings
 are decoration.
 
 ---

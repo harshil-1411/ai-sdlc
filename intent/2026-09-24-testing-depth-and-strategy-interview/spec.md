@@ -36,7 +36,7 @@ inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.
 | REQ-TSR-02 | `templates/test-plan-section.md` gains entry criteria and a non-functional coverage table. | Problem 8 | Sections present. |
 | REQ-INT-01 | `test-strategy`'s layer table lists each new test type and points at its skill; `continuous-testing`'s stage table places performance/stress/soak, DAST, visual regression and accessibility; `test-designer` routes non-functional requirements to the matching skill. | Problems 2–6 | References present in all three files. |
 | REQ-DOC-01 | README, `docs/skills-reference.md`, `docs/getting-started.md`, both plugins' `evals/README.md`, both `plugin.json` descriptions and `marketplace.json` reflect the new skills. | Doc drift (PILOT-48 lesson) | Each file mentions the new skills. |
-| REQ-EVAL-01 | Each new skill has a trigger, a non-trigger and a behavior eval case under its plugin's `evals/`, following the existing `prompt.md` + `graders/` convention. | Existing eval-case DoD (PILOT-50) | 18 case directories. |
+| REQ-TEVAL-01 | Each new skill has a trigger, a non-trigger and a behavior eval case under its plugin's `evals/`, following the existing `prompt.md` + `graders/` convention. | Existing eval-case DoD (PILOT-50) | 18 case directories. |
 
 ## Design
 New files:

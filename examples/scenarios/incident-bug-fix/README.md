@@ -39,18 +39,32 @@ buffered writer is not used anywhere else with the same flush logic — needs
 verification before closing this out."* (It is used in one other export path; that
 becomes a second, linked fix.)
 
+**Risk tier.** No regulated record is touched: this product's compliance profile
+confirms CSV exports aren't a regulated record type. So this is **Tier 1**, and like
+every tier it still needs a plan. The change is started as a fix:
+
+```
+git switch -c fix/EXP-311-empty-csv-export
+evidence change start EXP-311 --tier 1 --kind fix
+```
+
+`root-cause-analysis` writes the plan. Its `## Files claimed` names
+`export/stream_writer.py` and the new `tests/test_export_boundary.py`. A human reads
+it and approves it with `/evidence-sdlc:approve EXP-311 <plan-sha>`.
+
 **Reproduce before fixing.** A failing test is written that hits the exact flush
-boundary and demonstrates the empty-file behaviour — confirmed to fail for the
-*expected* reason (the assertion on file content fails; it isn't failing because of
-an unrelated setup error). That test is committed **alone**, before any fix.
+boundary and shows the empty-file behaviour. It is confirmed to fail for the
+*expected* reason: the assertion on file content fails, not some unrelated setup
+error. That test is committed **alone**, before any fix
+(`EXP-311 failing test for flush boundary`, with the `Agent-Session:` trailer).
 
-**`FIX_TASK=1` from this point on.** `block-test-weakening` now denies any edit to
-that test file. The fix has to make the test pass — the test cannot be loosened to
-fit whatever the fix turns out to be.
-
-**Risk tier.** No regulated record touched (this product's compliance profile
-confirmed CSV exports aren't a regulated record type) — **Tier 1**, but risk-tiering
-still requires a `plan.md`, same as every tier.
+**Lock the tests.** Next comes `evidence change advance EXP-311 failing-test`. That
+records the current commit as the change's `fix_base`. From then on, the engine denies
+any edit or deletion, by any tool including Bash, of a test file that existed at
+`fix_base`. That includes the failing test just committed. The fix has to make the
+test pass; the test can't be loosened to fit whatever the fix turns out to be. New
+test files are still allowed. (The v1 switch `FIX_TASK=1`, set by the human who starts
+the session, is still honoured, but lifecycle state replaces it.)
 
 **Regulated-record check, run anyway:** if this same bug had touched a regulated
 export instead, `root-cause-analysis` requires saying so immediately and pointing at

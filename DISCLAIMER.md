@@ -14,6 +14,11 @@ Specifically:
 - The tool risk assessment in `governance/` is a **template with the conclusions left
   blank on purpose**. The position it proposes must be assessed, completed and approved
   by your own quality function before you rely on it.
+- The gates in this framework are **defence-in-depth, not a substitute for server-side
+  controls.** They constrain an agent inside a Claude Code session; branch protection,
+  code-owner review, access control and your deploy system's approvals on the hosting
+  platform remain the authoritative controls. `governance/control-mapping.md` is a
+  mapping, not an attestation.
 - Nothing here signs anything. Every gate in this framework ends at a named human, and
   that is deliberate.
 - Regulatory expectations for AI-assisted development are actively evolving. Content

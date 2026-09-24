@@ -13,3 +13,6 @@ __pycache__/
 # Un-anchored (**/) -- a mid-pattern slash would anchor this to the repo root
 # and miss every plugin's own evals/results/ subdirectory.
 **/evals/results/
+
+# Release archives and local bundles are never committed.
+*.zip

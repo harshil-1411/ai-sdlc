@@ -3,9 +3,8 @@
 Thanks for considering it. This project is a set of conventions as much as code, so the
 most valuable contributions are usually about **what works in practice**, not features.
 
-For the mechanics of adding a new skill, understanding the `hooks.json` exec-form vs.
-shell-form schema, or the `plugin.json`/`marketplace.json` conventions referenced below,
-see [`docs/extending.md`](docs/extending.md).
+For the mechanics of adding a skill, an agent, a gate rule or a plugin, see
+[`docs/extending.md`](docs/extending.md).
 
 ## What is especially welcome
 
@@ -16,7 +15,9 @@ see [`docs/extending.md`](docs/extending.md).
 - **Regulatory review.** If you work in quality or regulatory affairs and something in
   `plugins/evidence-compliance/` or `governance/` is wrong, misleading, or would not
   survive an audit, please say so specifically.
-- **Portability fixes.** Shell scripts that assume GNU tools, macOS-only behaviour,
+- **Bypasses.** Any tool call shape that gets past a gate the docs say it can't. Send
+  it with the exact command (see SECURITY.md for anything exploitable).
+- **Portability fixes.** Python 3.8 compatibility, macOS-only or GNU-only behaviour,
   Windows gaps.
 - **Adapting notes** for stacks, trackers, or test tools not yet covered.
 
@@ -34,23 +35,65 @@ see [`docs/extending.md`](docs/extending.md).
 
 ## Standards for a change
 
-- Skill descriptions state both what the skill does **and** the contexts that should
-  trigger it. Under-triggering is the common failure — be explicit and slightly pushy.
-- Hook scripts must fail **closed** for anything that enforces a policy, and must
-  explain the block in a way that tells the user how to proceed legitimately.
-- Every JSON file must parse. Every shell script must pass `bash -n`.
-- Prefer editing an existing skill over adding a new one. The number of skills is a cost.
-- **Never add a `version` field to a `plugins/*/.claude-plugin/plugin.json`.** This was
-  tried twice and reverted twice, here, in this repo: a static version string made
-  `/plugin update` silently no-op on a real change that didn't also bump that
-  string — the install just quietly stayed on stale, possibly-buggy code (see
-  `PILOT-13`/`PILOT-15`). Not every official Anthropic plugin follows this
-  convention — some do set a `version` — so don't cite "what official plugins do"
-  as the justification; cite this repo's own reverted-twice history instead.
-  Omitting `version` lets Claude Code track the resolved git commit SHA instead,
-  which updates correctly on every commit with nothing to remember. This holds
-  for a `directory`-sourced marketplace exactly as it does for a git-hosted one —
-  the source type doesn't change the mechanics.
+- A skill description states what the skill does **and** when to use it, including
+  the literal phrases people type, in about three sentences
+  ([docs/extending.md](docs/extending.md#frontmatter)).
+- Anything that enforces a policy lives in the gate engine
+  (`plugins/evidence-sdlc/scripts/engine/`), not in a new hook script. It fails
+  **closed**, and its deny message says how to proceed legitimately. The way forward
+  must be a human action, never a switch the agent can flip. Every rule has labelled
+  cases in `engine-tests.py`.
+- Prefer editing an existing skill over adding a new one. Every skill has a cost.
+
+## Validation standard
+
+Run all of these before opening a PR. CI (`.github/workflows/ci.yml`) runs the same
+set:
+
+```
+python3 -m py_compile plugins/evidence-sdlc/scripts/engine/*.py plugins/evidence-sdlc/scripts/cli/*.py plugins/evidence-quality/scripts/*.py
+for f in $(git ls-files '*.sh'); do bash -n "$f" || echo "FAIL $f"; done
+for f in $(git ls-files '*.json' | grep -v /evals/results/); do python3 -m json.tool "$f" >/dev/null || echo "FAIL $f"; done
+python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py
+python3 plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py
+bash plugins/evidence-sdlc/scripts/tests/template-sensor-tests.sh
+bash cli/tests/test_cli_fixtures.sh
+bash scripts/ci/check-version-bump.sh origin/main
+claude plugin validate .
+```
+
+A hook change must also be tested **through Claude Code itself**: start a session,
+confirm the `Evidence Chain gates live` canary line, and trigger one deny. Running a
+script by hand doesn't exercise the `hooks.json` contract. See
+[docs/extending.md](docs/extending.md#exec-form-vs-shell-form-the-one-thing-to-get-right)
+for the incident that taught this.
+
+## Releases and versions
+
+**Every `plugins/*/.claude-plugin/plugin.json` has a semver `version`**, and the
+matching entry in `.claude-plugin/marketplace.json` carries the same version. All five
+plugins are currently versioned together.
+
+- **Any change to a plugin's files needs a version bump** in both files. That covers
+  skills, agents, commands, hooks, the engine, policy and templates. Changes to
+  `evals/results/` and eval `SUMMARY.md` files are exempt.
+  `scripts/ci/check-version-bump.sh` compares each plugin against the base branch and
+  fails CI if files changed but the version didn't.
+- Use patch for fixes and wording, minor for a new skill, agent, command or policy key,
+  and major for anything that denies something it didn't before, or that changes the
+  approval or state format.
+- **Add a `CHANGELOG.md` entry** under the new version. Mark breaking gate changes as
+  such.
+
+**Why the version field came back.** v1 omitted `version` on purpose. It was added and
+reverted twice (PILOT-13, PILOT-15), because a static version string made
+`/plugin update` silently no-op on a real change that didn't also bump the string. The
+install quietly stayed on stale, possibly buggy code. Omitting `version` made Claude
+Code track the git commit instead. That fixed updates, but left installs with no
+release identity, no changelog anchor, and nothing for an auditor or a managed rollout
+to pin. v2 keeps the version and closes the original failure mechanically: CI refuses
+a plugin change without a bump, so the stale-`/plugin update` problem can't recur
+unnoticed. Don't remove the check to get a PR through. Bump the version.
 
 ## Code of conduct
 

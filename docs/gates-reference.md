@@ -1,175 +1,192 @@
-# Gates reference
+# Gates reference (engine v2)
 
-This is the standalone, per-script reference for every hook registered across the three
-Evidence Chain plugins (`evidence-discovery`, `evidence-quality`, `evidence-sdlc`).
-README.md's ["The gates"](../README.md#the-gates) table and diagram give the
-seven-gate cross-cutting view; SECURITY.md's ["Using this safely"](../SECURITY.md#using-this-safely)
-section explains the fail-open threat model these scripts operate under (hook execution
-failures are treated as **allow** by the runtime, which is why every hook below is
-invoked as `bash ${CLAUDE_PLUGIN_ROOT}/scripts/<script>.sh` rather than relying on the
-script's own execute bit). This document does not repeat that framing beyond what's
-needed for context — it exists to enumerate, for all 12 scripts referenced by the three
-`hooks.json` files, exactly what event triggers each one, what it reads, its decision
-logic including edge cases actually present in the code, any bypass/environment
-variable, and the literal message a reader will see.
+Every gate decision in Evidence Chain is made by **one engine**:
+`plugins/evidence-sdlc/scripts/engine/`. The engine is Python 3.8+ and uses only the
+standard library. This page covers:
 
-Six of the twelve scripts are advisory only (`require-repo-profile`,
-`check-test-plan-rows`, `audit-log`, `preflight`, `session-context`, and
-`template-sensor`) — they add context, log, or note a possible gap, but cannot block a
-tool call. The remaining six can return `permissionDecision: "deny"` (or, in
-`production-gate`'s case, exit 2) and stop the tool call.
+- the engine's parts and how it is wired into Claude Code;
+- how it fails closed;
+- every rule, with its requirement ID, what it denies, the deny message, the
+  legitimate way past it, and where it is tested;
+- the advisory hooks.
 
----
+What each rule matches is set by policy. See [policy-reference.md](policy-reference.md).
 
-## evidence-discovery
+The requirement IDs (`REQ-V2G-…`, `V2S`, `V2A`, `V2K`, `V2X`) come from
+[`intent/2026-09-24-v2-enterprise-hardening/spec.md`](../intent/2026-09-24-v2-enterprise-hardening/spec.md).
 
-### `require-repo-profile.sh`
+## The engine
 
-| Field | Detail |
+| File | Role |
 | --- | --- |
-| Registered under | `SessionStart` (unconditional — runs at the start of every session) |
-| Matcher / `if` | None; fires every session start |
-| Input read | Nothing from the hook payload — it checks the filesystem directly (`.evidence/context/stack.md`, and `.evidence/context/*.md` for `[ASK]` counts) |
-| Decision logic | Never denies anything — it only ever emits `additionalContext`. If `.evidence/context/stack.md` does not exist, it tells the session no repository profile exists and to run stack-discovery/toolchain-discovery/design-system-discovery first (and test-strategy-discovery before the first test plan). If the file exists, it counts occurrences of the literal string `[ASK]` across all `.evidence/context/*.md` files and reports that count, adding that an `[ASK]` in an area the change depends on is a blocker to raise with a human. |
-| Env var / bypass | None. There's no way to silence this — it's purely informational and always runs. |
-| Message text | Missing profile: *"No repository profile exists at .evidence/context/stack.md. The technology stack, deployment stack, toolchain and design system for this repository have not been established. Run stack-discovery, toolchain-discovery and design-system-discovery before planning any change, and test-strategy-discovery before the first test plan. Do not assume a framework, runtime, datastore or deployment target."* Present profile: *"Repository profile present at .evidence/context/. Read stack.md, deployment.md, toolchain.md and design-system.md before planning, and test-strategy.md before any test plan (if it is absent, run test-strategy-discovery). Unresolved [ASK] items: N. An [ASK] in an area this change depends on is a blocker — ask the human rather than assuming."* |
+| `hook.sh` | Launcher. If `python3` (or `$EVIDENCE_PYTHON`) is missing, it denies every PreToolUse and says so at SessionStart |
+| `hook.py` | Entry point for the events `pre`, `post`, `prompt`, `session-start` and `sensor`. Reads the hook JSON, writes the response and the audit entries |
+| `evidence_policy.py` | Every PreToolUse rule (`decide_pre`) |
+| `cmdparse.py` | `shlex`-based Bash analysis. Splits on `;`, `&&`, `\|\|`, `\|` and newlines. Strips wrappers (env assignments, `env`, `command`, `sudo`, `nice`, `time`). Recurses into `bash -c`, `$(…)`, backticks and `eval`. Finds write targets, push refspecs, commit messages and deploy invocations |
+| `secretscan.py` | The secret patterns, entropy checks and fingerprints |
+| `state.py` | Policy loading and merging, change state, approvals, plan parsing (claims), and the hash-chained audit log |
+| `lifecycle.py` | The `evidence change / approve / audit / metrics` commands, and prompt approval |
+| `sensor.py` | Advisory template checks (PostToolUse) |
 
----
+**Wiring** (`plugins/evidence-sdlc/hooks/hooks.json`):
 
-## evidence-quality
+| Event | Matcher | Calls |
+| --- | --- | --- |
+| PreToolUse | `Edit\|Write\|MultiEdit\|NotebookEdit\|Bash\|Agent\|Task` | `hook.sh pre`, which applies the rules below |
+| PostToolUse | same | `hook.sh post`, which writes audit entries, records review-agent runs, moves the change to `implementing`, and runs the sensor |
+| UserPromptSubmit | (all) | `hook.sh prompt`, which records a human's `/evidence-sdlc:approve KEY SHA` |
+| SessionStart | (all) | `preflight.sh`, then `hook.sh session-start`, which prints the canary line `Evidence Chain gates live (engine …; policy: …)` and the active change's status |
 
-### `require-issue-key.sh`
+No `if` filters are used. Every Bash call reaches the engine (REQ-V2G-11).
 
-| Field | Detail |
+**Legacy scripts.** Engine v2 replaces the twelve bash + `jq` scripts that v1 used
+(`gate-plan-exists.sh`, `protect-validated-paths.sh`, `block-test-weakening.sh`,
+`block-protected-branch-push.sh`, `production-gate.sh`, `audit-log.sh`,
+`session-context.sh`, `template-sensor.sh`, evidence-quality's `require-issue-key.sh`,
+and others). No `hooks.json` references them any more, and v2 removed them. If you
+wired one of those paths into your own settings, point it at
+`scripts/engine/hook.sh <event>` instead (see `docs/managed-hooks.example.json`).
+
+## Failing closed (REQ-V2G-01)
+
+| Condition | Result |
 | --- | --- |
-| Registered under | `PreToolUse`, matcher `Bash`, gated further by `if: "Bash(git commit *)"` |
-| Input read | `tool_input.command`; also shells out to `git rev-parse --abbrev-ref HEAD` for the branch name |
-| Decision logic | First re-checks that `git commit` actually appears at a command-invocation position (start of line, or right after `;`, `&`, `|`, backtick, or `(`) rather than merely as a substring anywhere in the command text — this is a deliberate fix for a prior false positive where a heredoc or `echo` merely *mentioning* "git commit" in a string was denied as though it were a real commit. If the command isn't a real `git commit` invocation, it exits 0 (allow) immediately. Otherwise it looks for a tracker-key pattern in either the commit command text or the current branch name; if found in either place, allow. If found in neither, deny. |
-| Env var / bypass | `EVIDENCE_ISSUE_KEY_PATTERN` — overrides the regex used to recognize a tracker key. Default: `[A-Z][A-Z0-9]+-[0-9]+` (e.g. `PROJ-123`). Comment notes the pattern is meant to come from the repository profile/project settings, not be hardcoded here. |
-| Message text | *"No tracker issue key found in the commit message or the branch name. Every commit must carry the key (pattern: &lt;pattern&gt;) so the traceability chain from requirement to test to evidence holds. If no issue exists for this work, create one first — do not add the key retrospectively."* |
+| `python3` not on `PATH` | Every PreToolUse is denied: *"The Evidence Chain gate engine needs python3 on PATH and cannot find it, so no gate can run. Failing closed."* SessionStart says `EVIDENCE CHAIN GATES NOT RUNNING` |
+| Empty, non-JSON or non-object hook input | `malformed`: *"Gate engine could not read the hook input (…); failing closed."* |
+| An Edit or Write with no path, or a Bash call with no command string | `malformed`: *"… refusing rather than guessing."* |
+| A command that can't be parsed (unbalanced quotes, nesting too deep) | `unparseable`: *"This command could not be parsed reliably … Rewrite it more simply."* |
+| Any exception inside the engine | `engine-error`: *"Gate engine error (…); failing closed. Report this with the command that triggered it."* |
 
-### `check-test-plan-rows.sh`
+PostToolUse, UserPromptSubmit and SessionStart never block. Audit-log failures are
+printed to stderr and never break a session.
 
-| Field | Detail |
-| --- | --- |
-| Registered under | `SessionStart` (unconditional) |
-| Matcher / `if` | None |
-| Input read | Nothing from the hook payload — reads the filesystem: the first of `plan.md`, `*/plan.md`, or `intent/*/plan.md` (in that priority order via `ls ... | head -1`) |
-| Decision logic | Advisory only — can never deny (it's a `SessionStart` hook and only ever emits `additionalContext` or exits silently). If no plan file is found, or the plan has no `REQ-*-NNN`-style requirement IDs, it exits 0 silently. Otherwise, for each unique requirement ID found, it checks whether any line containing that ID also contains one of `test`, `case`, `spec`, or a TestRail-style `C<number>` reference (case-insensitive). Any requirement ID with no such line is reported as missing test coverage. The script's own comment states this is deliberately advisory, not blocking, because "blocking here would fire mid-thought during planning." |
-| Env var / bypass | None — always advisory, nothing to bypass. |
-| Message text | *"The plan has requirement IDs with no named test: &lt;list&gt;. A requirement with no test is an incomplete plan. Apply the test-strategy skill and add rows before implementation is reported complete."* |
+One limit sits outside the engine. Claude Code treats a hook that **cannot be
+executed at all** (a bad path, or `bash` itself missing) as *allow*. The canary line is
+how you detect that. See [managed-settings.md](managed-settings.md#the-canary).
 
----
+## Human-only overrides
 
-## evidence-sdlc
+There is no agent-reachable bypass. The only ways past a rule are human ones:
 
-### `gate-plan-exists.sh`
+| Override | Who sets it | Unlocks |
+| --- | --- | --- |
+| `CHANGE_TICKET` | The human who launches the session (shell env or managed/user settings). It must fully match `change_ticket_pattern` | Change-controlled paths |
+| `RELEASE_APPROVAL` | The same. It must match `release_approval_pattern`, and optionally pass `release_approval_verify_command` | Production deploys |
+| `EVIDENCE_ACTIVE_CHANGE` | The same | Names the active change key when the branch name can't carry it |
+| Org policy | The platform team, through managed deployment | Anything, including loosening a default |
+| `/evidence-sdlc:approve KEY SHA`, `evidence approve`, `evidence change set-tier`, `evidence change release` | The human: at the prompt, or at their own terminal (TTY, not inside Claude Code) | Approval, tier changes, release |
 
-| Field | Detail |
-| --- | --- |
-| Registered under | `PreToolUse`, matcher `Edit\|Write\|MultiEdit` |
-| Matcher / `if` | Matcher only; no additional `if` — runs on every Edit/Write/MultiEdit call, then exempts specific paths in code |
-| Input read | `tool_input.file_path` or `tool_input.path`; also `git rev-parse --abbrev-ref HEAD` for the branch |
-| Decision logic | Exits 0 immediately (no path to check) if the tool call carries no path. Exempts (never gates) paths matching `*/intent/*`, `*/docs/*`, `*intent.md`, `*spec.md`, `*plan.md`, `plan/*.md`, `*CLAUDE.md`, `*.claude/*`, `*/validation/*`, `*/tmp/*`, `*.log`. For everything else, it decides which paths count as "source": if `EVIDENCE_SOURCE_GLOB` is set, only paths matching that glob are gated (everything else allowed); if unset, it gates anything that is *not* one of `*.md`, `*.txt`, `*.json`, `*.yaml`, `*.yml`, `*.csv`, `*.lock` (a broad "assume it's code" default). For a gated path, it allows the edit if any of: `plan.md` exists at repo root, a `*/plan.md` glob matches, an `intent/*/plan.md` glob matches, OR a tracker key parsed out of the current branch name (via `EVIDENCE_ISSUE_KEY_PATTERN`, same default as `require-issue-key.sh`) has a matching `plan/<KEY>.md` file. Otherwise it denies. Note: the branch-keyed `plan/<KEY>.md` form only satisfies the gate if that key is actually present in the current branch name — a session cannot point at a plan for a different piece of work. |
-| Env var / bypass | `EVIDENCE_SOURCE_GLOB` — restricts which paths are treated as "source" and therefore gated (unset = broad default gating everything but common non-code extensions). `EVIDENCE_ISSUE_KEY_PATTERN` — same tracker-key pattern used by `require-issue-key.sh`, used here to extract the branch key for the namespaced `plan/<KEY>.md` lookup. |
-| Message text | *"No plan.md found (checked plan.md, */plan.md, intent/*/plan.md, and plan/&lt;tracker-key&gt;.md for the current branch). Run the codebase-grounded-planning skill in plan mode and commit an approved plan before editing source. See the Evidence Chain handbook."* |
+An agent can't set any of these environment variables for itself. It can't write
+settings files (control plane), and the variables are read from the session's own
+environment.
 
-### `protect-validated-paths.sh`
+## Rules, in evaluation order
 
-| Field | Detail |
-| --- | --- |
-| Registered under | `PreToolUse`, matcher `Edit\|Write\|MultiEdit` |
-| Input read | `tool_input.file_path` or `tool_input.path` |
-| Decision logic | Exits 0 if no path. Splits the path on `/` and checks each **path segment** (not substring) against an exact-match list: `migrations`, `infra`, `terraform`, `audit`, `signing`, `crypto`, `validation`. If none of the path's segments match exactly, exits 0 (allow) — this segment-exact-match approach is a deliberate fix noted in the script's own comment for a prior bug where substring globs wrongly caught directories like `cache-invalidation/` (contains "validation") or `test-infra/` (contains "infra"), while also missing root-level paths like `audit/report.pdf` that lacked a leading slash. If a segment matches, the path is "protected": if `CHANGE_TICKET` is set, the tool call is **allowed** but annotated with `additionalContext` naming the ticket and reminding that the compliance-reviewer agent must run before the PR opens. If `CHANGE_TICKET` is unset, it **denies**. |
-| Env var / bypass | `CHANGE_TICKET` — set to an approved change record reference to allow edits under a protected path; its value is echoed back into the allow-path's `additionalContext`. |
-| Message text (deny) | *"&lt;path&gt; is under formal change control (migrations, infrastructure, audit trail, signing, crypto, or validation assets). Set CHANGE_TICKET to an approved change record before editing, or route this through the change board."* Message text (allow-with-context): *"Editing change-controlled path &lt;path&gt; under ticket &lt;ticket&gt;. The change record must reference this ticket and the compliance-reviewer agent must run before this PR is opened."* |
+### Writes: Edit, Write, MultiEdit, NotebookEdit, and every Bash write target
 
-### `block-test-weakening.sh`
+The same function (`check_write`) judges Edit and Write paths and every path a Bash
+command writes to (REQ-V2G-02). A denial caused by a Bash write is prefixed
+`[via Bash: <form>]`. Paths are resolved with `realpath` to a repo-relative form
+first (REQ-V2G-03). **Paths outside the repository aren't gated**, except the
+user-level control plane.
 
-| Field | Detail |
-| --- | --- |
-| Registered under | `PreToolUse`, matcher `Edit\|Write\|MultiEdit` |
-| Input read | `tool_input.file_path` or `tool_input.path` |
-| Decision logic | This gate is **entirely inert unless `FIX_TASK=1` is set** — it exits 0 immediately otherwise, regardless of path (line 7: `[ "${FIX_TASK:-0}" != "1" ] && exit 0`). When `FIX_TASK=1`, it checks the file's basename against test-name patterns (`test_*`, `*_test.*`, `*.test.*`, `*.spec.*`) as a prefix/pattern match on the basename only, and separately checks whether any exact path segment is `tests`, `__tests__`, or `qa`. If either matches, it denies; otherwise allows. The script's own comment documents a prior bug fix here too: the basename check requires `test_` as a genuine prefix (not substring), since a bare substring check previously false-matched ordinary files like `latest_migration.py` or `fastest_path.py`; and directory checks are exact segments without requiring a leading slash, fixing a prior miss on root-level `tests/helpers.py`. |
-| Env var / bypass | `FIX_TASK` — must be set to exactly `1` to activate this gate at all. Comment: intended "for bug-fix sessions where the failing test is written first," so the agent fixing the bug cannot then edit the test that proves the fix. |
-| Message text | *"This is a fix task (FIX_TASK=1). The failing test was committed first and proves the bug. Fix the code, not the test. If the test itself is genuinely wrong, stop and say so — a human decides that."* |
+| # | Rule (audit id) | REQ | Denies | Message gist | Way past |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `control-plane` (user) | V2G-09 | Writing `~/.claude/settings*.json`, `~/.claude/plugins/**`, `~/.claude.json` or the managed-settings directories | "…is Claude Code or Evidence Chain configuration outside the repository. An agent session may not change the configuration that governs it." | A human edits it |
+| 2 | `control-plane` | V2G-09 | Writing `.claude/settings*.json`, `.claude/hooks/**`, `.claude/agents/**`, `.evidence/policy.json`, `.evidence/secrets-allowlist.json`, `.evidence/changes/*/approval.json` or `state.json`, `.evidence/audit/**`, `managed-settings.json` or `.mcp.json` | "…is part of the control plane (settings, policy, approvals, change state or audit log). An agent may not write it." | A human edits it, or runs the `evidence` command that owns it |
+| 3 | `read-only-agent` | V2K-03 | Any write by a subagent whose type is in `read_only_agents` | "The <agent> agent is read-only by policy and may not write <path>. Return the proposed change to the main session instead." | The main session writes it |
+| 4 | `secret` | V2K-01 | Content that matches a secret pattern (see [Secrets](#secrets)) | "Possible secret in <path>: <rule> on line N (fingerprint …)…" | Load it from the environment. For a false positive, a human allowlists the fingerprint |
+| 5 | `self-approval` (approval line) | V2A-01 | Writing an approval line (`Approved by: <name>`, `Approver: …`, `\| Approved by \| … \|`, `Status: approved`) into an `intent`, `spec` or `plan` file. Placeholders like `<name>`, `[ASK]`, `PENDING` and `TBD` are fine | "<path>: approval is not written into planning artifacts. It is recorded only in .evidence/changes/<KEY>/approval.json by a human (`/evidence-sdlc:approve <KEY> <plan-sha>`)…" | The human sends the approve command |
+| 6 | `test-weakening` (legacy) | V2G-10 | With `FIX_TASK=1` set by the human: editing a test file that exists at HEAD | "This is a fix task (FIX_TASK=1) and <path> is an existing test. Fix the code, not the test." | Honoured for v1 compatibility. Prefer `--kind fix` |
+| — | *ungated → allow* | V2G-03 | — | Docs, `intent/**`, `plan/**`, `.evidence/context/**`, `.evidence/decisions/**`, licence files and the like need no change | — |
+| 7 | `no-active-change` | V2G-04 | A source write when neither the branch nor `EVIDENCE_ACTIVE_CHANGE` carries a tracker key | "Writing <path> needs an active change, and none was found (branch <b> carries no tracker key). Create or switch to a branch named with the key…, then run `evidence change start …`" | Branch `feature/KEY-slug`, then `evidence change start` |
+| 8 | `no-change-state` | V2S-01 | A key exists, but `.evidence/changes/<KEY>/state.json` doesn't | "…needs change KEY to be started. Run `evidence change start KEY --tier <1\|2\|3> --kind feature\|fix\|chore`…" | Start the change |
+| 9 | `missing-artifacts` | V2S-01 | The tier's artifacts are missing (T1: plan; T2: spec and plan; T3: intent, spec and plan) | "…change KEY is Tier N, which requires … Missing: spec.md." | Write them. Artifacts are found at `plan/KEY.md` or `intent/*/<name>.md` with `Tracker: KEY` in the header, or at the paths passed to `change start` |
+| 10 | `plan-stub` | V2G-04 | The plan is under 200 characters, has no `## Files claimed` entries, has no `## Order of work`, or still has placeholder claims | "…the plan for KEY (…) is not a real plan yet: plan has no entries under \"## Files claimed\"…" | Write a real plan |
+| 11 | `not-approved` | V2A-01 | There is no `approval.json` | "…the plan for KEY has not been approved. Ask a human to review <plan> and send `/evidence-sdlc:approve KEY <sha12>` (or run `evidence approve KEY <sha12>` in their own terminal). An agent cannot approve its own plan." | The human sends `/evidence-sdlc:approve KEY <sha-prefix>` |
+| 12 | `approval-stale` | V2A-01 | The plan's sha256 is no longer the one the human approved | "…the plan for KEY changed after it was approved, so the approval no longer applies. A human must re-read it and send `/evidence-sdlc:approve KEY <new sha12>`." | The human re-approves the new hash |
+| 13 | `tier-floor` | V2S-02 | The path's policy floor is above the change's tier (for example `**/auth/**` in a Tier 2 change) | "…policy sets a minimum of Tier 3 for this path, but change KEY is Tier 2. A human raises the tier with `evidence change set-tier KEY 3`…" | A human runs `set-tier` at their terminal |
+| 14 | `tier3-auto-mode` | V2S-03 | A Tier 3 source edit while `permission_mode` is `bypassPermissions`, `acceptEdits`, `dontAsk` or `auto` | "…change KEY is Tier 3, which requires per-change human review, but this session is in 'acceptEdits' mode." | Switch to default mode |
+| 15 | `outside-claims` | V2G-12 | A path that no glob in the approved plan's `## Files claimed` matches | "…<path> is not in the approved plan's \"Files claimed\" for KEY. Add it to the plan (which voids the approval) and ask for re-approval, or leave the file alone." | Amend the plan and get re-approval |
+| 16 | `change-controlled` | V2G-08 | A `change_controlled` path (migrations, CI, infra, audit, signing, crypto, validation) without a valid `CHANGE_TICKET` | "…<path> is under formal change control… A human starts the session with CHANGE_TICKET set to an approved change record matching …" | The human sets `CHANGE_TICKET` |
+| 17 | `test-weakening` | V2G-10 | In a `fix` change past `failing-test`, editing or deleting a test file that existed at the recorded `fix_base` commit | "…change KEY is a fix past its failing-test stage, and <path> is a test that existed before the fix. Fix the code, not the test… New test files are allowed." | A human decides the test is wrong. New tests are fine |
 
-### `block-protected-branch-push.sh`
+Rules 7–17 also apply to `git reset --hard`, `git clean -f` and `git stash pop/apply`.
+Those commands are allowed only inside an approved change, with no path (so claims and
+floors aren't checked).
 
-| Field | Detail |
-| --- | --- |
-| Registered under | `PreToolUse`, matcher `Bash`, gated further by `if: "Bash(git push *)"` |
-| Input read | `tool_input.command`; `git rev-parse --abbrev-ref HEAD` for branch |
-| Decision logic | First re-verifies (same anti-false-positive technique as `require-issue-key.sh`) that `git push` appears at a genuine command-invocation position, not merely as text inside the command (e.g. an `echo` mentioning "git push" does not trigger it). If it's a real push, checks the current branch name against `main`, `master`, `release`, `release/*`, `hotfix/*`; any other branch is allowed. On a match, denies unconditionally — there is **no environment-variable bypass** for this one. |
-| Env var / bypass | None. Comment: "Branch protection is the real control; this stops the attempt earlier and explains why" — i.e. this is a UX/defense-in-depth layer in front of actual server-side branch protection, not the sole enforcement. |
-| Message text | *"Direct push to &lt;branch&gt; is not available to an agent session. Open a pull request; a human code owner approves. The agent that wrote the change has no route to approve it. This is a segregation-of-duties control, not a preference."* |
+### Bash
 
-### `production-gate.sh`
+`check_bash` first scans the whole command text for secrets. Then it applies these
+rules to each simple command, and runs every write target through the table above.
 
-| Field | Detail |
-| --- | --- |
-| Registered under | `PreToolUse`, matcher `Bash`, gated further by `if: "Bash(*deploy*)"` |
-| Input read | `tool_input.command` |
-| Decision logic | Note the two-stage filter: the `hooks.json` `if` condition only requires the substring `deploy` anywhere in the command for the script to run at all; the script itself then applies a second, stricter check — it only acts if `prod` or `production` appears as a **whole word** (bounded by non-letters or string edges) in the command, via a bash regex. This is a documented fix for a prior bug where a substring glob (`*prod*`) false-triggered on words merely containing "prod" (`reproduce`, `product`, `reproducible`, `byproduct`). So a plain `./deploy.sh staging` never reaches the whole-word check's positive branch and is allowed; a command mentioning `production` does. If the whole-word check doesn't match, exits 0 (allow). If it matches, allows only if `RELEASE_APPROVAL` is set (non-empty); otherwise denies. |
-| Env var / bypass | `RELEASE_APPROVAL` — set to the release manager's approval reference to allow the deploy through. |
-| **Mechanism difference** | Unlike every other deny in this framework, this script does **not** emit JSON with `permissionDecision`. It writes a plain message to stderr and calls `exit 2`, which Claude Code's hook protocol treats as a blocking failure. Anyone auditing gates by grepping for `permissionDecision: "deny"` will miss this one. |
-| Message text | *"Production deploys require a named release authorization. Set RELEASE_APPROVAL to the release manager's approval reference. The validation package for this release must be signed off by QA/RA first."* (written to stderr) |
-
-### `audit-log.sh`
-
-| Field | Detail |
-| --- | --- |
-| Registered under | `PostToolUse`, matcher `Edit\|Write\|MultiEdit`, `async: true` |
-| Input read | `tool_input.file_path` or `tool_input.path` (defaults to the literal string `"unknown"` if absent); `session_id`; `$USER` from the environment |
-| Decision logic | Never allows or denies anything — it runs after the tool call has already happened (`PostToolUse`) and is fire-and-forget (`async: true`). It creates `.claude/logs/` if needed and appends one tab-separated line per edit: UTC timestamp, session ID, `$USER` (or `"unknown"`), and the file path — to a **per-session shard**, `.claude/logs/agent-edits-<sanitized-session-id>.tsv`, not one shared file. The session ID is sanitized (non-alphanumeric/`-`/`_` characters replaced) before use in the filename, and a missing or empty session ID falls back to `agent-edits-unknown.tsv`. Sharding this way means two concurrent sessions or worktrees never append to the same file and can never interleave or corrupt each other's lines; a reader wanting the full picture globs `agent-edits-*.tsv` and merge-sorts by timestamp. Comment: this is "a convenience record for engineers; the OpenTelemetry export and git history remain the systems of record" — i.e. it is explicitly not the authoritative audit trail. |
-| Env var / bypass | None; nothing to bypass since it never blocks. |
-| Message text | None — it produces no hook output at all (just the log line on disk). |
-
-### `template-sensor.sh`
-
-| Field | Detail |
-| --- | --- |
-| Registered under | `PostToolUse`, matcher `Edit\|Write\|MultiEdit`, same group as `audit-log.sh` |
-| Input read | `tool_input.file_path` or `tool_input.path`; the file's own current content, read from disk after the edit has landed |
-| Decision logic | Advisory only — this is a **sensor**, not a gate: it can never deny anything, and unlike every deny-capable gate in this repo it deliberately does **not** fail closed when `jq` is missing (there is nothing to protect here, so it degrades to complete silence instead). Only acts on a path whose basename is `spec.md`, is `plan.md`, or is `plan/<TRACKER-KEY>.md` (recognised by checking whether the immediate parent directory is literally named `plan`, since the basename alone is the tracker key, not `plan.md`). For a `spec.md` match, it extracts the body between the `## Areas of concern` heading and the next `## ` heading; for a `plan.md`/`plan/<KEY>.md` match, the same for `## Files claimed`. If that body is empty, whitespace-only, or is still wrapped in the template's own `<...>` placeholder bracket convention, it emits an `additionalContext` note naming the file and the rule it operationalizes (`spec-and-design`'s "this section being empty is suspicious" rule, or `codebase-grounded-planning`'s "Files claimed" requirement). Any other path, a missing file, or a filled-in section: exits 0 with no output at all. |
-| Env var / bypass | None — nothing to bypass, since it never blocks. |
-| Message text | *"&lt;path&gt;'s "## &lt;section&gt;" section is missing or still looks like the unfilled template placeholder. This operationalizes &lt;rule reference&gt;. Advisory only -- nothing was blocked."* |
-
-### `preflight.sh`
-
-| Field | Detail |
-| --- | --- |
-| Registered under | `SessionStart` (unconditional, runs before `session-context.sh` in the same hook group) |
-| Input read | Nothing from the hook payload. Checks: whether `jq` resolves on `PATH`; whether every `*/scripts/*.sh` file under the plugins directory (resolved relative to `CLAUDE_PLUGIN_ROOT`, falling back to `${BASH_SOURCE[0]%/*}/..` if that var is unset) is readable; whether `.evidence/context/stack.md` exists (informational only). |
-| Decision logic | This is the meta-gate that checks the other gates' environment (per its own comment: "Verifies the environment every other gate script in this framework depends on"). It is written using bash builtins only, deliberately avoiding `cat`/`dirname`/`sed`/`tr`/`find`, because a PATH so stripped that coreutils don't resolve is exactly the fail-open scenario it exists to catch and report loudly. **It never sets `permissionDecision`; it only ever emits `additionalContext`, even when it detects a failure** — so a broken environment is surfaced as a strongly-worded warning in session context, not as a blocked action. If `jq` itself is missing, it falls back to hand-built (non-jq) JSON output using string escaping, since jq isn't available to build normal JSON output. |
-| Env var / bypass | None to change its behavior; it reads `CLAUDE_PLUGIN_ROOT` only to locate the plugin tree, not as a toggle. |
-| Message text (failure) | *"PREFLIGHT FAILED: &lt;failure reasons joined with `; `&gt;Gates may not be enforcing. Do not make source changes until this is fixed. &lt;profile note&gt;"* — failure reasons include e.g. *"jq is not resolvable on PATH -- every gate script shells out to jq to read tool input and emit its decision; without it, gates cannot run at all"* and *"unreadable gate script(s), so they cannot execute: &lt;paths&gt;"*. Message text (success): *"Preflight OK: jq resolves on PATH and all gate scripts are readable. &lt;profile note&gt;"* |
-
-### `session-context.sh`
-
-| Field | Detail |
-| --- | --- |
-| Registered under | `SessionStart` (unconditional, runs after `preflight.sh` in the same hook group) |
-| Input read | Nothing from the hook payload. Runs `git rev-parse --abbrev-ref HEAD` for the branch; looks for the first of `plan.md`, `*/plan.md`, `intent/*/plan.md` via `ls ... | head -1`; reads `CHANGE_TICKET` from the environment. |
-| Decision logic | Purely informational — always emits `additionalContext` summarizing branch, plan file found (or `"none"`), and change ticket (or `"none"`), plus a one-line recap of what's gated on what. Like `gate-plan-exists.sh`, this script's plan lookup also checks the namespaced `plan/<TRACKER-KEY>.md` form (same branch-key extraction, same `EVIDENCE_ISSUE_KEY_PATTERN` default) whenever none of `plan.md`, `*/plan.md` or `intent/*/plan.md` matched — fixed so a concurrent-worktree session using only a keyed plan file is reported accurately instead of as `"none"` while the gate itself already allows edits. |
-| Env var / bypass | Reads `CHANGE_TICKET` for display only; does not gate on it. |
-| Message text | *"Evidence Chain session. Branch: &lt;branch&gt;. Approved plan on disk: &lt;plan or 'none'&gt;. Change ticket in environment: &lt;ticket or 'none'&gt;. Source edits are gated on an approved plan.md; migrations, infrastructure, audit, signing, crypto and validation paths are gated on a change ticket; production deploys are gated on a release authorization."* |
-
----
-
-## Summary table
-
-| Script | Plugin | Event | Bypass / env var |
+| Rule (audit id) | REQ | Denies | Message gist |
 | --- | --- | --- | --- |
-| `require-repo-profile.sh` | evidence-discovery | SessionStart | None (advisory only) |
-| `require-issue-key.sh` | evidence-quality | PreToolUse (Bash, `git commit *`) | `EVIDENCE_ISSUE_KEY_PATTERN` (changes the required key regex; presence of a matching key in commit or branch satisfies it) |
-| `check-test-plan-rows.sh` | evidence-quality | SessionStart | None (advisory only) |
-| `gate-plan-exists.sh` | evidence-sdlc | PreToolUse (Edit\|Write\|MultiEdit) | `EVIDENCE_SOURCE_GLOB` (narrows what counts as gated source); `EVIDENCE_ISSUE_KEY_PATTERN` (for the `plan/<KEY>.md` branch lookup); path exemptions for docs/intent/spec/plan/CLAUDE.md/.claude/validation/tmp/log |
-| `protect-validated-paths.sh` | evidence-sdlc | PreToolUse (Edit\|Write\|MultiEdit) | `CHANGE_TICKET` (allows edits to migrations/infra/terraform/audit/signing/crypto/validation path segments) |
-| `block-test-weakening.sh` | evidence-sdlc | PreToolUse (Edit\|Write\|MultiEdit) | `FIX_TASK=1` (must be set for this gate to activate at all; when active, denies edits to test files/dirs) |
-| `block-protected-branch-push.sh` | evidence-sdlc | PreToolUse (Bash, `git push *`) | None — no bypass; relies on real server-side branch protection as the actual control |
-| `production-gate.sh` | evidence-sdlc | PreToolUse (Bash, `*deploy*`) | `RELEASE_APPROVAL` (allows deploy commands whose command line contains the whole word "prod"/"production"); uses stderr + `exit 2`, not `permissionDecision` |
-| `audit-log.sh` | evidence-sdlc | PostToolUse (Edit\|Write\|MultiEdit, async) | None (never blocks; writes to a per-session shard, `.claude/logs/agent-edits-<session-id>.tsv`) |
-| `template-sensor.sh` | evidence-sdlc | PostToolUse (Edit\|Write\|MultiEdit) | None (advisory only, never blocks; deliberately does not fail closed on missing `jq` since it has nothing to protect) |
-| `preflight.sh` | evidence-sdlc | SessionStart | None (advisory only; never sets `permissionDecision` even on failure) |
-| `session-context.sh` | evidence-sdlc | SessionStart | None (advisory only; reads `CHANGE_TICKET` for display, not enforcement) |
+| Bash writes | V2G-02 | Redirects (`>`, `>>`), `tee`, `cp`, `mv`, `rm`, `install`, `ln`, `touch`, `chmod`/`chown`, `sed -i`, `perl -pi`, `dd of=`, `truncate`, `curl -o path`, `git checkout -- path`, `git restore`, `git rm`, `git mv`. Each target goes through the write rules | "[via Bash: redirect] Writing src/x.py: …" |
+| `opaque-write` | V2G-02 | Writes the engine can't inspect: inline interpreter code that writes files (`python -c` or a python heredoc, `node -e`, ruby, perl); `patch`; `git apply` and `git am`; `curl -O`; archive extraction (`tar`, `unzip` and similar). Also a write to a path computed at run time (`> $OUT`) | "This command modifies files in a way the gates cannot inspect (…). Use the Edit or Write tools…" |
+| `self-approval` | V2A-01 | `evidence approve` (except `--github-pr`), `evidence change set-tier` and `evidence change release`, in any form (including `python3 …/evidence …`). Also `gh pr review --approve`, a `gh pr/issue comment` containing `/approve-plan`, and `gh api` calls that submit an APPROVE review or post `/approve-plan` | "Approving a plan (and changing a change's tier) is a human action. Ask the human to run `/evidence-sdlc:approve <KEY> <plan-sha>`…" |
+| `git-config` | V2K-02 | `git -c <key>=…` or `git config <key> <value>` for `deny_git_config_keys` (`alias.*`, `core.hooksPath`, `core.sshCommand`, `credential.*`, `include.path`, `filter.*`, …); any `git --config-env` | "`git -c alias.x=…` can run arbitrary programs or change how git authenticates…" |
+| `protected-push` | V2G-05 | A push whose **target** ref is protected, from any branch. Forms covered: `HEAD:main`, `+x:main`, `refs/heads/main`, `:main`, `--delete`, `--mirror`, `--all`, `git -C`/`-c`, `env`/`command`/`sudo` wrappers, `/usr/bin/git` | "This push would update main, which is protected. An agent has no route to a protected branch…" |
+| `review-agents` | V2S-04 | `git push`, `gh pr create` (and `evidence change advance KEY verified`) for an active change whose tier's required agents have no recorded `agent-completed` run | "Pushing for change KEY (Tier 3) needs these review agents to have run on it first: verifier, security-reviewer, code-reviewer…" |
+| `commit-message` | V2G-07 | `git commit` with no message on the command line | "Give the commit message on the command line (-m or -F)…" |
+| `commit-key` | V2G-07 | No tracker key in the **message**, or a key different from the active change's. Messages are read from `-m`, `-F file`, `-F -` with a heredoc, and `"$(cat <<'EOF' … EOF)"`; for `--amend --no-edit`, from HEAD | "The commit message carries no tracker key… The key in the branch name alone is not enough." |
+| `agent-trailer` | V2A-03 | A message without `Agent-Session: <this session's id>` | "Commits made by an agent must say which session made them. End the commit message with the trailer line: Agent-Session: …" |
+| `secret` | V2K-01 | Secrets in the staged diff (plus the working tree for `-a`) or in the commit message | as above |
+| `agent-merge` | V2G-05 | `gh pr merge` (always with `--admin`). `gh api -X PUT/POST/PATCH/DELETE` to `/merge`, `/protection`, `/rulesets`, branch rename or `/git/refs`. `gh api graphql` mutations that merge, auto-merge, add a review, or change protection or refs. `curl`/`wget`/`http`/`xh` with a mutating method or body against `api.github.com` or a GitLab API | "Merging is a human decision in this repository…" / "Mutating a code host's API directly … is not available to an agent session" |
+| `release-approval` | V2G-06 | A deploy tool, recognised by command position, pointed at a production target (a `prod_words` match, case-insensitive), or at a computed target, without a valid `RELEASE_APPROVAL`. The tools: `kubectl`/`oc` mutating verbs, `helm install/upgrade/rollback`, `terraform`/`tofu apply/destroy`, `pulumi up`, `cdk`/`serverless`/`sam`/`firebase`/`wrangler deploy`, `aws`/`gcloud`/`az` deploy verbs, `gh workflow run deploy*`, make/npm/yarn deploy targets, and scripts named deploy/release/promote/rollout/ship. Plain text such as `grep production` never triggers it | "`kubectl apply` names a production target (prod-eu). Production changes need a release authorization… The agent cannot supply it." |
+
+### Secrets
+
+`secretscan.py` checks for AWS, GitHub, GitLab, Slack, Stripe, Google, Anthropic,
+OpenAI, npm, SendGrid and Twilio tokens; private-key blocks; JWTs; connection strings
+with passwords; Azure storage keys; and high-entropy credential assignments.
+Placeholders and environment references are ignored. The value is never echoed; only a
+fingerprint is shown. To allowlist a false positive, a human adds the fingerprint to
+`.evidence/secrets-allowlist.json` (which is control plane).
+
+### Approval (REQ-V2A-01)
+
+There are three human-only channels:
+
+1. **The prompt.** The human sends `/evidence-sdlc:approve KEY <sha-prefix>`. The
+   `UserPromptSubmit` hook matches the raw prompt text (`evidence approve KEY SHA`
+   also works) and writes `approval.json`, with the approver taken from
+   `git user.email` and method `prompt`. A missing or stale hash is refused, with the
+   current hash shown.
+2. **The terminal.** `evidence approve KEY` in the human's own terminal. It needs
+   `/dev/tty`, refuses inside Claude Code, and the human types the first 8 characters
+   of the sha.
+3. **GitHub.** `evidence approve KEY --github-pr N` records an APPROVED review, or a
+   `/approve-plan <sha12>` comment, by an allowed login other than the PR author. The
+   PR's branch must carry the key, the plan blob at the PR head must equal the local
+   plan, and the approver must not be the PR author. Agents may run this one.
+
+### Audit (REQ-V2A-02)
+
+Each session writes `.evidence/audit/<session>.jsonl`. Every entry holds `prev` and
+the sha256 `hash` of its canonical JSON, and records the timestamp, session, user,
+tool, path or command, key, agent type and id, permission mode, and engine version.
+There are entries for every Edit, Write, MultiEdit, NotebookEdit and Bash call, every
+deny (with its rule and reason), and every agent dispatch, completion and failure.
+Approvals go to `.evidence/audit/approval.jsonl`. `evidence audit verify` reports a line that was altered or removed.
+`evidence metrics` summarises denials by rule and self-approval attempts.
+
+## Advisory hooks (never deny)
+
+| Hook | Plugin | Does |
+| --- | --- | --- |
+| `preflight.sh` | evidence-sdlc | At SessionStart, checks for Python 3.8+, the engine files and the default policy, and says `Preflight OK` or `PREFLIGHT FAILED` |
+| `sensor.py` (via `post`) | evidence-sdlc | Flags a placeholder `## Areas of concern` or `## Files claimed`, a Tier 2/3 plan without a CHECKPOINT, or a new skill with no eval case |
+| `require-repo-profile.sh` | evidence-discovery | At SessionStart, says whether `.evidence/context/` exists and counts unresolved `[ASK]`s |
+| `check-test-plan-rows.py` | evidence-quality | At SessionStart, checks the active plans for test-plan rows. Skipped silently without `python3` |
+
+## Tests
+
+| Suite | Covers |
+| --- | --- |
+| `python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py [-v] [-k text]` | Over 200 cases. Each is run exactly as Claude Code runs the hook (JSON on stdin to `hook.py`, in a throwaway git repo), and case labels start with the REQ ID (`V2G-02 …`, `V2S-04 …`). Every v1 audit probe is a case |
+| `python3 plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py` | `evidence change / approve / audit / metrics` |
+
+To find the case for a rule, run `engine-tests.py -v -k V2G-05`. `evidence doctor`
+also runs a live canary against the shipped engine: in a throwaway repo, it must deny
+`src/__canary__.py` and allow `docs/__canary__.md`.

@@ -1,0 +1,101 @@
+# Reference pipeline for a repository that uses Evidence Chain (GitHub Actions).
+# Copy to .github/workflows/evidence-chain.yml and adapt the build/test commands to
+# your stack. Each stage follows evidence-quality's continuous-testing skill: the
+# cheapest check that can catch a class of defect runs at the earliest stage, and
+# every stage leaves evidence the `evidence` CLI can read.
+#
+# Owner actions this pipeline cannot do for you: enable branch protection on your
+# default branch requiring these checks, require CODEOWNERS review, and forbid
+# force-push. Those server-side settings are the authoritative merge control.
+name: evidence-chain
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  EVIDENCE: plugins/evidence-sdlc/bin/evidence   # or the path where you vendor the plugin
+
+jobs:
+  commit-stage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scan (full history on push, diff on PR)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Dependency review (new vulnerable dependencies block)
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+      - name: SAST
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: p/default
+
+      - name: Build and unit/integration tests (JUnit output is evidence)
+        run: |
+          # Replace with your stack's commands; keep the JUnit XML.
+          mkdir -p test-results
+          make test JUNIT_OUT=test-results/junit.xml
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results/
+
+  evidence:
+    runs-on: ubuntu-latest
+    needs: commit-stage
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Traceability gaps (blocks on NO COVERAGE; --strict also blocks SELF-ASSERTED)
+        run: python3 "$EVIDENCE" gaps --results test-results --strict
+      - name: Audit logs are intact
+        run: python3 "$EVIDENCE" audit verify
+      - name: Change state is complete for this branch
+        if: github.event_name == 'pull_request'
+        run: |
+          python3 "$EVIDENCE" change status --json > change-status.json || true
+          python3 - <<'PY'
+          import json, sys
+          s = json.load(open("change-status.json"))
+          if not s.get("exists"):
+              sys.exit("No change state for this branch's key.")
+          problems = s["missing_artifacts"] + s["plan_problems"] + ([] if s["approval"] == "valid" else ["plan approval " + s["approval"]]) + ["review agent missing: " + a for a in s["missing_agents"]]
+          if problems:
+              sys.exit("; ".join(problems))
+          print("change", s["key"], "complete:", s["stage"])
+          PY
+      - name: Metrics snapshot (trend evidence)
+        run: python3 "$EVIDENCE" metrics --json | tee metrics.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: evidence
+          path: |
+            metrics.json
+            change-status.json
+            validation/traceability.csv
+            .evidence/audit/

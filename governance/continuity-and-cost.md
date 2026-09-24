@@ -12,9 +12,11 @@ network isolation — teams must still be able to ship. Write down:
   are process, not tooling) and which slow down (spec authoring, review passes, test
   generation). The SDLC does not change; the throughput does.
 - **The single point of failure to avoid.** Do not let any gate become *only*
-  executable by an agent. Every hook has a human procedure behind it. The
-  `production-gate` script checks for a release authorisation — the authorisation
-  itself is a human act and remains valid without any tooling.
+  executable by an agent. Every gate has a human procedure behind it. The gate
+  engine's production-release rule checks for a human-set `RELEASE_APPROVAL`
+  (engine cases V2G-06*) — the authorisation itself is a human act and remains valid
+  without any tooling. Plan approval likewise has a terminal path
+  (`evidence approve <KEY>`) and a GitHub-review path that work without an agent.
 - **Rehearse once.** A half-day with agent access switched off tells you more than any
   plan document.
 

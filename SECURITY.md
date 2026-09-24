@@ -6,55 +6,104 @@ Report security issues privately via GitHub's private vulnerability reporting on
 repository, or to the address in the repository's contact information. Please do not
 open a public issue for a vulnerability.
 
-Include what you found, how to reproduce it, and what an attacker could achieve. We aim
-to acknowledge within a few working days.
+Include what you found, how to reproduce it (for a gate bypass, the exact tool call or
+command and the policy in effect), and what an attacker could achieve. We aim to
+acknowledge within a few working days. A confirmed gate bypass is fixed with a new
+labelled regression case in `plugins/evidence-sdlc/scripts/tests/engine-tests.py`, so
+the bypass stays closed.
 
 ## Threat model for this project
 
 This repository ships **configuration that grants and restricts an agent's behaviour**:
-hook scripts that can allow or deny tool calls, managed-settings templates, and skills
-that shape what an agent does. That makes a few classes of issue especially relevant:
+a policy engine behind Claude Code hooks that allows or denies tool calls, a
+managed-settings template, and skills that shape what an agent does. The adversary we
+design against is **the agent itself** — mistaken, over-eager, or steered by injected
+content — trying to change source without an approved plan, weaken tests, touch
+change-controlled paths, approve its own work, push to protected branches, release to
+production, or leak a secret. The classes of issue that matter most:
 
-- A hook that **fails open** — a gate that silently does not fire, for example because a
-  script path is wrong or a dependency is missing. A policy gate that is quietly
-  disabled is worse than no gate, because people trust it.
+- A gate that **fails open** — silently does not fire, or allows on bad input. A policy
+  gate that is quietly disabled is worse than no gate, because people trust it.
+- A **bypass** — any tool call or command form that achieves a denied outcome.
 - A **permission or sandbox template that is more permissive than documented.**
 - A **skill whose instructions could be steered** by content it is asked to process.
 - Anything that would cause a **credential or secret to be read, logged, or transmitted.**
 
+## How the gates work (v2)
+
+- **One engine.** Every PreToolUse decision for Edit, Write, MultiEdit, NotebookEdit,
+  Bash, Agent and Task goes through one Python engine
+  (`plugins/evidence-sdlc/scripts/engine/`, standard library only) via
+  `bash ${CLAUDE_PLUGIN_ROOT}/scripts/engine/hook.sh`. There are no hook `if` filters;
+  every Bash call is parsed (shlex, control operators, wrappers, `bash -c`, `$(…)`,
+  `eval`), and Bash writes are judged like Edit/Write. Commands whose file effects
+  cannot be determined (inline interpreter code that writes, `patch`, `git apply`,
+  archive extraction, `curl -O`) are denied.
+- **Fails closed.** Malformed or empty hook input, a missing `python3`, or any engine
+  exception on PreToolUse results in a deny (engine cases V2G-01*). `jq` is no longer
+  required. Invoking via `bash <script>` means a lost execute bit (e.g. after unzipping)
+  does not disable the gate.
+- **Liveness canary.** Every session must print "Evidence Chain gates live" at start.
+  If it does not, the hooks are not running in that deployment — for example, if plugin
+  hooks do not run under `allowManagedHooksOnly` in your Claude Code version (Anthropic
+  does not document this). Deploy `docs/managed-hooks.example.json` as managed hooks
+  instead, and re-run the canary.
+- **Control plane.** Agents cannot write settings, hooks, the policy, the secrets
+  allowlist, approval/state records, the audit log, `managed-settings.json` or
+  `.mcp.json`, by any tool (cases V2G-09*). So an agent cannot grant itself a
+  `CHANGE_TICKET`, `RELEASE_APPROVAL` or `EVIDENCE_ACTIVE_CHANGE`.
+- **Secrets.** Written content, Bash command text, heredoc bodies and staged diffs are
+  scanned; findings are denied and only a fingerprint is shown, never the value
+  (cases V2K-01*).
+- **Audit.** Every agent write/Bash call and every deny (with rule and reason) is
+  appended to a hash-chained `.evidence/audit/<session>.jsonl`; `evidence audit verify`
+  detects altered or removed lines (cases V2A-02*).
+
+The full rule list with its regression cases is in `docs/gates-reference.md`; the
+regression suite is `python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py`.
+
+## Known limitations
+
+State these to anyone relying on the gates:
+
+- **The gates govern the agent, not people.** A human working in a terminal outside
+  Claude Code is not gated. Server-side branch protection and CODEOWNERS on your
+  hosting platform are the authoritative merge control; the plugin cannot configure
+  them.
+- **Local approval identity is not cryptographic.** In prompt or terminal approval mode
+  the approver recorded is the machine's `git user.email` — whoever is at the keyboard.
+  GitHub approval mode (`evidence approve <KEY> --github-pr N`) is identity-bound
+  through GitHub.
+- **The audit log is tamper-evident, not tamper-proof.** Someone with shell access
+  outside the agent can rewrite a whole chain consistently. Tamper resistance requires
+  shipping records off the machine: set the OTel collector endpoint in managed settings,
+  or retain the log as a CI artifact.
+- **Command analysis is a parser, not a sandbox.** It covers the forms listed in
+  `docs/gates-reference.md`; a write path it does not model is a bypass we want
+  reported. Production-release detection uses a policy list of deploy tools; an
+  unlisted deploy path is not caught.
+- **Secret detection is pattern-based** and will miss some credential formats.
+- **Protection depends on the policy.** Change-controlled paths, tier floors and test
+  globs come from policy; paths your policy does not name are not treated specially.
+- **Owner actions remain:** branch protection and CODEOWNERS, the marketplace value in
+  `strictKnownMarketplaces`, the OTel endpoint, sandbox network domains, GitHub approval
+  configuration, enabling `.github/workflows/ci.yml`, and running the canary after
+  deploying managed settings.
+
 ## What this project deliberately does not do
 
-- It does not ship credentials, tokens, or endpoints for any third-party service.
+- It does not ship credentials, tokens, or endpoints for any third-party service (the
+  OTel endpoint in the template is a placeholder).
 - It does not include any MCP server implementation. `.mcp.json.example` is a template
   with placeholders; you decide what to connect and under what scope.
 - It does not enable any connector by default.
 
 ## Using this safely
 
-- **Read every hook script before installing it.** They run on your machine, in your
-  repositories, with your permissions. That is the point, and it is also the risk.
-- Verify each gate actually fires after installation. A mistyped path in settings leaves
-  a gate silently disabled — check for the hook-error notice on first run.
+- **Read the engine and hook configuration before installing.** They run on your
+  machine, in your repositories, with your permissions. That is the point, and it is
+  also the risk.
+- **Run the canary** in every deployment and after every Claude Code upgrade.
+- **Run the regression suite** after changing the org or repo policy.
 - Treat any third-party MCP server as a supply-chain dependency holding credentials to a
   business system. Scope the credential; prefer read-only.
-- **Hook execution failures are treated as non-blocking (allow) by the runtime.** A gate
-  script that cannot execute — most commonly because the zip that shipped it lost the
-  execute bit on extraction — does not deny the tool call, it lets it through silently.
-  This is exactly the fail-open condition named above, and it will hit every adopter
-  who unzips rather than clones. That is why every hook in this repository invokes its
-  script via `bash ${CLAUDE_PLUGIN_ROOT}/scripts/<script>.sh` rather than relying on the
-  script's own execute bit: `bash` running a file it can read does not depend on that
-  file being independently executable. `evidence-sdlc`'s `preflight.sh` SessionStart
-  hook additionally checks that `jq` resolves on PATH and that every gate script is at
-  least readable, and says so loudly if not — but the `bash` wrapper is what removes the
-  underlying cause. This claim is regression-tested, not just asserted: the "lost
-  execute bit" case in `plugins/evidence-sdlc/scripts/tests/gate-regression-tests.sh`
-  strips a scratch copy's execute bit, confirms direct invocation genuinely fails
-  (proving the stripped copy is real, not a no-op check), and confirms invoking it the
-  way every `hooks.json` entry actually does — via `bash <script>` — still denies.
-- **A missing `jq` is a second, distinct fail-open vector from the one above** — every
-  gate script shells out to `jq` to read its input, and `preflight.sh` can only ever
-  warn about this (a `SessionStart` hook cannot deny a future tool call). Each of the
-  six deny-capable gate scripts therefore now checks for `jq` itself, at the top, before
-  parsing anything, and fails closed (denies) if it is absent, rather than falling
-  through to an empty variable and an unintended default-allow.

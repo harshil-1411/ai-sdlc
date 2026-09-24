@@ -80,7 +80,9 @@ support is the cheapest team to onboard.
 which makes it untrusted input. Any agent reading tickets is inside the boundary the
 `agent-trust-boundaries` skill describes. Give a ticket-reading agent no write tools
 beyond the ticket system itself, and never combine ticket reading with production data
-access in one session.
+access in one session. If you add such an agent to a plugin, also put its name
+in the policy's `read_only_agents`. The gate engine then denies its file writes by
+agent type, whatever its `tools` say ([policy-reference.md](policy-reference.md)).
 
 ### Cloud and infrastructure
 
@@ -128,14 +130,17 @@ counterpart will drift no matter what you connect.
 
 1. **The allowlist.** Managed settings restrict which MCP servers may run and which
    marketplaces plugins may come from. Set this before rollout, not after someone adds
-   a personal connector.
+   a personal connector. `.mcp.json` is control plane: the gate engine won't let an
+   agent add a connector to the repository itself ([managed-settings.md](managed-settings.md)).
 2. **Credential scoping per tool.** One scoped credential per tool per purpose. Never an
    admin token because it was easier to provision.
 3. **Read vs write, per tool, recorded.** With a name against each write decision.
 4. **Community server review.** Who reviews, against what criteria, and how often
    re-reviewed. Treat it as the supply-chain dependency it is.
 5. **Network egress.** The sandbox domain allowlist has to include every endpoint the
-   approved connectors use, and nothing else.
+   approved connectors use, and nothing else. Agents can't write to a code host's API
+   directly: the engine denies mutating `curl`/`wget` calls to GitHub and GitLab APIs,
+   and merge or approve calls through `gh`.
 6. **What happens when a tool is unreachable.** Per tool, in the profile. A workflow that
    assumes reachability fails halfway through, which is the worst place to fail.
 

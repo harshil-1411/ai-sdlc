@@ -50,9 +50,10 @@ to be one generic list; it isn't anymore. Reading `test-strategy`'s layer table,
 | SIG-03-A01 | Regulated-record — audit trail | Integration | The audit trail shows both the original rejection and the supersession event, in order, neither rewritten |
 | SIG-03-M01 | Manual — regulated walkthrough | Manual (L3) | A QA reviewer performs the full reopen-and-resign flow end to end; human attestation is itself part of the evidence |
 
-Six of these are what a generic happy/negative/boundary list would have produced
-before this batch of work started. The other five are not, and each exists for a
-specific, named reason: `SIG-03-E01` and `SIG-03-C01` exist because `test-designer`
+Six of these (F01, N01, N02, S01, A01 and M01) are what a generic
+happy/negative/boundary list would have produced before this batch of work started.
+The remaining five test cases (E01, C01, W01, B01 and P01) would not have been, and
+each exists for a specific, named reason: `SIG-03-E01` and `SIG-03-C01` exist because `test-designer`
 now asks explicitly what happens with nothing to act on and what happens when two
 actors act at once, categories a happy/negative/boundary pass has no slot for at
 all. `SIG-03-W01` and the equivalence-partition structure behind `SIG-03-B01` exist
@@ -66,7 +67,7 @@ in general.
 **4 · Test — where each case's evidence actually lands.** This is the part the
 framework used to leave undefined:
 
-- `SIG-03-F01` through `SIG-03-A01` (six automated cases): each run's evidence is
+- `SIG-03-F01` through `SIG-03-A01` (the ten automated cases): each run's evidence is
   its CI test report, tagged with the tracker key and case ID — L0 is sufficient
   here, nobody signs a unit test.
 - `SIG-03-M01` (the manual case), at **L3**: the tester's name, a timestamp, and
@@ -80,8 +81,12 @@ framework used to leave undefined:
   can open, not a sentence describing what it would show.
 
 **5 · Deploy.** Tier 3's two-reviewer rule applies: the code owner reads the full
-diff, a second reviewer examines the regulated portion specifically, and
-`compliance-reviewer` runs its controls-plus-validation pass before the PR opens.
+diff, and a second reviewer examines the regulated portion specifically.
+`compliance-reviewer` runs its controls-plus-validation pass before the PR opens. The
+engine won't allow `git push` or `gh pr create` for this Tier 3 change until
+`verifier`, `security-reviewer` and `code-reviewer` all have a recorded completed run
+in the audit log. An org policy can add `compliance-reviewer` to that list
+([policy-reference](../../../docs/policy-reference.md)).
 
 **6 · Maintain — the honest gap this scenario exists to name.** Running
 `evidence gaps` against a change like this one will, correctly, sometimes report

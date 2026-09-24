@@ -72,10 +72,14 @@ The spec states the comparison's evidence explicitly, not just its conclusion:
   closed, rather than leaving it to be rediscovered by accident during an
   unrelated audit.
 
-**3 · Build.** `codebase-grounded-planning`'s plan.md gets **both** a named technical
-lead's sign-off and the product owner's, per Tier 3's Definition of Ready. The plan
-touches `migrations/` (a new `signature` table) — `protect-validated-paths` requires a
-`CHANGE_TICKET` in the environment before that edit is even allowed.
+**3 · Build.** Per Tier 3's Definition of Ready, `codebase-grounded-planning`'s plan
+gets sign-off from **both** a named technical lead and the product owner. One of them
+records the approval against the plan's hash (`/evidence-sdlc:approve <KEY> <sha>`).
+The change was started with `--tier 3`, and it has to be: `**/signing/**` and
+`**/migrations/**` carry Tier 3 floors in policy. The plan touches `migrations/` (a
+new `signature` table), which is under change control, so the human who starts the
+session must also set `CHANGE_TICKET` to the approved change record before the engine
+allows that edit. Tier 3 also means no auto-accept permission modes.
 
 **4 · Test.** `test-strategy` requires, per requirement: the signature is
 cryptographically verifiable, the audit trail records who/when/what-was-signed, and a
@@ -85,7 +89,10 @@ tamper-detection case is deliberately adversarial, not just a happy-path check.
 **5 · Deploy.** Tier 3's Definition of Ready requires **two human reviewers**: the
 code owner reads the full diff, and a second reviewer independently examines the
 regulated portion specifically. `compliance-reviewer` (agent) runs a controls +
-validation pass over the diff before the PR opens.
+validation pass over the diff before the PR opens. The engine won't allow a push or
+`gh pr create` until `verifier`, `security-reviewer` and `code-reviewer` have recorded
+runs. See [v2-gates-in-action](../v2-gates-in-action/README.md) for what those
+denials look like.
 
 **6 · Maintain.** The release record includes a **validation impact assessment**, not
 just "no impact" — a customer relying on this control in their own validation package

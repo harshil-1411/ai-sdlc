@@ -17,9 +17,10 @@ to.
 ## Walkthrough
 
 **Trigger recognised immediately:** "add a column" to a `migrations/` file is exactly
-`schema-migration`'s trigger list, and `protect-validated-paths` independently
-requires a `CHANGE_TICKET` before the edit is even allowed, regardless of what skill
-is applied.
+`schema-migration`'s trigger list. Independently of which skill is applied, the gate
+engine denies the edit unless several things hold: an approved Tier 3 change
+(`**/migrations/**` has a Tier 3 floor), a plan that claims the migration file, and a
+`CHANGE_TICKET` set by the human who starts the session.
 
 **Tier stated first, and it isn't a judgement call:** *"A migration touching a
 regulated table is Tier 3 by definition... behaviour-preserving status does not
@@ -78,7 +79,7 @@ long enough to be confident nothing still depends on the old path.
 ## Read next
 
 - [`schema-migration`](../../../plugins/evidence-sdlc/skills/schema-migration/SKILL.md)
-- [`protect-validated-paths`](../../../plugins/evidence-sdlc/scripts/protect-validated-paths.sh)
-  — the gate that fires on this migration's file path regardless of which skill applies
+- [Gates reference: change control and tier floors](../../../docs/gates-reference.md)
+  — the engine rules that fire on this migration's file path regardless of which skill applies
 - [Scenario: a regulated change](../regulated-change-tier3/README.md) — the feature
   that put this table under regulatory scope in the first place

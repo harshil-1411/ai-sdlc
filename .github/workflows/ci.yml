@@ -1,0 +1,104 @@
+name: evidence-chain CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      run_evals:
+        description: "Run the plugin eval suites (needs the ANTHROPIC_API_KEY secret; costs money)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Shell syntax
+        run: |
+          set -e
+          git ls-files '*.sh' | xargs -r -n1 bash -n
+
+      - name: JSON parses
+        run: |
+          set -e
+          git ls-files '*.json' | grep -v '/evals/results/' | while read -r f; do
+            python3 -m json.tool "$f" >/dev/null || { echo "invalid JSON: $f"; exit 1; }
+          done
+
+      - name: Python compiles
+        run: python3 -m py_compile plugins/evidence-sdlc/scripts/engine/*.py plugins/evidence-quality/scripts/*.py plugins/evidence-sdlc/scripts/cli/*.py
+
+      - name: Gate engine regression suite
+        run: python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py
+
+      - name: Lifecycle CLI suite
+        run: python3 plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py
+
+      - name: Template sensor suite
+        run: bash plugins/evidence-sdlc/scripts/tests/template-sensor-tests.sh
+
+      - name: Traceability CLI suite
+        run: bash cli/tests/test_cli_fixtures.sh
+
+      - name: Version bump check
+        if: github.event_name == 'pull_request'
+        run: bash scripts/ci/check-version-bump.sh "origin/${{ github.base_ref }}"
+
+      - name: Dogfood — this repository's own traceability gaps
+        run: python3 plugins/evidence-sdlc/bin/evidence gaps
+
+      - name: Dogfood — audit logs verify
+        run: python3 plugins/evidence-sdlc/bin/evidence audit verify
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Plugin manifests validate
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin validate .
+          for p in plugins/*/; do claude plugin validate "$p"; done
+
+  evals:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_evals
+    runs-on: ubuntu-latest
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: [evidence-discovery, evidence-sdlc, evidence-quality, evidence-compliance, evidence-integrations]
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run evals (3 runs, with and without the plugin)
+        working-directory: plugins/${{ matrix.plugin }}
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude plugin eval . --trust-plugin --scaffold --runs 3 \
+            --json results.json --threshold 0.8 --no-publish --max-cost-usd 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-${{ matrix.plugin }}
+          path: plugins/${{ matrix.plugin }}/results.json

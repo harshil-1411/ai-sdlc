@@ -1,0 +1,63 @@
+{
+  "_comment": "Fallback only. Merge the 'hooks' block below into your managed-settings.json if the canary in docs/managed-settings.md shows plugin hooks are not running under allowManagedHooksOnly in your Claude Code version. It runs the same engine as plugins/evidence-sdlc/hooks/hooks.json, from a fixed install path, because ${CLAUDE_PLUGIN_ROOT} is only defined for plugin hooks. Install the repository (at least plugins/evidence-sdlc) at /opt/evidence-chain, root-owned and not writable by engineers, or change the paths. If plugin hooks ARE running, do not deploy this as well: every event would run twice (duplicate audit entries).",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["/opt/evidence-chain/plugins/evidence-sdlc/scripts/engine/hook.sh", "pre"],
+            "statusMessage": "Evidence Chain gates",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["/opt/evidence-chain/plugins/evidence-sdlc/scripts/engine/hook.sh", "post"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["/opt/evidence-chain/plugins/evidence-sdlc/scripts/engine/hook.sh", "prompt"],
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["/opt/evidence-chain/plugins/evidence-sdlc/scripts/preflight.sh"],
+            "statusMessage": "Verifying gate environment",
+            "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["/opt/evidence-chain/plugins/evidence-sdlc/scripts/engine/hook.sh", "session-start"],
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

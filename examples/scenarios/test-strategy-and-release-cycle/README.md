@@ -154,7 +154,10 @@ results render, which only shows on the slower engine. Fixed within the 5-day wi
 | Decision | *Left blank by the agent.* Go, signed by the QA lead, 2026-10-02 |
 
 The agent drafted every row except the decision. The go/no-go belongs to the named
-human in the profile.
+human in the profile. In v2 the `release-readiness` skill and the `release-manager`
+agent (`/evidence-sdlc:release-report`) draft this report. Neither can sign it. The
+production deploy that follows is denied by the gate engine until the human who
+starts the release session sets `RELEASE_APPROVAL` to the approved release record.
 
 ## What made this different
 

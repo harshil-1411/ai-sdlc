@@ -42,8 +42,10 @@ Every Critical or Major deviation produces, at minimum:
   is tested against that class from then on. This is the single highest-value CAPA
   action available and it should be default.
 - **A `CLAUDE.md` or skill correction**, where the root cause was missing context.
-- **A hook**, where the root cause was a policy that must hold without exception and
-  currently only had advisory enforcement.
+- **A gate rule**, where the root cause was a policy that must hold without exception and
+  currently only had advisory enforcement: a policy entry or engine rule, with a new
+  labelled case in `plugins/evidence-sdlc/scripts/tests/engine-tests.py` that
+  reproduces the failure and now denies it.
 - **A risk-tier review**, where the root cause was insufficient human review depth.
 
 ## 4. Customer notification

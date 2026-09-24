@@ -36,17 +36,21 @@ regulatory-control-table ceremony a Tier 2/3 spec would carry.
 **3 · Build.** `codebase-grounded-planning` runs in plan mode: `codebase-cartographer`
 finds the existing `/api/export/*` pattern and the CSV-writing helper the product
 already has for a different report — the plan **extends** that helper rather than
-writing a new one. `plan.md` is committed (required at every tier); `gate-plan-exists`
-would otherwise deny the first `Edit`.
+writing a new one. The plan is required at every tier, and its `## Files claimed`
+lists the endpoint, the helper and the test file. It is committed, and a human
+approves it with `/evidence-sdlc:approve <KEY> <plan-sha>`. Until then the gate
+engine denies the first source `Edit`, and afterwards it denies any edit outside
+those claims.
 
 **4 · Test.** `test-strategy` names the layer: an integration test hitting the new
 endpoint with 0, 1, and >10k rows, plus a unicode-team-name case. One test per
 acceptance criterion — Tier 1's bar, not Tier 3's full layered suite.
 
-**5 · Deploy.** A normal PR. `require-issue-key` blocks any commit without the tracker
-key; `block-protected-branch-push` means the branch goes through a PR, a human code
-owner approves, `production-gate` blocks the actual deploy step until a release
-authorisation is set.
+**5 · Deploy.** A normal PR. The engine blocks any commit whose message lacks the
+tracker key or the `Agent-Session:` trailer. It holds the push until `verifier` (Tier
+1's required review agent) has run, and denies any push to `main`, so the branch goes
+through a PR and a human code owner approves and merges. The actual production
+deploy is denied until the human who starts the session sets `RELEASE_APPROVAL`.
 
 **6 · Maintain.** `evidence export --write` adds one row to
 `validation/traceability.csv`: the requirement, the test that proves it, the commit,

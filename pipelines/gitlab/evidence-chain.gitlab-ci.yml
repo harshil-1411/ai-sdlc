@@ -1,0 +1,42 @@
+# Reference GitLab CI pipeline for a repository that uses Evidence Chain.
+# Include it from .gitlab-ci.yml:   include: { local: 'ci/evidence-chain.gitlab-ci.yml' }
+# Protect the default branch (no force push, Code Owner approval required) in the
+# project settings -- that server-side control is the authoritative merge gate.
+stages: [commit, evidence]
+
+variables:
+  EVIDENCE: plugins/evidence-sdlc/bin/evidence
+
+secret-scan:
+  stage: commit
+  image: zricethezav/gitleaks:latest
+  script:
+    - gitleaks detect --source . --redact --exit-code 1
+
+sast:
+  stage: commit
+  image: returntocorp/semgrep
+  script:
+    - semgrep ci --config p/default
+
+tests:
+  stage: commit
+  script:
+    - mkdir -p test-results
+    - make test JUNIT_OUT=test-results/junit.xml   # replace with your stack's command
+  artifacts:
+    when: always
+    reports:
+      junit: test-results/junit.xml
+    paths: [test-results/]
+
+traceability:
+  stage: evidence
+  image: python:3.12
+  needs: [tests]
+  script:
+    - python3 "$EVIDENCE" gaps --results test-results --strict
+    - python3 "$EVIDENCE" audit verify
+    - python3 "$EVIDENCE" metrics --json | tee metrics.json
+  artifacts:
+    paths: [metrics.json, validation/traceability.csv, .evidence/audit/]
