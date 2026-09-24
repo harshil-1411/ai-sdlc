@@ -198,18 +198,18 @@ Always invoke through `bash`, never rely on the file's execute bit, and use
   "homepage": "https://github.com/<owner>/evidence-chain#readme",
   "repository": "https://github.com/<owner>/evidence-chain",
   "license": "MIT",
-  "keywords": ["…"],
-  "dependencies": ["evidence-discovery"]
+  "keywords": ["…"]
 }
 ```
 
 - **`version` is required, and must be bumped whenever the plugin's files change.**
   `scripts/ci/check-version-bump.sh` fails CI otherwise. See CONTRIBUTING.md for why
   v1 had no version field and why v2 has one.
-- **`dependencies`** declares which other plugins this one needs, so an install that's
-  missing one is visible. The current graph: `evidence-sdlc` → `evidence-discovery`;
-  `evidence-quality` and `evidence-compliance` → `evidence-sdlc` and
-  `evidence-discovery`; `evidence-integrations` → `evidence-sdlc`.
+- **Don't add a `dependencies` field.** When a declared dependency isn't installed,
+  the plugin's skills stop loading entirely (the v2 eval run caught this: no
+  evidence-sdlc skill fired in any case until the field was removed). Treat sibling
+  plugins as soft dependencies: skills say what's missing, and `evidence doctor`
+  reports which siblings are installed.
 - **`homepage` and `repository`** carry `REPLACE-WITH-YOUR-ORG` until the owner
   publishes a remote.
 

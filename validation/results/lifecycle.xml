@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence lifecycle CLI" tests="24" failures="0">
+<testsuite name="evidence lifecycle CLI" tests="25" failures="0">
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 change start creates state"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 change start rejects a non-key"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 status reports missing plan"></testcase>
@@ -12,6 +12,7 @@
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 prompt approval with the right hash is recorded"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 approval binds to plan sha and names method"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 approval moves stage to approved"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 unattended (headless) session cannot approve via prompt"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 approval phrase must be the whole message"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-04 verified refused until review agents recorded"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-04 verified allowed after verifier recorded"></testcase>

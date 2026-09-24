@@ -17,9 +17,5 @@
     "part-11",
     "validation",
     "regulated"
-  ],
-  "dependencies": [
-    "evidence-sdlc",
-    "evidence-discovery"
   ]
 }

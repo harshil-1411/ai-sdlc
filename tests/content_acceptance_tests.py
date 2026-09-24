@@ -220,8 +220,10 @@ ap = frontmatter(P("plugins", "evidence-sdlc", "commands", "approve.md")) or {}
 check("REQ-V2P-03 slash commands exist; approve is not model-invocable",
       {"start", "status", "approve", "gaps", "release-report"} <= cmds and ap.get("disable-model-invocation") == "true", cmds)
 qh = read("plugins", "evidence-quality", "hooks", "hooks.json")
-check("REQ-V2P-04 dependencies declared; commit gate moved into the sdlc engine",
-      man["evidence-quality"].get("dependencies") and "require-issue-key" not in qh)
+check("REQ-V2P-04 cross-plugin dependencies are documented soft dependencies (no hard `dependencies` field, which "
+      "stops a plugin's skills loading when a sibling is absent); commit gate moved into the sdlc engine",
+      not any(m.get("dependencies") for m in man.values()) and "require-issue-key" not in qh
+      and re.search(r"soft dependenc", read("docs", "getting-started.md") + read("README.md"), re.I))
 ci = read(".github", "workflows", "ci.yml")
 check("REQ-V2P-05 CI runs engine, lifecycle, CLI suites, version check, gaps and plugin validate",
       all(x in ci for x in ("engine-tests.py", "cli-lifecycle-tests.py", "test_cli_fixtures.sh", "check-version-bump.sh", "evidence gaps", "plugin validate")))

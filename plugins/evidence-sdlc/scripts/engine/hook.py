@@ -61,6 +61,12 @@ def _audit(ctx, entry):
 def run_pre(payload):
     ctx = ep.Ctx(payload)
     decision = ep.decide_pre(ctx)
+    if decision.allow and ctx.tool == "Bash":
+        try:
+            import integrity
+            integrity.snapshot(ctx)
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
     if not decision.allow:
         _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
     elif ctx.tool in ("Agent", "Task"):
@@ -79,6 +85,8 @@ def run_post(payload):
     out = None
     if ctx.tool in ("Edit", "Write", "MultiEdit"):
         out = run_sensor(payload, ctx)
+    if ctx.tool == "Bash":
+        out = run_integrity(ctx) or out
     if ctx.tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"):
         _audit(ctx, {"event": "tool"})
         # First source edit inside an approved change moves it to "implementing".
@@ -91,6 +99,33 @@ def run_post(payload):
                 state.setdefault("history", []).append({"stage": "implementing", "at": st.now(), "by": "engine"})
                 st.save_state(ctx.root, key, state)
     return out
+
+
+def run_integrity(ctx):
+    import integrity
+
+    def judge(rel):
+        full = os.path.join(ctx.root, rel)
+        content = None
+        try:
+            if os.path.isfile(full) and os.path.getsize(full) <= 2 * 1024 * 1024:
+                content = open(full, encoding="utf-8", errors="replace").read()
+        except OSError:
+            pass
+        return ep.check_write(ctx, full, content=content, kind="write" if os.path.exists(full) else "delete",
+                              detail="unparsed program")
+
+    notes, violations = integrity.check(ctx, judge)
+    if not violations:
+        return None
+    key, state = ctx.change()
+    for v in violations:
+        _audit(ctx, {"event": "integrity-violation", "violation_path": v["path"], "rule": v["rule"], "action": v["action"]})
+    st.record_violations(ctx.root, key, state, ctx.branch, violations, ctx.session)
+    msg = ("Integrity monitor: " + " ".join(notes) + " Push and pull requests are blocked for this change until the "
+           "unapproved changes are reverted and a human clears the record with `evidence change clear-violations "
+           f"{key or '<KEY>'}` in their own terminal.")
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}}
 
 
 def run_sensor(payload, ctx=None):

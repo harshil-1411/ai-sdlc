@@ -229,6 +229,14 @@ def _protected(ref, pol):
 
 def _review_gate(ctx, action):
     pol = ctx.policy
+    key0, _ = ctx.change()
+    open_v = st.open_violations(ctx.root, key0, ctx.branch)
+    if open_v:
+        return deny("integrity-violation",
+                    f"{action} is blocked: the integrity monitor recorded {len(open_v)} unapproved change(s) made by "
+                    f"commands the gates could not inspect ({', '.join(sorted({v['path'] for v in open_v})[:5])}). Revert "
+                    "them, then a human reviews and runs `evidence change clear-violations "
+                    f"{key0 or '<KEY>'}` in their own terminal.")
     if not pol.get("require_review_agents", True):
         return None
     key, state = ctx.change()
@@ -259,7 +267,16 @@ def _check_git(ctx, s, bodies=()):
         if opt == "--config-env":
             return deny("git-config", "`git --config-env` is not allowed in agent sessions.")
     if sub == "config":
-        setting = [a for a in sargs if not a.startswith("-")]
+        setting, skip = [], False
+        for a in sargs:
+            if skip:
+                skip = False
+                continue
+            if a in ("--file", "-f", "--blob", "--type", "--default", "--comment"):
+                skip = True
+                continue
+            if not a.startswith("-"):
+                setting.append(a)
         readonly = any(a in sargs for a in ("--get", "--get-all", "--list", "-l", "--get-regexp", "--show-origin"))
         if setting and not readonly and len(setting) >= 2:
             k = setting[0]
@@ -411,6 +428,25 @@ def _check_deploy(ctx, s):
     return None
 
 
+_CLAUDE_BINS = {"claude", "claude-code"}
+_TTY_WRAPPERS = {"script", "unbuffer", "expect", "socat", "tmux", "screen", "pty", "empty", "ptyrun"}
+
+
+def _launches_claude(s):
+    if not s.argv:
+        return False
+    if s.prog in _CLAUDE_BINS:
+        return True
+    joined = " ".join(s.argv[1:])
+    if s.prog in ("npx", "bunx", "pnpx", "yarn", "pnpm", "npm") and "@anthropic-ai/claude-code" in joined:
+        return True
+    if s.prog in _TTY_WRAPPERS and re.search(r"(^|[\s/'\"])claude(-code)?(\s|$|['\"])", joined):
+        return True
+    if s.prog in cmdparse.INTERPRETERS and re.search(r"(^|[\s/'\"])claude(-code)?(\s|['\"]|$)", joined) and "-c" in s.argv:
+        return True
+    return False
+
+
 def _is_evidence_cli(s):
     if not s.argv:
         return False
@@ -488,6 +524,14 @@ def check_bash(ctx, command):
             return d
     cwd = ctx.cwd
     for s in simples:
+        if s.argv and ("$" in s.argv[0] or "`" in s.argv[0]):
+            return deny("opaque-write",
+                        f"The command name here is computed at run time ({s.argv[0]}), so the gates cannot tell what runs. "
+                        "Write the command out literally.")
+        if _launches_claude(s):
+            return deny("nested-agent",
+                        "Starting another Claude Code session from an agent session is not allowed: it would run outside "
+                        "this session's audit trail and its prompt would look like a human's. Use a subagent instead.")
         if s.prog in ("cd", "pushd") and len(s.argv) > 1 and not s.argv[1].startswith("-"):
             nxt = os.path.expanduser(s.argv[1])
             cwd = os.path.realpath(nxt if os.path.isabs(nxt) else os.path.join(cwd, nxt))
@@ -500,7 +544,7 @@ def check_bash(ctx, command):
             if s.prog != "evidence":
                 args = args[1:]
             github_recorded = args[:1] == ["approve"] and any(a.startswith("--github-pr") for a in s.argv)
-            if (args[:1] == ["approve"] and not github_recorded) or args[:2] in (["change", "set-tier"], ["change", "release"]):
+            if (args[:1] == ["approve"] and not github_recorded) or args[:2] in (["change", "set-tier"], ["change", "release"], ["change", "clear-violations"]):
                 return deny("self-approval",
                             "Approving a plan (and changing a change's tier) is a human action. Ask the human to run "
                             f"`/evidence-sdlc:approve <KEY> <plan-sha>` in the Claude Code prompt, or `evidence {' '.join(args[:2])} …` in "

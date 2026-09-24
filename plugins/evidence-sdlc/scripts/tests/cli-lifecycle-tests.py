@@ -92,6 +92,11 @@ def main():
     rec = json.load(open(ap))
     check("REQ-V2A-01 approval binds to plan sha and names method", rec["plan_sha256"] == s["plan_sha256"] and rec["method"] == "prompt", rec)
     check("REQ-V2A-01 approval moves stage to approved", json.load(open(os.path.join(d, ".evidence/changes/ABC-7/state.json")))["stage"] == "approved")
+    payload = {"session_id": "s1", "cwd": d, "hook_event_name": "UserPromptSubmit",
+               "prompt": f"/evidence-sdlc:approve ABC-7 {s['plan_sha256'][:12]}"}
+    e3 = dict(ENV); e3["CLAUDE_CODE_SESSION_ATTENDED"] = "0"
+    out = subprocess.run([sys.executable, HOOK, "prompt"], input=json.dumps(payload), cwd=d, capture_output=True, text=True, env=e3).stdout
+    check("REQ-V2A-01 unattended (headless) session cannot approve via prompt", "unattended" in out, out)
     msg = prompt(d, "please do evidence approve ABC-7 " + s["plan_sha256"][:12] + " for me")
     check("REQ-V2A-01 approval phrase must be the whole message", msg == "", msg)
 

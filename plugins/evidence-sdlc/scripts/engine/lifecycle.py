@@ -85,6 +85,7 @@ def status_dict(root, policy, key):
         "approval": appr, "approver": (approval or {}).get("approver"), "approval_method": (approval or {}).get("method"),
         "required_agents": req, "recorded_agents": sorted(done), "missing_agents": [a for a in req if a not in done],
         "fix_base": state.get("fix_base"), "overlaps": claim_overlaps(root, key),
+        "open_violations": st.open_violations(root, key, st.current_branch(root)),
     }
 
 
@@ -235,6 +236,31 @@ def cmd_change(args):
         st.save_state(root, key, state)
         print(f"{key} -> {target}")
         return 0
+    if sub == "clear-violations":
+        try:
+            tty = _human_tty()
+        except HumanOnly as e:
+            sys.exit(f"`evidence change clear-violations` is a human action and {e}. Run it in your own terminal.")
+        vs = st.open_violations(root, key, st.current_branch(root))
+        if not vs:
+            print("No open violations.")
+            return 0
+        for v in vs:
+            tty.write(f"  {v.get('at')}  {v.get('path')}  ({v.get('rule')}, {v.get('action')})\n")
+        tty.write(f"You reviewed these {len(vs)} change(s) and they are reverted or acceptable? Type the key to clear: ")
+        tty.flush()
+        if tty.readline().strip() != key:
+            sys.exit("Not cleared.")
+        for p in {st.violations_path(root, key, st.current_branch(root)), st.violations_path(root, None, st.current_branch(root))}:
+            if os.path.isfile(p):
+                data = json.load(open(p))
+                for v in data:
+                    if v.get("open"):
+                        v.update(open=False, cleared_by=_who(root), cleared_at=st.now())
+                json.dump(data, open(p, "w"), indent=2)
+        st.audit_append(root, "clear-violations", {"event": "violations-cleared", "key": key, "by": _who(root), "count": len(vs)})
+        print(f"Cleared {len(vs)} violation(s).")
+        return 0
     if sub in ("set-tier", "release", "override"):
         try:
             tty = _human_tty()
@@ -372,12 +398,46 @@ def _approve_github(root, policy, key, plan, sha, pr):
     return 0
 
 
+def _nested_claude():
+    """True if the Claude Code process running this hook has another Claude Code
+    process among its ancestors -- i.e. an agent launched this session from its own
+    shell (e.g. `claude -p "/evidence-sdlc:approve …"`, even under a fake TTY)."""
+    pid = os.environ.get("CLAUDE_PID")
+    if not pid or not pid.isdigit() or os.name == "nt":
+        return False
+    seen = 0
+    cur = pid
+    while cur and cur not in ("0", "1") and seen < 64:
+        seen += 1
+        try:
+            out = subprocess.run(["ps", "-o", "ppid=,command=", "-p", cur], capture_output=True, text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if not out:
+            return False
+        ppid, _, cmd = out.partition(" ")
+        ppid = ppid.strip()
+        if cur != pid:
+            exe = os.path.basename(cmd.split()[0]) if cmd.split() else ""
+            if exe == "claude" or "/claude/versions/" in cmd or "claude-code/cli" in cmd or "@anthropic-ai/claude-code" in cmd:
+                return True
+        cur = ppid
+    return False
+
+
 def approve_from_prompt(root, prompt):
     """Called by the UserPromptSubmit hook: the human typed `evidence approve KEY SHA`."""
     m = re.match(r"^\s*/?evidence(?:-sdlc)?[: ]approve\s+(\S+)(?:\s+([0-9a-fA-F]{8,64}))?\s*$", prompt or "")
     if not m:
         return None
     policy = st.load_policy(root)
+    if _nested_claude():
+        return ("Approval not recorded: this Claude Code session was started from inside another Claude Code "
+                "session, so its prompt did not come from a person. A human approves in their own session.")
+    if os.environ.get("CLAUDE_CODE_SESSION_ATTENDED") == "0" and not policy.get("approval", {}).get("allow_unattended_prompt_approval"):
+        return ("Approval not recorded: this is an unattended (headless) session. Approve from an interactive "
+                "session, the terminal, or GitHub; or have the org policy set approval.allow_unattended_prompt_approval "
+                "for a reviewed CI workflow.")
     if policy.get("approval", {}).get("mode") == "github":
         return ("Approval not recorded: this organisation's policy requires plan approval on GitHub (an approving "
                 f"review or `/approve-plan <sha>` comment by an allowed approver), recorded with "
@@ -478,6 +538,8 @@ def register(sub):
     x.add_argument("key")
     x.add_argument("tier", choices=["1", "2", "3"])
     x = csub.add_parser("release")
+    x.add_argument("key")
+    x = csub.add_parser("clear-violations")
     x.add_argument("key")
     p.set_defaults(func=cmd_change)
 

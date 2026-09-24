@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence-sdlc gate engine" tests="234" failures="0">
+<testsuite name="evidence-sdlc gate engine" tests="257" failures="0">
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 integrity: control-plane change by an unparsed program is restored"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 integrity: control-plane file created by an unparsed program is removed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 integrity: unclaimed source write by an unparsed program is recorded"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 integrity: open violation blocks push"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 integrity: agent cannot clear violations"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 integrity: a claimed write by an unparsed program is not a violation"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 gate-plan-exists: source edit with no approved plan is denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 production-gate: release to production without approval is denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-GATE-01 require-issue-key: commit without a key is denied"></testcase>
@@ -45,6 +51,23 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: gh api graphql -f query='mutation { mergePull"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: curl -X PUT -H 'Authorization: token x' https"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: curl --json '{}' https://gitlab.example.com/a"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: f(){ rm -f src/other.py; }; f"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: alias w='tee src/other.py'; echo x | w"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: awk 'BEGIN{system(&quot;touch x&quot;)}'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: awk '{print &gt; &quot;src/other.py&quot;}' src/app.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: git config --file .git/config alias.x '!id'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: ln -s ../.evidence/changes/ABC-1/approval.jso"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: IFS=,; cmd=rm,src/other.py; $cmd"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: vim -es -c 'wq' src/other.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: env -S 'rm src/other.py'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: if true; then rm src/other.py; fi"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name='REQ-V2G-02 self-review: shell-syntax evasion denied: while read f; do rm "$f"; done &lt; list.txt'></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 self-review: nested Claude Code session denied: claude -p '/evidence-sdlc:approve ABC-1 abcde"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 self-review: nested Claude Code session denied: npx @anthropic-ai/claude-code -p 'evidence ap"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 self-review: nested Claude Code session denied: script -q /dev/null claude 'evidence approve "></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 self-review: nested Claude Code session denied: unbuffer claude"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name='REQ-V2A-01 self-review: nested Claude Code session denied: python3 -c "import subprocess; subprocess.run'></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 self-review: nested Claude Code session denied: /Users/me/.local/bin/claude --resume x -p hi"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 self-review: harmless variant allowed: gh pr review 5 --comment -b 'looks fine'"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 self-review: harmless variant allowed: curl -s https://api.github.com/repos/o/r/pull"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 self-review: harmless variant allowed: bash -n scripts/x.sh"></testcase>

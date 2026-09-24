@@ -41,7 +41,7 @@ Add the marketplace. From a local clone, which works today:
 the owner has pushed the repository to a git remote, `/plugin marketplace add
 <owner>/evidence-chain` works too.
 
-Then install all five. They declare dependencies on each other, and the commit,
+Then install all five. They have soft dependencies on each other, and the commit,
 test-protection and review-agent rules all live in `evidence-sdlc`'s engine, so a
 partial install gives you a partial picture:
 

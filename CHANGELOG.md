@@ -64,8 +64,10 @@ v2 closes every finding of the v1 enterprise audit. Intent, spec and plan:
   ships.
 
 ### Product
-- Semver `version`, homepage, repository, license, keywords and declared
-  `dependencies` in every plugin. `claude plugin validate` passes with no warnings.
+- Semver `version`, homepage, repository, license and keywords in every plugin.
+  `claude plugin validate` passes with no warnings. Cross-plugin dependencies are
+  soft: a hard `dependencies` field was tried and removed after the eval run showed
+  it stops a plugin's skills loading when a sibling is absent.
 - Repository CI (`.github/workflows/ci.yml`) and runnable reference pipelines
   (`pipelines/`) for GitHub Actions, GitLab, and a CI-hosted agent.
 - Managed-settings template: narrow git permissions in place of `Bash(git *)`,

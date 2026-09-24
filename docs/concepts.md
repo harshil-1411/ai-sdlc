@@ -139,9 +139,11 @@ flowchart TD
     I --> ART
 ```
 
-The dependencies are declared in each `plugin.json`. `evidence-sdlc` depends on
-`evidence-discovery`. `evidence-quality` and `evidence-compliance` depend on both.
-`evidence-integrations` depends on `evidence-sdlc`.
+The plugins have soft dependencies: `evidence-sdlc` reads `evidence-discovery`'s
+profile; `evidence-quality` and `evidence-compliance` rely on both; `evidence-integrations`
+relies on `evidence-sdlc`. They are not declared as hard `dependencies` in `plugin.json`,
+because a declared dependency that isn't installed stops the plugin's skills loading
+at all (found by the v2 eval run). A missing sibling instead degrades with a message.
 
 ## Sensors
 

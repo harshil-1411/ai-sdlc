@@ -112,7 +112,7 @@ def split_simple(cmd, _depth=0):
             cur.clear()
 
     for tok in tokens:
-        if tok in CONTROL_OPS or re.fullmatch(r"[;&|]+", tok or ""):
+        if tok in CONTROL_OPS or re.fullmatch(r"[;&|()]+", tok or ""):
             flush()
         else:
             cur.append(tok)
@@ -132,6 +132,12 @@ def split_simple(cmd, _depth=0):
                 simples.extend(sub)
                 ok = ok and sub_ok
                 bodies.extend(sub_bodies)
+        if s.prog == "alias":
+            for a in s.argv[1:]:
+                if "=" in a:
+                    sub, sub_ok, sub_bodies = split_simple(a.split("=", 1)[1], _depth + 1)
+                    simples.extend(sub)
+                    ok = ok and sub_ok
         if s.prog == "eval":
             sub, sub_ok, sub_bodies = split_simple(" ".join(s.argv[1:]), _depth + 1)
             simples.extend(sub)
@@ -184,10 +190,18 @@ def _make_simple(tokens):
     return Simple(argv, env, redirects, " ".join(tokens), via_xargs)
 
 
+SHELL_KEYWORDS = {"{", "}", "!", "then", "do", "else", "elif", "if", "while", "until", "fi", "done", "esac", "in",
+                  "function", "coproc"}
+
+
 def _strip_wrappers(argv, env):
     guard = 0
-    while argv and guard < 8:
+    while argv and guard < 12:
         guard += 1
+        # function bodies and compound commands: `f(){ rm x; }`, `if …; then rm x; fi`
+        if argv[0] in SHELL_KEYWORDS or argv[0].endswith("{") and argv[0][:-1].replace("_", "a").isalnum():
+            argv = argv[1:]
+            continue
         prog = os.path.basename(argv[0])
         if prog not in WRAPPERS:
             break
@@ -197,7 +211,10 @@ def _strip_wrappers(argv, env):
                 if "=" in argv[0] and not argv[0].startswith("-"):
                     k, v = argv[0].split("=", 1)
                     env[k] = v
-                elif argv[0] in ("-u", "-C", "-S") and len(argv) > 1:
+                elif argv[0] in ("-S", "--split-string") and len(argv) > 1:
+                    argv = argv[1].split() + argv[2:]  # env -S 'cmd args' runs that string as the command
+                    break
+                elif argv[0] in ("-u", "-C") and len(argv) > 1:
                     argv = argv[1:]
                 argv = argv[1:]
         elif prog in ("sudo", "doas"):
@@ -422,6 +439,13 @@ def writes_of(s):
         paths = _nonopts(args)
         if len(paths) >= 2:
             w.append(Write(paths[-1], "write", prog))
+            if prog == "ln":
+                # a link pointing at a protected file is judged like writing that file
+                link_dir = os.path.dirname(paths[-1])
+                for p in paths[:-1]:
+                    # a relative link target resolves from the link's own directory
+                    tgt = p if os.path.isabs(p) or not link_dir else os.path.join(link_dir, p)
+                    w.append(Write(tgt, "write", "ln target"))
     elif prog == "mv":
         paths = _nonopts(args)
         if len(paths) >= 2:
@@ -452,8 +476,14 @@ def writes_of(s):
             w.append(Write(None, "opaque", f"{prog} -i without a file"))
         for p in files:
             w.append(Write(p, "write", f"{prog} -i"))
-    elif prog in ("awk", "gawk") and "-i" in args and "inplace" in args:
-        w.append(Write(None, "opaque", "awk -i inplace"))
+    elif prog in ("awk", "gawk", "mawk", "nawk"):
+        prog_text = " ".join(a for a in args if not a.startswith("-"))
+        if ("-i" in args and "inplace" in args) or re.search(r"system\s*\(|print[f]?[^;{}]*>|\|\s*getline|\|&", prog_text):
+            w.append(Write(None, "opaque", f"{prog} program that writes files or runs commands"))
+    elif prog in ("vi", "vim", "nvim", "ex", "ed", "red", "emacs", "nano", "pico", "joe", "micro", "kak", "hx"):
+        for p in _nonopts(args):
+            if not p.startswith(("+", "-")):
+                w.append(Write(p, "write", prog))
     elif prog in ("patch",):
         w.append(Write(None, "opaque", "patch"))
     elif prog in ("curl",):

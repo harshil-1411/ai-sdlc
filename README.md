@@ -55,9 +55,11 @@ Once the repository is hosted, `/plugin marketplace add <owner>/evidence-chain` 
 works. That form needs the owner to push this repository to a git remote first.
 The manifests still carry `REPLACE-WITH-YOUR-ORG` placeholders until they do.
 
-**2. Install all five.** The plugins declare dependencies on each other
-(`evidence-sdlc` needs `evidence-discovery`; quality, compliance and integrations need
-`evidence-sdlc`), so install all five:
+**2. Install all five.** The plugins have soft dependencies on each other
+(`evidence-sdlc` reads `evidence-discovery`'s profile; quality, compliance and
+integrations rely on `evidence-sdlc`'s engine and CLI). They are soft on purpose: a
+missing sibling degrades a feature with a clear message instead of disabling the
+plugin, and `evidence doctor` reports which siblings are installed. Install all five:
 
 ```
 /plugin install evidence-discovery@evidence-chain

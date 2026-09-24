@@ -10,6 +10,7 @@ PASS REQ-V2A-01 prompt approval with a stale hash is refused
 PASS REQ-V2A-01 prompt approval with the right hash is recorded
 PASS REQ-V2A-01 approval binds to plan sha and names method
 PASS REQ-V2A-01 approval moves stage to approved
+PASS REQ-V2A-01 unattended (headless) session cannot approve via prompt
 PASS REQ-V2A-01 approval phrase must be the whole message
 PASS REQ-V2S-04 verified refused until review agents recorded
 PASS REQ-V2S-04 verified allowed after verifier recorded
@@ -23,4 +24,4 @@ PASS REQ-V2A-01 GitHub approval refused when the approver is the PR author
 PASS REQ-V2A-01 github approval mode refuses the prompt channel
 PASS REQ-V2A-01 github mode with no allowed approvers refuses
 
-24 passed, 0 failed
+25 passed, 0 failed

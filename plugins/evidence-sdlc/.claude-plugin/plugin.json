@@ -18,8 +18,5 @@
     "risk-tiering",
     "security-review",
     "audit"
-  ],
-  "dependencies": [
-    "evidence-discovery"
   ]
 }

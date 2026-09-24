@@ -18,9 +18,5 @@
     "security-testing",
     "accessibility",
     "traceability"
-  ],
-  "dependencies": [
-    "evidence-sdlc",
-    "evidence-discovery"
   ]
 }

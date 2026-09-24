@@ -55,7 +55,7 @@
   <testcase classname="content acceptance" name="REQ-V2P-01 version-bump check fails without a bump and passes with one"></testcase>
   <testcase classname="content acceptance" name="REQ-V2P-02 metadata: homepage, repository, license, keywords, owner email on every plugin"></testcase>
   <testcase classname="content acceptance" name="REQ-V2P-03 slash commands exist; approve is not model-invocable"></testcase>
-  <testcase classname="content acceptance" name="REQ-V2P-04 dependencies declared; commit gate moved into the sdlc engine"></testcase>
+  <testcase classname="content acceptance" name="REQ-V2P-04 cross-plugin dependencies are documented soft dependencies (no hard `dependencies` field, which stops a plugin's skills loading when a sibling is absent); commit gate moved into the sdlc engine"></testcase>
   <testcase classname="content acceptance" name="REQ-V2P-05 CI runs engine, lifecycle, CLI suites, version check, gaps and plugin validate"></testcase>
   <testcase classname="content acceptance" name="REQ-V2P-05 reference pipelines are real YAML for GitHub Actions, GitLab and CI-hosted agent"></testcase>
   <testcase classname="content acceptance" name="REQ-V2P-06 README is 250 lines or fewer and personal files are not tracked"></testcase>

@@ -708,6 +708,20 @@ def cmd_doctor(root, args):
 
     checks.append(gate_canary())
 
+    here = Path(__file__).resolve()
+    siblings = {"evidence-discovery", "evidence-sdlc", "evidence-quality", "evidence-compliance", "evidence-integrations"}
+    found = set()
+    for base in list(here.parents)[:6]:
+        for name in siblings:
+            if (base / name / ".claude-plugin" / "plugin.json").is_file():
+                found.add(name)
+    missing = sorted(siblings - found - {"evidence-sdlc"})
+    checks.append(("Evidence Chain sibling plugins present (soft dependencies)",
+                   "PASS" if not missing else "WARN",
+                   "all five present" if not missing else
+                   "not found next to this plugin: " + ", ".join(missing) +
+                   " -- features that read their output degrade (install all five for the full chain)"))
+
     scripts = sorted(root.glob("plugins/*/scripts/*.sh"))
     jq_call = re.compile(r"(?:^|[\s|;(`$])jq\s", re.MULTILINE)
     jq_needed = any(jq_call.search(read_text(s) or "") for s in scripts)

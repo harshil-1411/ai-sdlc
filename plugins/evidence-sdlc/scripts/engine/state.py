@@ -344,6 +344,42 @@ def required_artifacts(tier):
     return TIER_REQUIRED.get(int(tier or 1), ["plan"])
 
 
+# ------------------------------------------------------------------ violations
+
+def violations_path(root, key, branch):
+    if key:
+        return os.path.join(change_dir(root, key), "violations.json")
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", branch or "detached")
+    return os.path.join(root, ".evidence", "violations", f"{safe}.json")
+
+
+def record_violations(root, key, state, branch, violations, session):
+    p = violations_path(root, key if state else None, branch)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    data = []
+    if os.path.isfile(p):
+        try:
+            data = json.load(open(p))
+        except ValueError:
+            data = []
+    for v in violations:
+        data.append(dict(v, at=now(), session=session, open=True))
+    with open(p, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
+def open_violations(root, key, branch):
+    out = []
+    for p in {violations_path(root, key, branch), violations_path(root, None, branch)}:
+        if os.path.isfile(p):
+            try:
+                out += [v for v in json.load(open(p)) if v.get("open")]
+            except ValueError:
+                out.append({"path": p, "rule": "unreadable violations file", "open": True})
+    return out
+
+
 # ------------------------------------------------------------------ audit log
 
 def audit_dir(root):
