@@ -111,7 +111,7 @@ def check_write(ctx, raw_path, content=None, kind="write", detail=""):
         return deny("test-weakening",
                     f"This is a fix task (FIX_TASK=1) and {rel} is an existing test. Fix the code, not the test. "
                     "If the test itself is wrong, stop and say so; a human decides.")
-    if st.glob_match(rel, pol.get("ungated", [])):
+    if st.glob_match(rel, pol.get("ungated", [])) and not st.glob_match(rel, pol.get("always_gated", [])):
         return ALLOW
     return check_gated(ctx, rel, kind, detail)
 
@@ -164,7 +164,29 @@ def check_gated(ctx, rel, kind="write", detail=""):
     if problems:
         return deny("plan-stub", f"{what}: the plan for {key} ({os.path.relpath(plan, ctx.root)}) is not a real plan yet: "
                                  + "; ".join(problems) + ".")
+    m_tier = re.search(r"^Risk tier:\s*([123])\b", open(plan, encoding="utf-8", errors="replace").read(), re.M)
+    if m_tier and int(m_tier.group(1)) != tier:
+        return deny("tier-mismatch",
+                    f"{what}: the plan says Risk tier {m_tier.group(1)} but change {key} is recorded as Tier {tier}. "
+                    f"A human reconciles them (`evidence change set-tier {key} <n>`, or fix the plan and re-approve).")
+    if state.get("stage") == "released":
+        return deny("change-released",
+                    f"{what}: change {key} is released. Start a new change for further work.")
     approval = st.load_approval(ctx.root, key)
+    prob = st.approval_problem(ctx.root, key, approval, plan)
+    if prob and prob not in ("not-approved", "approval-stale") and approval and approval.get("method") == "github":
+        try:
+            import lifecycle
+            if lifecycle.reverify_github(ctx.root, key, plan, approval):
+                approval = st.load_approval(ctx.root, key)
+                prob = st.approval_problem(ctx.root, key, approval, plan)
+        except Exception:
+            pass
+    if prob and prob not in ("not-approved", "approval-stale"):
+        return deny("approval-invalid",
+                    f"{what}: the approval record for {key} is not valid ({prob}). It was not written by a human "
+                    "approval channel. A human re-approves with `/evidence-sdlc:approve "
+                    f"{key} {st.sha256_file(plan)[:12]}`.")
     if not approval:
         sha = st.sha256_file(plan)[:12]
         return deny("not-approved",
@@ -329,6 +351,18 @@ def _check_commit(ctx, sargs, bodies=()):
             return deny("agent-trailer",
                         "Commits made by an agent must say which session made them. End the commit message with the "
                         f"trailer line:\nAgent-Session: {ctx.session}")
+    if key and pol.get("commit_requires_audit", True):
+        staged = set((st.git(["diff", "--cached", "--name-only"], ctx.root) or "").split())
+        tracked = set((st.git(["ls-files", ".evidence"], ctx.root) or "").split())
+        need = []
+        safe = re.sub(r"[^A-Za-z0-9_-]", "_", ctx.session or "")[:80]
+        for rel in (f".evidence/audit/{safe}.jsonl", f".evidence/changes/{key}/state.json",
+                    f".evidence/changes/{key}/approval.json", f".evidence/audit/approval-{key}.jsonl"):
+            if os.path.isfile(os.path.join(ctx.root, rel)) and rel not in staged and rel not in tracked:
+                need.append(rel)
+        if need:
+            return deny("commit-evidence",
+                        "The change's evidence must be committed with it. Stage it first: git add " + " ".join(need))
     if pol.get("scan_secrets", True):
         diff = st.git(["diff", "--cached", "-U0", "--no-color"], ctx.root, timeout=20) or ""
         if "all" in flags:
@@ -428,6 +462,8 @@ def _check_deploy(ctx, s):
     return None
 
 
+_NETWORK_PROGS = {"curl", "wget", "nc", "ncat", "netcat", "socat", "ssh", "scp", "sftp", "telnet", "ftp", "http",
+                  "https", "xh", "aria2c", "rsync"}
 _CLAUDE_BINS = {"claude", "claude-code"}
 _TTY_WRAPPERS = {"script", "unbuffer", "expect", "socat", "tmux", "screen", "pty", "empty", "ptyrun"}
 
@@ -524,6 +560,14 @@ def check_bash(ctx, command):
             return d
     cwd = ctx.cwd
     for s in simples:
+        if pol.get("deny_persistence", True) and (set(s.wrappers) - {s.prog}) & cmdparse.PERSISTENCE or (
+                s.prog in cmdparse.PERSISTENCE and not (s.prog == "crontab" and "-l" in s.argv)):
+            return deny("persistence",
+                        "Starting work that outlives this command (nohup, setsid, at, crontab, launchctl, systemd-run) "
+                        "is not available to an agent session: its effects would happen after the gates look.")
+        if ctx.agent_type and ctx.agent_type in pol.get("read_only_agents", []) and s.prog in _NETWORK_PROGS:
+            return deny("read-only-agent",
+                        f"The {ctx.agent_type} agent is read-only and has no network access; `{s.prog}` is not available to it.")
         if s.argv and ("$" in s.argv[0] or "`" in s.argv[0]):
             return deny("opaque-write",
                         f"The command name here is computed at run time ({s.argv[0]}), so the gates cannot tell what runs. "
@@ -562,7 +606,11 @@ def check_bash(ctx, command):
         if d is not None:
             return d
         writes = cmdparse.writes_of(s)
-        extra = cmdparse.stdin_code_writes(s, bodies)
+        for var, val in s.env.items():
+            # `JUNIT_OUT=validation/results/x.xml pytest`: a path handed to a program to write
+            if "/" in val and not val.startswith(("http:", "https:", "/dev/")) and re.search(r"(OUT|OUTPUT|FILE|PATH|DIR|DEST|REPORT|LOG)", var):
+                writes.append(cmdparse.Write(val, "write", f"{var}= output path"))
+        extra = cmdparse.stdin_code_writes(s, bodies) or cmdparse.stdin_code(s)
         if extra:
             writes.append(extra)
         for w in writes:

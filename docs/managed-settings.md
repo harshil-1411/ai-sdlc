@@ -141,6 +141,31 @@ A managed-hooks deployment also resists a user-level `"disableAllHooks": true`. 
 settings documentation says only a managed-level `disableAllHooks` can disable managed
 hooks.
 
+## Signing key: from detected to enforced
+
+The gate engine and the agent's shell run as the same OS user, so without a secret
+the agent could, with enough effort, write a record the engine would accept. The fix
+is a key the hooks can read and the agent's commands cannot:
+
+1. Generate a 32+ character secret in your secret store.
+2. Deliver it as `EVIDENCE_SIGNING_KEY` in the managed-settings `env` (the template has
+   a placeholder). Hooks run outside the sandbox and see it.
+3. Keep it from the agent: the template adds `EVIDENCE_SIGNING_KEY` to
+   `sandbox.credentials.envVars` (deny), denies the sandbox and the Read tool access to
+   the managed-settings directories, and denies `env`/`printenv`.
+4. Give CI the same key as a protected secret so it can sign test results
+   (`evidence results sign`) and verify approvals.
+
+With the key in place, approvals, audit entries, integrity snapshots and CI results
+are HMAC-signed, and anything unsigned or altered is rejected: a forged
+`approval.json` no longer unlocks edits, a forged `agent-completed` entry no longer
+satisfies the review gate, and an unsigned results file no longer proves a
+requirement. Without it, sessions start with an **UNSIGNED MODE** warning and those
+records are *detected* (the integrity monitor) but not *proven*.
+
+The key only helps if the sandbox is actually on. `sandbox.failIfUnavailable: true` in
+the template makes sure it is.
+
 ## Owner actions checklist
 
 A plugin can't do any of these. Each one is the owner's job, and each should be

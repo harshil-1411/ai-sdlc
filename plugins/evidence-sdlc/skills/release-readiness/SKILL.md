@@ -60,4 +60,4 @@ A rollback that was written but never run is item 7 **not met**. Say so plainly.
 
 The humans who decide have one page with every item linked, every gap named, and the
 Decision section waiting for them. When the release is deployed and a human confirms
-it, `evidence change advance <KEY> released` records it for each change in scope.
+it, a human records it for each change in scope with `evidence change release <KEY>` in their own terminal (the agent cannot mark a change released).

@@ -429,6 +429,38 @@ def find_eval_covers(text, req_pattern):
 # status: passed|failed|skipped, props, ts, run_id, source}.
 # ---------------------------------------------------------------------------
 
+def _signing():
+    import sys as _sys
+    eng = str(Path(__file__).resolve().parent.parent / "engine")
+    if eng not in _sys.path:
+        _sys.path.insert(0, eng)
+    import signing
+    return signing
+
+
+def result_sidecar_ok(path):
+    """(trusted, detail). A results file is trusted when a sidecar <file>.sig, written by
+    `evidence results sign` in CI (which holds EVIDENCE_SIGNING_KEY), matches its bytes."""
+    import hashlib
+    sig = path.with_name(path.name + ".sig")
+    if not sig.is_file():
+        return False, "unsigned"
+    try:
+        rec = json.loads(sig.read_text())
+    except (OSError, ValueError):
+        return False, "unreadable signature"
+    if rec.get("sha256") != hashlib.sha256(path.read_bytes()).hexdigest():
+        return False, "file changed after signing"
+    v = _signing().verify(rec)
+    if v is None:
+        return False, "no signing key configured here"
+    return (True, rec.get("signed_at", "")) if v else (False, "bad signature")
+
+
+def require_signed_results():
+    return _signing().enabled() or os.environ.get("EVIDENCE_REQUIRE_SIGNED_RESULTS") == "1"
+
+
 def _file_ts(p):
     try:
         return datetime.datetime.fromtimestamp(p.stat().st_mtime, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -449,6 +481,7 @@ def parse_junit(path, text, source):
     results = []
     for suite in suites:
         ts = suite.get("timestamp") or _file_ts(path)
+        ts_source = "file" if suite.get("timestamp") else "mtime"
         run_id = f"{suite.get('name') or path.name}@{ts}"
         for case in suite.findall("testcase"):
             if case.find("failure") is not None or case.find("error") is not None:
@@ -463,7 +496,7 @@ def parse_junit(path, text, source):
                 "kind": "junit", "name": case.get("name", ""),
                 "classname": case.get("classname", ""), "file": case.get("file", ""),
                 "case_path": "", "status": status, "props": props,
-                "ts": ts, "run_id": run_id, "source": source,
+                "ts": ts, "run_id": run_id, "source": source, "ts_source": ts_source,
             })
     return results
 
@@ -570,12 +603,23 @@ def ingest_results(root, locations):
         if res is None:
             continue  # not a results file at all (some other xml/json)
         parsed += 1
+        trusted, detail = result_sidecar_ok(f)
+        horizon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%S")
+        for r in res:
+            r["trusted"] = trusted
+            r["trust_detail"] = detail
+            if trusted and detail:
+                r["ts"] = detail  # the signed time, not whatever the file claims
+            elif (r.get("ts") or "") > horizon:
+                r["ts"] = ""  # a timestamp in the future is a claim, not a time
+                r["trust_detail"] = "future timestamp ignored"
         all_results += res
     # latest wins per test identity
     latest = {}
     for r in all_results:
         key = (r["kind"], r["case_path"] or r["classname"], r["name"])
-        if key not in latest or r["ts"] >= latest[key]["ts"]:
+        rank = (bool(r.get("trusted")), r["ts"])
+        if key not in latest or rank >= (bool(latest[key].get("trusted")), latest[key]["ts"]):
             latest[key] = r
     return list(latest.values()), parsed, bad, missing
 
@@ -991,7 +1035,9 @@ def build_graph(root, adapter, results_paths=None):
             summary = cells[idx + 1] if len(cells) > idx + 1 else ""
             spec_commit = None
             if is_git_repo(root):
-                log = run_git(root, "log", "--format=%H", "--follow", "--", spec_rel)
+                if spec_rel not in _SPEC_LOG_CACHE:
+                    _SPEC_LOG_CACHE[spec_rel] = run_git(root, "log", "--format=%H", "--follow", "--", spec_rel)
+                log = _SPEC_LOG_CACHE[spec_rel]
                 if log:
                     lines = [l for l in log.splitlines() if l]
                     if lines:
@@ -1094,6 +1140,9 @@ def build_graph(root, adapter, results_paths=None):
     return graph
 
 
+_SPEC_LOG_CACHE = {}
+
+
 def requirement_status(graph):
     """rid -> {'status': PROVEN|FAILED|NONE, 'results': [...]}"""
     out = {}
@@ -1101,10 +1150,13 @@ def requirement_status(graph):
                                          if r.get("requirement_id")}
     for rid in rids:
         res = results_for_requirement(rid, graph)
+        need_signed = require_signed_results()
         if any(r["status"] == "failed" for r in res):
             st = "FAILED"
-        elif any(r["status"] == "passed" for r in res):
+        elif any(r["status"] == "passed" and (r.get("trusted") or not need_signed) for r in res):
             st = "PROVEN"
+        elif any(r["status"] == "passed" for r in res):
+            st = "UNTRUSTED"
         else:
             st = "NONE"
         out[rid] = {"status": st, "results": res}
@@ -1391,6 +1443,10 @@ def compute_gaps(root, graph):
     proven = sorted(rid for rid in covered_req_ids if status.get(rid, {}).get("status") == "PROVEN")
 
     self_asserted, unproven = [], []
+    for rid in sorted(covered_req_ids):
+        if status.get(rid, {}).get("status") == "UNTRUSTED":
+            srcs = sorted({f"{r['source']} ({r.get('trust_detail')})" for r in status[rid]["results"] if r["status"] == "passed"})
+            self_asserted.append(f"{rid}: passed only in results files not signed by a trusted producer -- {'; '.join(srcs)}")
     result_recorded_for = set()
     for row in graph["traceability_rows"]:
         rid = row.get("requirement_id") or "?"
@@ -1398,7 +1454,7 @@ def compute_gaps(root, graph):
         if result:
             result_recorded_for.add(rid)
         st = status.get(rid, {}).get("status", "NONE")
-        if st in ("PROVEN", "FAILED"):
+        if st in ("PROVEN", "FAILED", "UNTRUSTED"):
             continue
         if result.upper().startswith("PASS"):
             self_asserted.append(
@@ -1910,7 +1966,32 @@ def register_tracker(sub):
     p.set_defaults(func=cmd_tracker)
 
 
-SUBCOMMANDS = [register_doctor, register_scan, register_gaps, register_export, register_tracker]
+def cmd_results(root, args):
+    import hashlib
+    signing = _signing()
+    if not signing.enabled():
+        print("EVIDENCE_SIGNING_KEY is not set (or shorter than 32 characters); results cannot be signed here. "
+              "Sign in CI, where the key is a protected secret the agent's sandbox cannot read.")
+        return 1
+    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    for f in args.files:
+        p = Path(f)
+        rec = signing.sign({"file": p.name, "sha256": hashlib.sha256(p.read_bytes()).hexdigest(), "signed_at": now,
+                            "signer": os.environ.get("GITHUB_WORKFLOW") or os.environ.get("CI_JOB_NAME") or "local"})
+        p.with_name(p.name + ".sig").write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+        print(f"signed {p}")
+    return 0
+
+
+def register_results(sub):
+    p = sub.add_parser("results", help="sign test result files in CI so `gaps` can trust them")
+    rsub = p.add_subparsers(dest="results_command", required=True)
+    s_ = rsub.add_parser("sign")
+    s_.add_argument("files", nargs="+")
+    p.set_defaults(func=cmd_results)
+
+
+SUBCOMMANDS = [register_doctor, register_scan, register_gaps, register_export, register_tracker, register_results]
 
 
 def build_parser():

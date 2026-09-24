@@ -160,7 +160,15 @@ def _merge(base, over, tighten_only):
                 merged["github_allowed_approvers"] = list(v["github_allowed_approvers"])
             out[k] = merged
         elif tighten_only and k == "key_pattern":
-            out[k] = v  # descriptive: which tracker this repository uses
+            # descriptive (which tracker this repository uses), but it must still look
+            # like a key: a pattern that matches ordinary words would make the commit
+            # key check meaningless.
+            try:
+                rx = re.compile(v)
+                if not any(rx.fullmatch(w) for w in ("fix", "wip", "update", "", "UTF-8x", "misc")) and re.search(r"\d", v + "0-9"):
+                    out[k] = v
+            except re.error:
+                pass
         elif tighten_only:
             # Every other key from a repo policy is a potential loosening
             # (change_ticket_pattern, release_approval_pattern, prod_words, ...) and is ignored.
@@ -174,7 +182,9 @@ def load_policy(root):
     with open(DEFAULT_POLICY) as f:
         policy = json.load(f)
     sources = ["default"]
-    org_path = os.environ.get("EVIDENCE_ORG_POLICY") or next((p for p in ORG_POLICY_PATHS if os.path.isfile(p)), None)
+    # A managed org policy file (deployed by the platform team) wins over the env var,
+    # so a developer cannot point the session at a looser policy of their own.
+    org_path = next((p for p in ORG_POLICY_PATHS if os.path.isfile(p)), None) or os.environ.get("EVIDENCE_ORG_POLICY")
     if org_path and os.path.isfile(org_path):
         with open(org_path) as f:
             policy = _merge(policy, json.load(f), tighten_only=False)
@@ -185,7 +195,7 @@ def load_policy(root):
             policy = _merge(policy, json.load(f), tighten_only=True)
         sources.append(".evidence/policy.json")
     env_pat = os.environ.get("EVIDENCE_ISSUE_KEY_PATTERN")
-    if env_pat:
+    if env_pat and not any(p != "default" for p in sources[1:2] if p != ".evidence/policy.json"):
         policy["key_pattern"] = env_pat
     policy["_sources"] = sources
     return policy
@@ -210,6 +220,12 @@ def active_key(root, policy, branch=None):
     if env:
         return env.strip(), "EVIDENCE_ACTIVE_CHANGE"
     branch = current_branch(root) if branch is None else branch
+    if not branch:
+        for var in ("GITHUB_HEAD_REF", "CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", "CI_COMMIT_REF_NAME",
+                    "BUILDKITE_BRANCH", "BRANCH_NAME", "GIT_BRANCH"):
+            if os.environ.get(var):
+                branch = os.environ[var]
+                break
     keys = find_keys(branch, policy)
     if keys:
         return keys[0], f"branch {branch}"
@@ -246,6 +262,20 @@ def load_approval(root, key):
         return None
     with open(p) as f:
         return json.load(f)
+
+
+def approval_problem(root, key, approval, plan_path):
+    """None if the approval is valid for the current plan; else the reason."""
+    import signing
+    if not approval:
+        return "not-approved"
+    if approval.get("key") != key:
+        return "approval belongs to another change"
+    if approval.get("plan_sha256") != sha256_file(plan_path):
+        return "approval-stale"
+    if signing.verify(approval) is False:
+        return "approval signature missing or invalid"
+    return None
 
 
 def find_artifact(root, key, name, state=None):
@@ -401,7 +431,7 @@ def _last_hash(path):
 
 
 def entry_hash(entry, prev):
-    body = {k: v for k, v in entry.items() if k != "hash"}
+    body = {k: v for k, v in entry.items() if k not in ("hash", "sig")}
     body["prev"] = prev
     return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -418,13 +448,16 @@ def audit_append(root, session, entry):
     entry.setdefault("user", os.environ.get("USER") or os.environ.get("USERNAME") or "unknown")
     entry["prev"] = prev
     entry["hash"] = entry_hash(entry, prev)
+    import signing
+    entry = signing.sign(entry)
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, sort_keys=True) + "\n")
     return entry
 
 
 def audit_verify(path):
-    """Return (ok, problems)."""
+    """Return (ok, problems). With a signing key configured, every entry must carry a valid signature."""
+    import signing
     problems, prev = [], ""
     with open(path, encoding="utf-8") as f:
         for n, line in enumerate(f, 1):
@@ -441,6 +474,8 @@ def audit_verify(path):
                 problems.append(f"line {n}: chain broken (prev does not match line {n - 1})")
             if entry_hash(e, e.get("prev", "")) != e.get("hash"):
                 problems.append(f"line {n}: content altered (hash mismatch)")
+            if signing.verify(e) is False:
+                problems.append(f"line {n}: signature missing or invalid (entry not written by the gate engine)")
             prev = e.get("hash", "")
     return not problems, problems
 
@@ -471,8 +506,18 @@ def recorded_agents(root, key):
     plugin agents (or an unprefixed agent, which can only come from the user's or the
     project's .claude/agents/ -- control plane) count; a same-named agent from any
     other plugin does not satisfy the review gate."""
+    import signing
+    # A review only counts if it completed after the latest source change for this key:
+    # a verifier that ran before later edits proves nothing about them.
+    last_write = ""
+    for e in audit_events(root, lambda e: e.get("key") == key and e.get("event") == "tool" and e.get("gated")):
+        last_write = max(last_write, e.get("ts", ""))
     done = set()
     for e in audit_events(root, lambda e: e.get("event") == "agent-completed" and e.get("key") == key):
+        if signing.verify(e) is False:
+            continue  # a key is configured and this entry was not signed with it: forged
+        if e.get("ts", "") < last_write:
+            continue
         t = e.get("subagent_type") or ""
         plugin, _, name = t.rpartition(":")
         if not plugin or plugin in TRUSTED_AGENT_PLUGINS:

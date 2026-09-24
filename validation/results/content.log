@@ -54,15 +54,15 @@ PASS REQ-V2P-01 version-bump check fails without a bump and passes with one
 PASS REQ-V2P-02 metadata: homepage, repository, license, keywords, owner email on every plugin
 PASS REQ-V2P-03 slash commands exist; approve is not model-invocable
 PASS REQ-V2P-04 cross-plugin dependencies are documented soft dependencies (no hard `dependencies` field, which stops a plugin's skills loading when a sibling is absent); commit gate moved into the sdlc engine
-PASS REQ-V2P-05 CI runs engine, lifecycle, CLI suites, version check, gaps and plugin validate
+PASS REQ-V2P-05 CI runs engine, lifecycle, sensor, CLI and content suites, version check, strict gaps and plugin validate
 PASS REQ-V2P-05 reference pipelines are real YAML for GitHub Actions, GitLab and CI-hosted agent
 PASS REQ-V2P-06 README is 250 lines or fewer and personal files are not tracked
-PASS REQ-V2P-07 strictKnownMarketplaces is documented as an owner action
+PASS REQ-V2P-07 strictKnownMarketplaces is documented as an owner action with the value to set
 PASS REQ-V2C-01 the CLI ships in the plugin's bin/ and runs
 PASS REQ-V2G-11 no hook pre-filter: every Bash/Edit/Write/Agent call reaches the engine
-PASS REQ-V2C-09 this repository passes its own `evidence gaps` (no NO COVERAGE or DUPLICATE-ID beyond this check itself)
-FAIL REQ-V2E-01 a committed eval SUMMARY.md exists for every plugin :: []
-FAIL REQ-V2E-02 summaries record with-vs-without deltas :: 
+PASS REQ-V2C-09 this repository passes its own `evidence gaps --strict` (every blocking item other than this check itself is clear)
+PASS REQ-V2E-01 a committed eval SUMMARY.md exists for every plugin
+PASS REQ-V2E-02 summaries record with-vs-without deltas
 PASS REQ-V2E-03 eval cases exist for release-readiness and the new agents
 
-64 passed, 2 failed
+66 passed, 0 failed

@@ -71,7 +71,10 @@
     ".mcp.json",
     ".claude/agents/**",
     ".evidence/changes/*/violations.json",
-    ".evidence/violations/**"
+    ".evidence/violations/**",
+    ".claude/commands/**",
+    ".claude/skills/**",
+    ".claude/output-styles/**"
   ],
   "user_control_plane": [
     "~/.claude/settings.json",
@@ -250,5 +253,14 @@
     "mode": "local",
     "github_allowed_approvers": [],
     "github_repo": ""
-  }
+  },
+  "always_gated": [
+    "CLAUDE.md",
+    "**/CLAUDE.md",
+    "**/CLAUDE.local.md",
+    "**/REVIEW.md",
+    "**/AGENTS.md"
+  ],
+  "deny_persistence": true,
+  "commit_requires_audit": true
 }

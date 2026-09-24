@@ -45,12 +45,29 @@ def _summ(ctx):
     return {}
 
 
+def _model(ctx):
+    """The model the session is running, from the tail of its transcript (best effort)."""
+    tp = ctx.payload.get("transcript_path")
+    if not tp or not os.path.isfile(tp):
+        return None
+    try:
+        with open(tp, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 65536))
+            tail = f.read().decode("utf-8", "replace")
+        import re as _re
+        m = _re.findall(r'"model"\s*:\s*"([^"]+)"', tail)
+        return m[-1] if m else None
+    except OSError:
+        return None
+
+
 def _audit(ctx, entry):
     try:
         key, _ = ctx.change()
         base = {"tool": ctx.tool, "key": key, "agent_type": ctx.agent_type or None,
                 "agent_id": ctx.payload.get("agent_id"), "permission_mode": ctx.permission_mode,
-                "engine": st.ENGINE_VERSION}
+                "engine": st.ENGINE_VERSION, "model": _model(ctx)}
         base.update(_summ(ctx))
         base.update(entry)
         st.audit_append(ctx.root, ctx.session, base)
@@ -88,7 +105,10 @@ def run_post(payload):
     if ctx.tool == "Bash":
         out = run_integrity(ctx) or out
     if ctx.tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"):
-        _audit(ctx, {"event": "tool"})
+        p = ctx.tool_input.get("file_path") or ctx.tool_input.get("notebook_path")
+        rel = st.normalize(p, ctx.cwd, ctx.root)[0] if p else None
+        gated = bool(rel and not st.glob_match(rel, ctx.policy.get("ungated", []))) or ctx.tool == "Bash"
+        _audit(ctx, {"event": "tool", "gated": gated})
         # First source edit inside an approved change moves it to "implementing".
         key, state = ctx.change()
         if key and state and state.get("stage") == "approved" and ctx.tool != "Bash":
@@ -164,6 +184,10 @@ def run_session_start(payload):
         done = st.recorded_agents(ctx.root, key)
         if req:
             parts.append(f"Review agents required before push/PR: {', '.join(req)} (recorded so far: {', '.join(sorted(done)) or 'none'}).")
+    import signing
+    if not signing.enabled():
+        parts.append("UNSIGNED MODE: no EVIDENCE_SIGNING_KEY is configured, so approvals and audit entries are not "
+                     "signed and a forged record cannot be told apart from a real one (see docs/managed-settings.md).")
     parts.append("Approval, tier changes and control-plane files are human-only. Commits need the tracker key and an "
                  f"`Agent-Session: {ctx.session or '<session id>'}` trailer.")
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": " ".join(parts)}}

@@ -17,6 +17,7 @@ REDIRECT_OPS = {">", ">>", ">|", "&>", "&>>", "<>"}
 WRAPPERS = {"command", "builtin", "exec", "nohup", "nice", "time", "stdbuf",
             "timeout", "sudo", "doas", "env", "xargs", "ionice", "chronic"}
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+PERSISTENCE = {"nohup", "setsid", "disown", "at", "batch", "crontab", "launchctl", "systemd-run", "daemonize", "start-stop-daemon"}
 INTERPRETERS = {"python", "python3", "python2", "node", "nodejs", "ruby", "perl",
                 "php", "deno", "bun", "pwsh", "powershell", "osascript"}
 INLINE_FLAGS = {"-c", "-e", "-E", "--eval", "-r", "--command", "-Command"}
@@ -51,12 +52,15 @@ class Write:
 class Simple:
     """One simple command after wrappers are stripped."""
 
-    def __init__(self, argv, env, redirects, raw, via_xargs=False):
+    def __init__(self, argv, env, redirects, raw, via_xargs=False, stdin_file=None, wrappers=()):
         self.argv = argv
         self.env = env
         self.redirects = redirects
         self.raw = raw
         self.via_xargs = via_xargs
+        self.stdin_file = stdin_file
+        self.wrappers = list(wrappers)
+        self.piped_in = False
 
     @property
     def prog(self):
@@ -103,17 +107,20 @@ def split_simple(cmd, _depth=0):
     tokens, ok = _tokenize(cmd)
 
     simples, cur = [], []
+    state = {"piped": False}
 
-    def flush():
+    def flush(next_piped=False):
         if cur:
             s = _make_simple(list(cur))
             if s is not None:
+                s.piped_in = state["piped"]
                 simples.append(s)
             cur.clear()
+        state["piped"] = next_piped
 
     for tok in tokens:
         if tok in CONTROL_OPS or re.fullmatch(r"[;&|()]+", tok or ""):
-            flush()
+            flush(next_piped=tok in ("|", "|&"))
         else:
             cur.append(tok)
     flush()
@@ -154,6 +161,7 @@ def _flag_value(args, flags):
 
 def _make_simple(tokens):
     env, argv, redirects = {}, [], []
+    stdin_file = None
     i = 0
     # Redirections can appear anywhere; pull them out first.
     rest = []
@@ -164,6 +172,8 @@ def _make_simple(tokens):
             redirects.append((t, target))
             i += 2
             continue
+        if t == "<" and i + 1 < len(tokens):
+            stdin_file = tokens[i + 1]
         if t in ("<", "<<", "<<<", "<&", ">&"):
             # input redirection or fd duplication: not a write
             if t == ">&" and i + 1 < len(tokens) and not tokens[i + 1].isdigit() and tokens[i + 1] != "-":
@@ -184,10 +194,11 @@ def _make_simple(tokens):
         j += 1
     argv = rest[j:]
     via_xargs = any(os.path.basename(a) == "xargs" for a in argv[:4])
+    wrappers = [os.path.basename(a) for a in argv[:6] if os.path.basename(a) in WRAPPERS | PERSISTENCE]
     argv = _strip_wrappers(argv, env)
     if not argv and not redirects:
         return None
-    return Simple(argv, env, redirects, " ".join(tokens), via_xargs)
+    return Simple(argv, env, redirects, " ".join(tokens), via_xargs, stdin_file, wrappers)
 
 
 SHELL_KEYWORDS = {"{", "}", "!", "then", "do", "else", "elif", "if", "while", "until", "fi", "done", "esac", "in",
@@ -468,7 +479,11 @@ def writes_of(s):
             if a.startswith("of="):
                 w.append(Write(a[3:], "write", "dd"))
     elif prog in ("sed", "gsed", "perl") and any(a.startswith("-i") or a.startswith("-pi") or a == "--in-place" or a.startswith("--in-place=") for a in args):
-        paths = _nonopts(args)
+        if "-i" in args:
+            k = args.index("-i")
+            if k + 1 < len(args) and args[k + 1] == "":
+                args = args[:k + 1] + args[k + 2:]  # BSD/macOS: sed -i '' expr file
+        paths = [p for p in _nonopts(args) if p != ""]
         # first non-option is the script unless -e was given
         has_e = "-e" in args or "--expression" in args
         files = paths if has_e else paths[1:]
@@ -552,6 +567,20 @@ def writes_of(s):
         if prog.startswith("perl") and any(a.startswith("-i") or a.startswith("-pi") for a in args):
             w.append(Write(None, "opaque", "perl -i"))
     return w
+
+
+def stdin_code(s):
+    """An interpreter or shell reading its program from a file redirect or a pipe
+    (`python3 < x.md`, `cat x | bash`): the program is not visible to the gates."""
+    if s.prog not in INTERPRETERS and s.prog not in SHELLS:
+        return None
+    if script_execution(s) or any(a in INLINE_FLAGS or a in ("-m", "-n", "--version", "-V") for a in s.argv[1:]):
+        return None
+    if s.stdin_file and s.stdin_file not in ("/dev/null", "HEREDOC"):
+        return Write(None, "opaque", f"{s.prog} reading its program from {s.stdin_file}")
+    if s.piped_in:
+        return Write(None, "opaque", f"{s.prog} reading its program from a pipe")
+    return None
 
 
 def stdin_code_writes(s, heredoc_bodies):

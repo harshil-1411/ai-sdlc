@@ -70,12 +70,15 @@ def status_dict(root, policy, key):
     plan = st.find_artifact(root, key, "plan", state)
     problems = st.plan_problems(plan) if plan else ["no plan"]
     approval = st.load_approval(root, key)
+    prob = st.approval_problem(root, key, approval, plan) if plan else "no plan"
     if not approval:
         appr = "missing"
-    elif plan and approval.get("plan_sha256") == st.sha256_file(plan):
+    elif prob is None:
         appr = "valid"
-    else:
+    elif prob == "approval-stale":
         appr = "stale (plan changed after approval)"
+    else:
+        appr = f"invalid ({prob})"
     req = policy.get("required_agents", {}).get(str(tier), [])
     done = st.recorded_agents(root, key)
     return {
@@ -194,6 +197,17 @@ def cmd_change(args):
             v = getattr(args, a, None)
             if v:
                 state[a] = v
+        if getattr(args, "quick", None):
+            if tier != 1 or not args.files:
+                sys.exit("--quick is for Tier 1 changes and needs --files <glob> [...]")
+            plan_rel = state.get("plan") or f"plan/{key}.md"
+            os.makedirs(os.path.join(root, os.path.dirname(plan_rel)), exist_ok=True)
+            with open(os.path.join(root, plan_rel), "w") as f:
+                f.write(f"# Plan: {args.quick}\nTracker: {key}   Date: {st.now()[:10]}\nRisk tier: 1 — quick change\n\n"
+                        "## Files claimed\n" + "".join(f"- `{g}`\n" for g in args.files) +
+                        f"\n## Order of work\n1. {args.quick}\n2. Run the tests that cover the claimed files and the verifier.\n\n"
+                        "## Proof\nThe existing tests covering the claimed files, run by the verifier.\n")
+            state["plan"] = plan_rel
         st.save_state(root, key, state)
         branch = st.current_branch(root)
         print(f"Started {key}: Tier {tier}, {args.kind}. Required before source edits: "
@@ -204,6 +218,8 @@ def cmd_change(args):
         for o in claim_overlaps(root, key):
             print(f"WARNING: claims overlap with active change {o['change']}: {', '.join(o['claims'])}")
         return 0
+    if sub == "clear-violations":
+        return _clear_violations(root, key)
     state = st.load_state(root, key)
     if not state:
         sys.exit(f"No change state for {key}. Start it with: evidence change start {key} --tier <n> --kind <kind>")
@@ -236,31 +252,6 @@ def cmd_change(args):
         st.save_state(root, key, state)
         print(f"{key} -> {target}")
         return 0
-    if sub == "clear-violations":
-        try:
-            tty = _human_tty()
-        except HumanOnly as e:
-            sys.exit(f"`evidence change clear-violations` is a human action and {e}. Run it in your own terminal.")
-        vs = st.open_violations(root, key, st.current_branch(root))
-        if not vs:
-            print("No open violations.")
-            return 0
-        for v in vs:
-            tty.write(f"  {v.get('at')}  {v.get('path')}  ({v.get('rule')}, {v.get('action')})\n")
-        tty.write(f"You reviewed these {len(vs)} change(s) and they are reverted or acceptable? Type the key to clear: ")
-        tty.flush()
-        if tty.readline().strip() != key:
-            sys.exit("Not cleared.")
-        for p in {st.violations_path(root, key, st.current_branch(root)), st.violations_path(root, None, st.current_branch(root))}:
-            if os.path.isfile(p):
-                data = json.load(open(p))
-                for v in data:
-                    if v.get("open"):
-                        v.update(open=False, cleared_by=_who(root), cleared_at=st.now())
-                json.dump(data, open(p, "w"), indent=2)
-        st.audit_append(root, "clear-violations", {"event": "violations-cleared", "key": key, "by": _who(root), "count": len(vs)})
-        print(f"Cleared {len(vs)} violation(s).")
-        return 0
     if sub in ("set-tier", "release", "override"):
         try:
             tty = _human_tty()
@@ -287,11 +278,40 @@ def cmd_change(args):
     return 2
 
 
+def _clear_violations(root, key):
+    try:
+        tty = _human_tty()
+    except HumanOnly as e:
+        sys.exit(f"`evidence change clear-violations` is a human action and {e}. Run it in your own terminal.")
+    vs = st.open_violations(root, key, st.current_branch(root))
+    if not vs:
+        print("No open violations.")
+        return 0
+    for v in vs:
+        tty.write(f"  {v.get('at')}  {v.get('path')}  ({v.get('rule')}, {v.get('action')})\n")
+    tty.write(f"You reviewed these {len(vs)} change(s) and they are reverted or acceptable? Type the key to clear: ")
+    tty.flush()
+    if tty.readline().strip() != key:
+        sys.exit("Not cleared.")
+    for p in {st.violations_path(root, key, st.current_branch(root)), st.violations_path(root, None, st.current_branch(root))}:
+        if os.path.isfile(p):
+            data = json.load(open(p))
+            for v in data:
+                if v.get("open"):
+                    v.update(open=False, cleared_by=_who(root), cleared_at=st.now())
+            json.dump(data, open(p, "w"), indent=2)
+    st.audit_append(root, "clear-violations", {"event": "violations-cleared", "key": key, "by": _who(root), "count": len(vs)})
+    print(f"Cleared {len(vs)} violation(s).")
+    return 0
+
+
 def write_approval(root, key, plan, approver, method, extra=None):
     state = st.load_state(root, key) or {}
     rec = {"key": key, "plan_path": _rel(root, plan), "plan_sha256": st.sha256_file(plan), "approver": approver,
            "method": method, "approved_at": st.now(), "host": socket.gethostname()}
     rec.update(extra or {})
+    import signing
+    rec = signing.sign(rec)
     d = st.change_dir(root, key)
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "approval.json"), "w") as f:
@@ -301,7 +321,7 @@ def write_approval(root, key, plan, approver, method, extra=None):
         state["stage"] = "approved"
         state.setdefault("history", []).append({"stage": "approved", "at": rec["approved_at"], "by": approver, "via": method})
         st.save_state(root, key, state)
-    st.audit_append(root, "approval", {"event": "approved", "key": key, "approver": approver, "method": method,
+    st.audit_append(root, f"approval-{key}", {"event": "approved", "key": key, "approver": approver, "method": method,
                                        "plan_sha256": rec["plan_sha256"]})
     return rec
 
@@ -353,6 +373,20 @@ def _gh(args):
     return r.stdout
 
 
+def reverify_github(root, key, plan, approval):
+    """Called by the gate engine (which holds the signing key) for an unsigned GitHub
+    approval recorded by an agent: re-check GitHub and, if it holds, sign the record."""
+    pr = approval.get("pr_number")
+    if not pr:
+        return False
+    policy = st.load_policy(root)
+    try:
+        _approve_github(root, policy, key, plan, st.sha256_file(plan), pr)
+    except SystemExit:
+        return False
+    return True
+
+
 def _approve_github(root, policy, key, plan, sha, pr):
     allowed = [a.lower() for a in policy.get("approval", {}).get("github_allowed_approvers", [])]
     if policy.get("approval", {}).get("mode") == "github" and not allowed:
@@ -393,7 +427,7 @@ def _approve_github(root, policy, key, plan, sha, pr):
     if not who:
         sys.exit(f"No approving review or `/approve-plan {sha[:12]}` comment on PR {pr}"
                  + (f" from an allowed approver ({', '.join(allowed)})." if allowed else "."))
-    write_approval(root, key, plan, who, "github", {"pr": data.get("url"), "head": data.get("headRefOid")})
+    write_approval(root, key, plan, who, "github", {"pr": data.get("url"), "pr_number": int(pr), "head": data.get("headRefOid")})
     print(f"Recorded GitHub approval of {key} by {who} (plan {sha[:12]}).")
     return 0
 
@@ -476,6 +510,7 @@ def cmd_audit(args):
         bad += 0 if ok else 1
     if not paths:
         print("No audit logs found.")
+        return 1 if getattr(args, "require", False) else 0
     return 1 if bad else 0
 
 
@@ -525,6 +560,8 @@ def register(sub):
     s.add_argument("--plan")
     s.add_argument("--spec")
     s.add_argument("--intent")
+    s.add_argument("--quick", metavar="SUMMARY", help="Tier 1 fast path: generate a minimal plan from --files")
+    s.add_argument("--files", nargs="+", default=[])
     for name in ("status",):
         x = csub.add_parser(name)
         x.add_argument("key", nargs="?")
@@ -553,6 +590,7 @@ def register(sub):
     ausub = au.add_subparsers(dest="audit_cmd", required=True)
     v = ausub.add_parser("verify")
     v.add_argument("path", nargs="?")
+    v.add_argument("--require", action="store_true", help="fail when no audit logs exist")
     au.set_defaults(func=cmd_audit)
 
     m = sub.add_parser("metrics", help="stage-skip rate, gate denials, self-approval attempts")

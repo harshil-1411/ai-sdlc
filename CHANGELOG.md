@@ -5,7 +5,8 @@ version bump (enforced in CI by `scripts/ci/check-version-bump.sh`) and an entry
 
 ## 2.0.0 — 2026-09-24 (PILOT-53, PILOT-51, PILOT-52)
 
-v2 closes every finding of the v1 enterprise audit. Intent, spec and plan:
+v2 addresses every finding of the v1 enterprise audit; the v1-vs-v2 audit report lists what was
+fixed, what is partial, and what remains an owner action. Intent, spec and plan:
 `intent/2026-09-24-v2-enterprise-hardening/`.
 
 ### Gates (evidence-sdlc) — breaking

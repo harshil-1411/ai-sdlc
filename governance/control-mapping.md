@@ -14,6 +14,13 @@ The detailed control sets that skills apply during work are in
 `references/iso-27001.md` and `references/nist-ssdf.md`. This file maps controls to
 **mechanisms**; those files describe what a change must do to satisfy each control.
 
+## Conditions for ENFORCED
+
+Rows marked ENFORCED assume the managed-settings template is deployed: plugins
+force-enabled, the sandbox on, and `EVIDENCE_SIGNING_KEY` set for the Claude Code process and denied to
+the sandbox. Without the key, approval and audit integrity drop from *enforced* to *detected*: the
+integrity monitor records unapproved writes, but a forged record cannot be told from a real one.
+
 ## How to read the Status column
 
 | Status | Meaning |
@@ -60,7 +67,7 @@ Where more than one applies, the row says which part is which.
 | A.8.4 Access to source code | Agents cannot push to protected refs or merge (V2G-05*), cannot write control-plane files (V2G-09*). | ENFORCED (agent); OWNER ACTION (repo host permissions, branch protection) | `engine-tests.py` V2G-05*, V2G-09* | Read access and human write access are the host's. |
 | A.8.8 Management of technical vulnerabilities | `security-reviewer` must have run before push/PR at T2+ (V2S-04*); it reports every Critical/High. | ENFORCED (review ran); GUIDED (findings); OWNER ACTION (scanning, patching) | audit log `agent-completed` events; `evidence change status` → missing agents | No SCA, container or infrastructure scanning is shipped. |
 | A.8.9 Configuration management | Tighten-only policy layering (V2X-01*); control plane (V2G-09*); managed settings with `requiredMinimumVersion`; version-bump CI check. | ENFORCED (in-session); OWNER ACTION (deploy managed settings, pin model, enable CI) | `engine-tests.py` V2X-01*; CI | The template does not pin a model; see `model-and-config-change-control.md`. |
-| A.8.15 Logging | Hash-chained `.evidence/audit/<session>.jsonl`: every agent write/Bash call, every deny with rule and reason, agent runs, approvals; committed with the change (V2A-02*). | ENFORCED | `evidence audit verify` | Tamper-evident, not tamper-proof; off-box copy (OTel collector or CI artifact) is an owner action. Retention decisions: `records-retention.md`. |
+| A.8.15 Logging | Hash-chained `.evidence/audit/<session>.jsonl`: every agent write/Bash call, every deny with rule and reason, agent runs, approvals; committed with the change (enforced by the commit gate); signed when a key is deployed (V2A-02*). | ENFORCED | `evidence audit verify` | Tamper-evident, not tamper-proof; off-box copy (OTel collector or CI artifact) is an owner action. Retention decisions: `records-retention.md`. |
 | A.8.16 Monitoring activities | OTel env block in managed settings; `evidence metrics`. | OWNER ACTION (endpoint, monitoring); ENFORCED (records exist) | `evidence metrics --json` | No alerting shipped. |
 | A.8.24 Use of cryptography | Crypto/signing paths have a T3 tier floor and need a change ticket (V2S-02*, V2G-08*); secrets denied in content and diffs (V2K-01*); `secure-api-review` covers key handling. | ENFORCED (process gates); GUIDED (design); OWNER ACTION (key management) | `engine-tests.py` V2S-02*, V2G-08*, V2K-01* | Algorithm and KMS choices are reviewed by humans. |
 | A.8.25 Secure development life cycle | The lifecycle itself: intent → spec → plan → approved → implementing → verified → released (V2S-01*), with the gates above. | ENFORCED (stages, approval); GUIDED (artifact content) | `evidence change list --json`; `evidence metrics --json` | — |

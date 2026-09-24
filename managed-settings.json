@@ -1,5 +1,5 @@
 {
-  "_comment": "Template. Deployed by the platform team via MDM or the Claude admin console; engineers cannot override it. Verify every key against https://code.claude.com/docs/en/settings before rollout. Owner actions before use: (1) replace the strictKnownMarketplaces repo with your fork, (2) set the OTEL_EXPORTER_OTLP_ENDPOINT to your collector, (3) replace sandbox network domains, (4) run the canary in docs/managed-settings.md -- every new session must print 'Evidence Chain gates live'. Claude Code documents that hooks from plugins force-enabled in managed enabledPlugins are exempt from allowManagedHooksOnly; the canary proves it per version. If the line is missing, deploy docs/managed-hooks.example.json as managed hooks instead.",
+  "_comment": "Template. Deployed by the platform team via MDM or the Claude admin console; engineers cannot override it. Verify every key against https://code.claude.com/docs/en/settings before rollout. Owner actions before use: (1) replace the strictKnownMarketplaces repo with your fork, (2) set the OTEL_EXPORTER_OTLP_ENDPOINT to your collector, (3) replace sandbox network domains, (4) run the canary in docs/managed-settings.md -- every new session must print 'Evidence Chain gates live'. Claude Code documents that hooks from plugins force-enabled in managed enabledPlugins are exempt from allowManagedHooksOnly; the canary proves it per version. If the line is missing, deploy docs/managed-hooks.example.json as managed hooks instead. (5) set EVIDENCE_SIGNING_KEY from your secret store: hooks read it, while the sandbox envVars deny and the Read/sandbox denies on this file keep it from the agent -- without it the framework runs in UNSIGNED mode.",
   "permissions": {
     "deny": [
       "Read(.env*)",
@@ -20,7 +20,11 @@
       "Bash(git push -f*)",
       "Bash(git push --mirror*)",
       "Bash(gh pr merge *)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Read(/Library/Application Support/ClaudeCode/**)",
+      "Read(/etc/claude-code/**)",
+      "Bash(env*)",
+      "Bash(printenv*)"
     ],
     "allow": [
       "Bash(git status)",
@@ -62,7 +66,8 @@
     "OTEL_LOGS_EXPORTER": "otlp",
     "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
     "OTEL_EXPORTER_OTLP_ENDPOINT": "https://otel-collector.example.internal:4317",
-    "OTEL_LOG_USER_PROMPTS": "0"
+    "OTEL_LOG_USER_PROMPTS": "0",
+    "EVIDENCE_SIGNING_KEY": "REPLACE-WITH-32+-CHAR-SECRET-FROM-YOUR-SECRET-STORE"
   },
   "sandbox": {
     "enabled": true,
@@ -87,6 +92,14 @@
         {
           "path": "~/.config/gh",
           "mode": "deny"
+        },
+        {
+          "path": "/Library/Application Support/ClaudeCode",
+          "mode": "deny"
+        },
+        {
+          "path": "/etc/claude-code",
+          "mode": "deny"
         }
       ],
       "envVars": [
@@ -96,6 +109,10 @@
         },
         {
           "name": "GH_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "EVIDENCE_SIGNING_KEY",
           "mode": "deny"
         }
       ]

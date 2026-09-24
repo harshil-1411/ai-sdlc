@@ -19,7 +19,8 @@ permissions:
   pull-requests: read
 
 env:
-  EVIDENCE: plugins/evidence-sdlc/bin/evidence   # or the path where you vendor the plugin
+  EVIDENCE: .evidence-chain/plugins/evidence-sdlc/bin/evidence
+  EVIDENCE_CHAIN_REF: v2.0.0                        # pin the framework version you run
 
 jobs:
   commit-stage:
@@ -71,8 +72,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Traceability gaps (blocks on NO COVERAGE; --strict also blocks SELF-ASSERTED)
+      - name: Fetch the Evidence Chain CLI at a pinned version
+        run: git clone --depth 1 --branch "$EVIDENCE_CHAIN_REF" "https://github.com/${{ vars.EVIDENCE_CHAIN_REPO || 'REPLACE-WITH-YOUR-ORG/evidence-chain' }}" .evidence-chain
+      - name: Sign this run's results (the agent's sandbox never sees this key)
+        env:
+          EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+        run: python3 "$EVIDENCE" results sign test-results/*.xml
+      - name: Traceability gaps (only signed results prove anything; --strict blocks SELF-ASSERTED)
+        env:
+          EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
         run: python3 "$EVIDENCE" gaps --results test-results --strict
+      - name: Plan approval verified against GitHub, not the committed file
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+        run: |
+          key=$(python3 "$EVIDENCE" change status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')
+          python3 "$EVIDENCE" approve "$key" --github-pr "${{ github.event.pull_request.number }}"
       - name: Audit logs are intact
         run: python3 "$EVIDENCE" audit verify
       - name: Change state is complete for this branch

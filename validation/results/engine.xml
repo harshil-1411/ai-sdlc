@@ -1,5 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence-sdlc gate engine" tests="257" failures="0">
+<testsuite name="evidence-sdlc gate engine" tests="287" failures="0">
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 re-audit: forged (unsigned) approval rejected when a signing key is configured"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 re-audit: approval written by a human channel (signed) allows"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 re-audit: signed agent-completed entry satisfies the review gate"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-02 re-audit: forged audit entry does not count as a review"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: python3 &lt; notes.md"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: cat x.md | python3"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: bash &lt; script.txt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: cat run.txt | sh"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: nohup ./tool &amp;"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: setsid ./tool"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: echo 'rm x' | at now + 1 minute"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: crontab jobs.txt"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: hidden or deferred execution denied: launchctl load ~/Library/LaunchAgents/x."></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-08 re-audit: an output-path env assignment into validation/ is judged as a write"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: ordinary env assignments are not writes"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: reading crontab allowed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-03 re-audit: read-only agent has no network"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: macOS sed -i '' on a claimed file allowed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: CLAUDE.md is gated despite being markdown"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: docs/CLAUDE.md is gated despite being markdown"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: plugins/x/templates/REVIEW.md is gated despite being markdown"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 re-audit: .claude/commands/deploy.md is control plane"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 re-audit: .claude/skills/x/SKILL.md is control plane"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: a released change no longer unlocks edits"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: agent-run `evidence change start` is not reverted by the integrity monitor"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: a removed integrity snapshot is recorded as a violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: integrity monitor runs inside a git worktree"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: CI detached HEAD resolves the key from GITHUB_HEAD_REF"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 re-audit: a verifier run older than the latest source edit does not count"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 integrity: control-plane change by an unparsed program is restored"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 integrity: control-plane file created by an unparsed program is removed"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 integrity: unclaimed source write by an unparsed program is recorded"></testcase>
@@ -203,6 +232,7 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-05 bare push from main denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 Tier 2 PR needs security-reviewer"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-04 Tier 2 PR allowed after security-reviewer"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-02 commit without the change's evidence staged is denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'fix thing'"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'fix UTF-8 handling'"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-07/REQ-V2A-03 commit 'bump SHA-256 support'"></testcase>

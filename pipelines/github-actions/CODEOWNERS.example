@@ -1,0 +1,9 @@
+# Copy to .github/CODEOWNERS and replace the team handles. With branch protection
+# requiring code-owner review, a change to the framework's control plane needs a
+# human owner's approval on the server, which no agent session can supply.
+/.evidence/policy.json            @your-org/platform-security
+/.evidence/secrets-allowlist.json @your-org/platform-security
+/.evidence/changes/               @your-org/engineering-leads
+/.claude/                         @your-org/platform-security
+/managed-settings.json            @your-org/platform-security
+/.github/workflows/               @your-org/platform-security

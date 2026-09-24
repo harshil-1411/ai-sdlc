@@ -55,4 +55,4 @@ jobs:
             push the branch and open a draft PR containing only the intent/spec/plan, then stop and ask for plan \
             approval on the PR." \
             --permission-mode default --max-budget-usd 10 \
-            --allowedTools "Bash(evidence *)" "Bash(git *)" "Bash(gh pr create *)" "Bash(gh pr view *)" Read Write Edit Grep Glob Agent
+            --allowedTools "Bash(evidence *)" "Bash(git status*)" "Bash(git diff*)" "Bash(git log*)" "Bash(git add *)" "Bash(git commit *)" "Bash(git switch *)" "Bash(git push -u origin *)" "Bash(gh pr create *)" "Bash(gh pr view *)" Read Write Edit Grep Glob Agent

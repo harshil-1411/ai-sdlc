@@ -33,10 +33,16 @@ each rule:
   non-stub plan, and a human approval bound to the plan's current sha256; any plan edit
   voids the approval, and edits outside the plan's claimed files are denied (cases
   V2G-01*, V2G-02*, V2G-03*, V2G-04*, V2G-12*, V2A-01*).
-- The agent cannot record the approval itself: `approval.json` and `state.json` are
-  control-plane files no agent tool may write, and `evidence approve` run by an agent is
-  denied except in the GitHub-review mode, which checks for an approving review by an
-  allowed login (cases V2A-01*, V2G-09*).
+- The agent cannot record a *valid* approval itself, **when the organisation deploys a
+  signing key and the sandbox** (the managed-settings template does both). Approvals and
+  audit entries are HMAC-signed with `EVIDENCE_SIGNING_KEY`, which the hooks can read and
+  the sandboxed agent shell cannot; an unsigned or forged `approval.json` is rejected
+  (cases V2A-01* "re-audit"). Every agent tool that writes files is also denied on
+  `approval.json`/`state.json`, and `evidence approve` run by an agent is denied except
+  to record a GitHub review by an allowed login who is not the PR author. **Without a
+  signing key** (UNSIGNED mode, announced at session start), a determined agent running
+  code the gates cannot inspect could forge the file; the integrity monitor would record
+  the write but not prove who made it.
 - Pushes to protected branches and agent merges (`gh pr merge`, `gh api` merge or
   protection calls) are denied (cases V2G-05*); commits need the tracker key in the
   message, an `Agent-Session` trailer, and a clean secret scan of the staged diff
@@ -82,9 +88,13 @@ calls the model; it is not an automatic per-commit gate. See
 
 **Q. Can you show which agent made a given change?**
 Yes. Every agent tool call and every gate denial (with rule and reason) is written to a
-hash-chained log at `.evidence/audit/<session>.jsonl`, committed with the change;
-`evidence audit verify` detects an altered or removed line (engine cases V2A-02*). Each
-agent commit carries an `Agent-Session:` trailer linking it to that log. The log is
+hash-chained, and when a signing key is deployed, signed, log at
+`.evidence/audit/<session>.jsonl`. The commit gate refuses a commit that leaves the
+change's audit log, state and approval unstaged, so they are committed with the change
+(case REQ-V2A-02 "commit without the change's evidence"). `evidence audit verify` detects
+an altered or removed line and, with a key, an unsigned one (engine cases V2A-02*). Each
+commit made in a gated agent session carries an `Agent-Session:` trailer linking it to
+that log, and each entry records the model the session ran. The log is
 tamper-evident, not tamper-proof: someone with shell access outside the agent could
 rewrite the whole chain, which is why we also export telemetry off-box (see
 `governance/records-retention.md`).

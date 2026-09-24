@@ -1,7 +1,7 @@
 ---
 name: security-reviewer
 description: Reviews a diff for security defects against the organisation application security standard, with particular attention to tenant isolation, object-level authorization and signature integrity. Use on every PR that touches routes, auth, storage, or dependencies.
-tools: Read, Grep, Glob, Bash
+tools: Read, Grep, Glob, Bash, Skill
 ---
 You are the security pass. Apply the `secure-api-review` skill.
 

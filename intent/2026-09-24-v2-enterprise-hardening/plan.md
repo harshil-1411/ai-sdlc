@@ -1,5 +1,6 @@
 # Plan: v2 enterprise hardening
-Tracker: PILOT-53   From: spec.md   Approved by: suparn.bector@msbdocs.com (maintainer) — standing instruction 2026-09-24: "Lets start fixing the issues identified … do not stop until everything reported in v1 audit report has been fixed". Approval was given before this plan was written, so this plan is presented at the end of the run for after-the-fact review.   Date: 2026-09-24
+Tracker: PILOT-53   From: spec.md   Date: 2026-09-24
+Approval: none recorded in `approval.json`. The maintainer's chat instruction ("Lets start fixing the issues identified … do not stop until everything reported in v1 audit report has been fixed") authorised the work; this change was built in a session still running the v1 hooks, so it did not pass through v2's own approval channel. That is a dogfooding gap, recorded here rather than papered over.
 
 Any claim below not confirmed from a file, a command, or a named person is marked
 inline as [NEEDS VERIFICATION]. An unmarked claim asserts that it was checked.

@@ -392,6 +392,13 @@ def suite_push_merge():
 def suite_commit():
     r = make_repo()
     start_change(r)
+    t0, i0 = bash("git commit -m 'ABC-1: x' -m 'Agent-Session: s1'")
+    base_case = globals()["case"]
+    base_case("REQ-V2A-02 commit without the change's evidence staged is denied", r, t0, i0, "deny", rule_hint="git add")
+
+    def case(*a, **k):
+        sh("git add -A .evidence", r)  # a real session stages its evidence with the change
+        base_case(*a, **k)
     trailer = "' -m 'Agent-Session: s1"
     for msg, exp, hint in [("fix thing", "deny", "no tracker key"), ("fix UTF-8 handling", "deny", "no tracker key"),
                            ("bump SHA-256 support", "deny", "no tracker key"), ("ABC-1: fix", "deny", "Agent-Session"),
@@ -685,8 +692,113 @@ def suite_integrity():
     shutil.rmtree(r2)
 
 
+def suite_reaudit_fixes():
+    """Findings from the independent v2 re-audit, each reproduced and now closed."""
+    KEYENV = {"EVIDENCE_SIGNING_KEY": "k" * 40}
+    r = make_repo()
+    start_change(r)  # writes an UNSIGNED approval.json, as a forger would
+    t, i = edit("src/app.py")
+    case("REQ-V2A-01 re-audit: forged (unsigned) approval rejected when a signing key is configured", r, t, i, "deny",
+         env=KEYENV, rule_hint="not valid")
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    env_backup = os.environ.get("EVIDENCE_SIGNING_KEY")
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    import importlib, lifecycle, state as st
+    importlib.reload(st)
+    lifecycle.write_approval(r, "ABC-1", os.path.join(r, "plan", "ABC-1.md"), "human", "prompt")
+    st.audit_append(r, "s1", {"event": "agent-completed", "key": "ABC-1", "subagent_type": "evidence-sdlc:verifier"})
+    if env_backup is None:
+        del os.environ["EVIDENCE_SIGNING_KEY"]
+    case("REQ-V2A-01 re-audit: approval written by a human channel (signed) allows", r, t, i, "allow", env=KEYENV)
+    t2, i2 = bash("git push -u origin feature/ABC-1-login")
+    case("REQ-V2S-04 re-audit: signed agent-completed entry satisfies the review gate", r, t2, i2, "allow", env=KEYENV)
+    with open(os.path.join(r, ".evidence", "audit", "forged.jsonl"), "w") as f:
+        f.write(json.dumps({"event": "agent-completed", "key": "ABC-2", "subagent_type": "evidence-sdlc:verifier",
+                            "ts": "2099-01-01T00:00:00Z", "prev": "", "hash": "x"}) + "\n")
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    check("REQ-V2A-02 re-audit: forged audit entry does not count as a review", "verifier" not in st.recorded_agents(r, "ABC-2"))
+    del os.environ["EVIDENCE_SIGNING_KEY"]
+    for c in ["python3 < notes.md", "cat x.md | python3", "bash < script.txt", "cat run.txt | sh",
+              "nohup ./tool &", "setsid ./tool", "echo 'rm x' | at now + 1 minute", "crontab jobs.txt",
+              "launchctl load ~/Library/LaunchAgents/x.plist"]:
+        t, i = bash(c)
+        case(f"REQ-V2G-02 re-audit: hidden or deferred execution denied: {c[:40]}", r, t, i, "deny")
+    t, i = bash("JUNIT_OUT=validation/results/fake.xml python3 tests/test_app.py")
+    case("REQ-V2G-08 re-audit: an output-path env assignment into validation/ is judged as a write", r, t, i, "deny")
+    t, i = bash("PATH=/usr/bin:/bin ls")
+    case("REQ-V2G-02 re-audit: ordinary env assignments are not writes", r, t, i, "allow")
+    t, i = bash("crontab -l")
+    case("REQ-V2G-02 re-audit: reading crontab allowed", r, t, i, "allow")
+    t, i = bash("curl https://example.com/x")
+    case("REQ-V2K-03 re-audit: read-only agent has no network", r, t, i, "deny", agent_type="evidence-sdlc:security-reviewer",
+         rule_hint="network")
+    t, i = bash("sed -i '' 's/a/b/' src/app.py")
+    case("REQ-V2G-02 re-audit: macOS sed -i '' on a claimed file allowed", r, t, i, "allow", env=KEYENV)
+    for p in ("CLAUDE.md", "docs/CLAUDE.md", "plugins/x/templates/REVIEW.md"):
+        t, i = write(p, "x")
+        case(f"REQ-V2G-03 re-audit: {p} is gated despite being markdown", r, t, i, "deny")
+    for p in (".claude/commands/deploy.md", ".claude/skills/x/SKILL.md"):
+        t, i = write(p, "x")
+        case(f"REQ-V2G-09 re-audit: {p} is control plane", r, t, i, "deny", rule_hint="control plane")
+    st_path = os.path.join(r, ".evidence", "changes", "ABC-1", "state.json")
+    stj = json.load(open(st_path)); stj["stage"] = "released"; json.dump(stj, open(st_path, "w"))
+    t, i = edit("src/app.py")
+    case("REQ-V2S-01 re-audit: a released change no longer unlocks edits", r, t, i, "deny", rule_hint="released")
+    shutil.rmtree(r)
+
+    # the golden path: the agent runs the CLI; the integrity monitor must not revert it
+    r = make_repo(branch="feature/ABC-5-thing")
+    evidence = os.path.join(HERE, "..", "..", "bin", "evidence")
+    cmd = f"python3 {evidence} change start ABC-5 --tier 1 --kind feature"
+    pre = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": "g1",
+           "permission_mode": "default"}
+    obj, _ = run_hook(r, pre)
+    subprocess.run(cmd, shell=True, cwd=r, env=BASE_ENV, capture_output=True)
+    obj2, _ = run_hook(r, dict(pre, hook_event_name="PostToolUse"), event="post")
+    note = obj2.get("hookSpecificOutput", {}).get("additionalContext", "")
+    check("REQ-V2S-01 re-audit: agent-run `evidence change start` is not reverted by the integrity monitor",
+          os.path.isfile(os.path.join(r, ".evidence", "changes", "ABC-5", "state.json")) and "Integrity" not in note, note)
+    # missing snapshot is a violation, not a silent pass
+    pre2 = dict(pre, tool_input={"command": "./vendor/tool"}, tool_use_id="g2")
+    run_hook(r, pre2)
+    import glob as _g
+    for f in _g.glob(os.path.join(tempfile.gettempdir(), "evidence-chain-snapshots", "s1", "g2.json")):
+        os.remove(f)
+    obj3, _ = run_hook(r, dict(pre2, hook_event_name="PostToolUse"), event="post")
+    check("REQ-V2G-02 re-audit: a removed integrity snapshot is recorded as a violation",
+          "missing" in obj3.get("hookSpecificOutput", {}).get("additionalContext", ""), obj3)
+    # worktrees: .git is a file, the monitor must still run
+    wt = r + "-wt"
+    sh(f"git worktree add -q -b feature/ABC-6-wt {wt}", r)
+    pre3 = {"session_id": "s2", "cwd": wt, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"},
+            "tool_use_id": "w1", "permission_mode": "default"}
+    run_hook(wt, pre3)
+    open(os.path.join(wt, "src", "sneaky.py"), "w").write("x\n")
+    obj4, _ = run_hook(wt, dict(pre3, hook_event_name="PostToolUse"), event="post")
+    check("REQ-V2G-02 re-audit: integrity monitor runs inside a git worktree",
+          "sneaky.py" in obj4.get("hookSpecificOutput", {}).get("additionalContext", ""), obj4)
+    shutil.rmtree(wt, ignore_errors=True)
+    # CI: detached HEAD resolves the key from the PR head branch
+    sh("git checkout -q --detach", r)
+    obj5, _ = run_hook(r, {"session_id": "ci", "cwd": r}, event="session-start", env_extra={"GITHUB_HEAD_REF": "feature/ABC-5-thing"})
+    check("REQ-V2S-01 re-audit: CI detached HEAD resolves the key from GITHUB_HEAD_REF",
+          "ABC-5" in obj5.get("hookSpecificOutput", {}).get("additionalContext", ""), obj5)
+    shutil.rmtree(r)
+
+    # a review that ran before later edits does not count
+    r = make_repo()
+    start_change(r)
+    record_agent(r, "ABC-1", "evidence-sdlc:verifier")
+    import time; time.sleep(1.1)
+    run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Edit", "tool_input": {"file_path": "src/app.py"}}, event="post")
+    t, i = bash("git push -u origin feature/ABC-1-login")
+    case("REQ-V2S-04 re-audit: a verifier run older than the latest source edit does not count", r, t, i, "deny",
+         rule_hint="verifier")
+    shutil.rmtree(r)
+
+
 if __name__ == "__main__":
-    for fn in [suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
+    for fn in [suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
                suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]:
         fn()
     print(f"\n{results['pass']} passed, {results['fail']} failed")

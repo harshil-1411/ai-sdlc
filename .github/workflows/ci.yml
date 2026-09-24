@@ -17,6 +17,8 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    env:
+      EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,24 +43,19 @@ jobs:
       - name: Python compiles
         run: python3 -m py_compile plugins/evidence-sdlc/scripts/engine/*.py plugins/evidence-quality/scripts/*.py plugins/evidence-sdlc/scripts/cli/*.py
 
-      - name: Gate engine regression suite
-        run: python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py
+      - name: All suites (engine, lifecycle, sensor, CLI, content) -> fresh JUnit in validation/results
+        run: bash scripts/ci/run-tests.sh
 
-      - name: Lifecycle CLI suite
-        run: python3 plugins/evidence-sdlc/scripts/tests/cli-lifecycle-tests.py
-
-      - name: Template sensor suite
-        run: bash plugins/evidence-sdlc/scripts/tests/template-sensor-tests.sh
-
-      - name: Traceability CLI suite
-        run: bash cli/tests/test_cli_fixtures.sh
+      - name: Sign the results this run produced (only CI holds the key)
+        if: env.EVIDENCE_SIGNING_KEY != ''
+        run: python3 plugins/evidence-sdlc/bin/evidence results sign validation/results/*.xml
 
       - name: Version bump check
         if: github.event_name == 'pull_request'
         run: bash scripts/ci/check-version-bump.sh "origin/${{ github.base_ref }}"
 
-      - name: Dogfood — this repository's own traceability gaps
-        run: python3 plugins/evidence-sdlc/bin/evidence gaps
+      - name: Dogfood — this repository's own traceability gaps (strict)
+        run: python3 plugins/evidence-sdlc/bin/evidence gaps --strict
 
       - name: Dogfood — audit logs verify
         run: python3 plugins/evidence-sdlc/bin/evidence audit verify

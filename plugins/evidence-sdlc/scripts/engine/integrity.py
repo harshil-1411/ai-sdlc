@@ -17,6 +17,7 @@ SECURITY.md. Standard library only.
 import base64
 import glob
 import hashlib
+import hashlib
 import json
 import os
 import re
@@ -56,9 +57,21 @@ def _hash(path):
         return None
 
 
+def _is_git(root):
+    try:
+        return subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root, capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _dirty(root):
-    out = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=root,
-                         capture_output=True, timeout=20)
+    # --untracked-files=normal collapses untracked directories, which keeps this fast on
+    # large repositories (a new file in an untracked directory shows as the directory).
+    try:
+        out = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=normal"], cwd=root,
+                             capture_output=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        return "timeout"
     if out.returncode != 0:
         return None
     files = {}
@@ -73,14 +86,48 @@ def _dirty(root):
         if code[0] in "RC":
             i += 1  # rename/copy: next field is the source path
         full = os.path.join(root, path)
-        files[path] = _hash(full) if os.path.isfile(full) else None
+        if os.path.isdir(full):
+            h = hashlib.sha256()
+            for dp, _, fns in os.walk(full):
+                for fn in sorted(fns)[:2000]:
+                    h.update((os.path.relpath(os.path.join(dp, fn), root) + str(_hash(os.path.join(dp, fn)))).encode())
+            files[path.rstrip("/")] = h.hexdigest()
+        else:
+            files[path] = _hash(full) if os.path.isfile(full) else None
         i += 1
     return files
 
 
+def cli_writes(ctx):
+    """Control-plane files the `evidence` CLI legitimately writes for this command, when
+    the command consists only of evidence CLI calls (and harmless shell glue)."""
+    import cmdparse
+    cmd = ctx.tool_input.get("command") or ""
+    simples, ok, _ = cmdparse.split_simple(cmd)
+    allowed = set()
+    for s in simples:
+        if s.prog in ("cd", "echo", "true", "printf"):
+            continue
+        is_cli = s.prog == "evidence" or (s.prog.startswith("python") and len(s.argv) > 1
+                                          and os.path.basename(s.argv[1]) == "evidence")
+        if not is_cli:
+            return set()
+        args = [a for a in s.argv[1:] if not a.startswith("-")]
+        if s.prog != "evidence":
+            args = args[1:]
+        if args[:2] in (["change", "start"], ["change", "advance"]) and len(args) > 2:
+            allowed.add(f".evidence/changes/{args[2]}/state.json")
+        elif args[:1] == ["approve"] and len(args) > 1 and any(a.startswith("--github-pr") for a in s.argv):
+            allowed.update({f".evidence/changes/{args[1]}/approval.json", f".evidence/changes/{args[1]}/state.json"})
+        if args[:2] == ["change", "start"] and len(args) > 2 and "--quick" in s.argv:
+            allowed.add(f"plan/{args[2]}.md")
+    return allowed
+
+
 def snapshot(ctx):
+    import signing
     root, pol = ctx.root, ctx.policy
-    if not os.path.isdir(os.path.join(root, ".git")):
+    if not _is_git(root):
         return
     cp = {}
     for rel in _control_plane_files(root, pol):
@@ -91,9 +138,11 @@ def snapshot(ctx):
             cp[rel] = base64.b64encode(data).decode() if len(data) <= MAX_HASH_BYTES else None
         except OSError:
             pass
-    snap = {"cp": cp, "dirty": _dirty(root) or {}, "audit": _audit_sizes(root)}
+    dirty = _dirty(root)
+    snap = {"cp": cp, "dirty": dirty if isinstance(dirty, dict) else {}, "timeout": dirty == "timeout",
+            "audit": _audit_sizes(root), "cli_writes": sorted(cli_writes(ctx)), "root": root}
     with open(_snap_path(ctx.session, ctx.payload.get("tool_use_id")), "w") as f:
-        json.dump(snap, f)
+        json.dump(signing.sign(snap), f)
 
 
 def _audit_sizes(root):
@@ -111,10 +160,16 @@ def _audit_sizes(root):
 def check(ctx, judge):
     """Compare against the pre-snapshot. `judge(rel)` returns a deny Decision or None.
     Returns (notes, violations)."""
+    import signing
     root, pol = ctx.root, ctx.policy
+    if not _is_git(root):
+        return [], []
     p = _snap_path(ctx.session, ctx.payload.get("tool_use_id"))
     if not os.path.isfile(p):
-        return [], []
+        # pre always snapshots an allowed Bash call in a git repo; a missing snapshot means
+        # something removed it, so what the command did cannot be checked.
+        return (["the integrity snapshot for that command is missing, so its effects could not be checked."],
+                [{"path": "(integrity snapshot)", "rule": "integrity-snapshot-missing", "action": "recorded"}])
     try:
         snap = json.load(open(p))
     finally:
@@ -123,10 +178,20 @@ def check(ctx, judge):
         except OSError:
             pass
     notes, violations = [], []
+    if signing.verify(snap) is False:
+        notes.append("the integrity snapshot for that command was altered, so its effects could not be checked.")
+        violations.append({"path": "(integrity snapshot)", "rule": "integrity-snapshot-altered", "action": "recorded"})
+        return notes, violations
+    if snap.get("timeout"):
+        notes.append("the working tree was too large to snapshot within the time limit, so that command's effects were not checked.")
+        violations.append({"path": "(working tree)", "rule": "integrity-timeout", "action": "recorded"})
+    cli_ok = set(snap.get("cli_writes", []))
     # 1. control plane: restore anything that changed, remove anything created
     before = snap.get("cp", {})
     now_files = set(r for r in _control_plane_files(root, pol) if not r.startswith(".evidence/audit/"))
     for rel in sorted(set(before) | now_files):
+        if rel in cli_ok:
+            continue  # written by the evidence CLI itself for this command
         full = os.path.join(root, rel)
         old = before.get(rel)
         cur = None
@@ -152,13 +217,17 @@ def check(ctx, judge):
             violations.append({"path": f".evidence/audit/{name}", "rule": "audit-tamper", "action": "recorded"})
     # 3. every other changed file is judged as if it had been an Edit
     after = _dirty(root)
+    if after == "timeout":
+        after = None
     if after is not None:
         prev = snap.get("dirty", {})
         for rel, h in sorted(after.items()):
             if prev.get(rel, "<absent>") == h:
                 continue
-            if st.glob_match(rel, pol.get("control_plane", [])):
+            if st.glob_match(rel, pol.get("control_plane", [])) or rel in cli_ok:
                 continue
+            if rel == ".evidence" or rel.startswith(".evidence/"):
+                continue  # control-plane files are checked above; profiles and decisions are ungated
             d = judge(rel)
             if d is not None and not d.allow:
                 violations.append({"path": rel, "rule": d.rule, "action": "recorded"})

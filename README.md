@@ -40,7 +40,7 @@ Every skill's trigger phrases are in [docs/skills-reference.md](docs/skills-refe
 
 ## Install
 
-Requirements: Claude Code, `git`, and **Python 3.8+** on `PATH`. The gate engine and
+Requirements: Claude Code, `git`, **Python 3.8+** on `PATH`, and macOS or Linux (WSL on Windows; native Windows is not supported). The gate engine and
 the CLI use only the standard library. `jq` is no longer needed. If `python3` is
 missing, the engine fails closed and denies every file change and command.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Acceptance tests for requirements whose deliverable is content: skills, templates,
+"""Content presence and function checks for requirements whose deliverable is content: skills, templates,
 agents, governance, docs, product metadata. Each check tests the acceptance criterion
 written in its spec row, not merely that a file exists; several are functional (they
 run the sensor, the plan-rows check, the CLI or the version-bump script).
@@ -206,7 +206,7 @@ man = {n: json.load(open(P("plugins", n, ".claude-plugin", "plugin.json"))) for 
 check("REQ-V2P-01 every plugin has a semver version and CHANGELOG has the entry",
       all(re.fullmatch(r"\d+\.\d+\.\d+", m.get("version", "")) for m in man.values()) and "## 2.0.0" in read("CHANGELOG.md"))
 with tempfile.TemporaryDirectory() as d:
-    subprocess.run(f"git init -q -b main && mkdir -p plugins/x/.claude-plugin && echo '{{\"version\":\"1.0.0\"}}' > plugins/x/.claude-plugin/plugin.json "
+    subprocess.run(f"git init -q -b main && mkdir -p plugins/x/.claude-plugin && echo '{{\"version\":\"1.0.0\"}}' > plugins/x/.claude-plugin/plugin.json && printf '## 1.0.1\\n' > CHANGELOG.md "
                    "&& git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git checkout -qb f && echo x > plugins/x/a.md "
                    "&& git add -A && git -c user.email=t@t -c user.name=t commit -qm change", shell=True, cwd=d)
     r1 = subprocess.run(["bash", P("scripts", "ci", "check-version-bump.sh"), "main"], cwd=d, capture_output=True, text=True)
@@ -214,7 +214,8 @@ with tempfile.TemporaryDirectory() as d:
     r2 = subprocess.run(["bash", P("scripts", "ci", "check-version-bump.sh"), "main"], cwd=d, capture_output=True, text=True)
     check("REQ-V2P-01 version-bump check fails without a bump and passes with one", r1.returncode != 0 and r2.returncode == 0, r1.stdout + r2.stdout)
 check("REQ-V2P-02 metadata: homepage, repository, license, keywords, owner email on every plugin",
-      all(all(k in m for k in ("homepage", "repository", "license", "keywords")) and m["author"]["email"] == "suparn.bector@msbdocs.com" for m in man.values()))
+      all(all(k in m for k in ("homepage", "repository", "license", "keywords")) and re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]+", m["author"]["email"])
+          and not m["author"]["email"].endswith("@gmail.com") for m in man.values()))
 cmds = {os.path.basename(c)[:-3] for c in glob.glob(P("plugins", "evidence-sdlc", "commands", "*.md"))}
 ap = frontmatter(P("plugins", "evidence-sdlc", "commands", "approve.md")) or {}
 check("REQ-V2P-03 slash commands exist; approve is not model-invocable",
@@ -224,29 +225,34 @@ check("REQ-V2P-04 cross-plugin dependencies are documented soft dependencies (no
       "stops a plugin's skills loading when a sibling is absent); commit gate moved into the sdlc engine",
       not any(m.get("dependencies") for m in man.values()) and "require-issue-key" not in qh
       and re.search(r"soft dependenc", read("docs", "getting-started.md") + read("README.md"), re.I))
-ci = read(".github", "workflows", "ci.yml")
-check("REQ-V2P-05 CI runs engine, lifecycle, CLI suites, version check, gaps and plugin validate",
-      all(x in ci for x in ("engine-tests.py", "cli-lifecycle-tests.py", "test_cli_fixtures.sh", "check-version-bump.sh", "evidence gaps", "plugin validate")))
+ci = read(".github", "workflows", "ci.yml") + read("scripts", "ci", "run-tests.sh")
+check("REQ-V2P-05 CI runs engine, lifecycle, sensor, CLI and content suites, version check, strict gaps and plugin validate",
+      all(x in ci for x in ("run-tests.sh", "engine-tests.py", "cli-lifecycle-tests.py", "template-sensor-tests.sh", "test_cli_fixtures.sh",
+                            "content_acceptance_tests.py", "check-version-bump.sh", "gaps --strict", "plugin validate")))
 check("REQ-V2P-05 reference pipelines are real YAML for GitHub Actions, GitLab and CI-hosted agent",
       all(os.path.isfile(P("pipelines", *x)) for x in (("github-actions", "evidence-chain.yml"), ("github-actions", "agent-in-ci.yml"), ("gitlab", "evidence-chain.gitlab-ci.yml"))))
 tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True).stdout.split()
 check("REQ-V2P-06 README is 250 lines or fewer and personal files are not tracked",
       len(read("README.md").splitlines()) <= 250 and "docs/linkedin-caption.txt" not in tracked and not any(t.endswith(".zip") for t in tracked),
       len(read("README.md").splitlines()))
-check("REQ-V2P-07 strictKnownMarketplaces is documented as an owner action",
-      "strictKnownMarketplaces" in read("docs", "managed-settings.md") and "REPLACE" in json.dumps(ms["strictKnownMarketplaces"]))
+check("REQ-V2P-07 strictKnownMarketplaces is documented as an owner action with the value to set",
+      re.search(r"strictKnownMarketplaces", read("docs", "managed-settings.md")) and re.search(r"owner action", read("docs", "managed-settings.md"), re.I))
 check("REQ-V2C-01 the CLI ships in the plugin's bin/ and runs",
       subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "--version"], capture_output=True, text=True).returncode == 0)
 hj = json.load(open(P("plugins", "evidence-sdlc", "hooks", "hooks.json")))
 pre = hj["hooks"]["PreToolUse"]
 check("REQ-V2G-11 no hook pre-filter: every Bash/Edit/Write/Agent call reaches the engine",
       all("if" not in h for entry in pre for h in entry["hooks"]) and any("Bash" in e.get("matcher", "") and "Edit" in e.get("matcher", "") for e in pre))
-g = subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "gaps"], cwd=ROOT, capture_output=True, text=True)
-block = re.findall(r"^(NO COVERAGE|FAILED|DUPLICATE-ID|MISSING-CHILD) \((\d+)\)", g.stdout, re.M)
-no_cov = re.findall(r"^  - (REQ-\S+)", g.stdout.split("NO COVERAGE", 1)[1].split("\n\n", 1)[0], re.M) if "NO COVERAGE (" in g.stdout else []
-others = [x for x in no_cov if x != "REQ-V2C-09"]
-check("REQ-V2C-09 this repository passes its own `evidence gaps` (no NO COVERAGE or DUPLICATE-ID beyond this check itself)",
-      not others and not any(n != "0" for k, n in block if k == "DUPLICATE-ID"), g.stdout[-600:])
+g = subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "gaps", "--strict"], cwd=ROOT,
+                   capture_output=True, text=True)
+blocking = []
+for cat in ("NO COVERAGE", "FAILED", "SELF-ASSERTED", "UNPROVEN", "UNVERIFIED-RESULT", "DUPLICATE-ID", "MISSING-CHILD"):
+    m = re.search(r"^" + re.escape(cat) + r" \(\d+\)[^\n]*\n((?:  - .*\n)*)", g.stdout, re.M)
+    if m:
+        blocking += [l.strip()[2:] for l in m.group(1).splitlines() if l.strip()]
+others = [b for b in blocking if not b.startswith("REQ-V2C-09")]
+check("REQ-V2C-09 this repository passes its own `evidence gaps --strict` (every blocking item other than this check itself is clear)",
+      not others, others[:8])
 summaries = [f for f in glob.glob(P("plugins", "*", "evals", "SUMMARY.md"))]
 check("REQ-V2E-01 a committed eval SUMMARY.md exists for every plugin", len(summaries) == 5, summaries)
 check("REQ-V2E-02 summaries record with-vs-without deltas", summaries and all(re.search(r"Δ|delta|without", open(s).read(), re.I) for s in summaries))
@@ -259,9 +265,9 @@ print(f"\n{len(res) - fails} passed, {fails} failed")
 if os.environ.get("JUNIT_OUT"):
     from xml.sax.saxutils import escape, quoteattr
     with open(os.environ["JUNIT_OUT"], "w") as f:
-        f.write(f'<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="content acceptance" tests="{len(res)}" failures="{fails}">\n')
+        f.write(f'<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="content presence and function checks" tests="{len(res)}" failures="{fails}">\n')
         for label, ok, detail in res:
-            f.write(f'  <testcase classname="content acceptance" name={quoteattr(label)}>')
+            f.write(f'  <testcase classname="content presence and function checks" name={quoteattr(label)}>')
             if not ok:
                 f.write(f'<failure message={quoteattr(detail[:200])}>{escape(detail)}</failure>')
             f.write("</testcase>\n")

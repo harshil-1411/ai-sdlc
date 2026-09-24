@@ -90,6 +90,18 @@ State these to anyone relying on the gates:
   configuration, enabling `.github/workflows/ci.yml`, and running the canary after
   deploying managed settings.
 
+### Platform limits
+
+- **Windows is not supported.** Hooks are launched through `bash`, TTY approval needs
+  `/dev/tty`, and the nested-session check uses `ps`. WSL works; native Windows does not.
+- **Detection versus prevention.** The pre-check blocks what it can parse. The integrity
+  monitor catches what it could not, after the command runs, and restores control-plane
+  files. With `EVIDENCE_SIGNING_KEY` deployed and the sandbox on, forged records are
+  rejected. Without the key, forgery is detected but not prevented.
+- **Very large repositories.** Each Bash call snapshots `git status`. If that exceeds
+  the time limit, the call is recorded as unchecked (an integrity violation), not
+  silently passed.
+
 ## What this project deliberately does not do
 
 - It does not ship credentials, tokens, or endpoints for any third-party service (the
