@@ -73,7 +73,15 @@ re-run the check after approving a PR (`pull_request_target` doesn't fire on rev
   files in untracked directories can stall the monitor's hashing; the snapshot's root isn't
   compared with the post call's; snapshot files are created world-readable; `cmdparse` merges the
   line after a heredoc into the previous command; the GitHub approval route doesn't compare the
-  approver with the change's creator.
+  approver with the change's creator. From the final code review of `verify-range`:
+  - a shared log merged with the base's lines first fails rule 4;
+  - `.evidence/context/` and `.evidence/decisions/` are ungated locally but must be claimed in CI;
+  - non-record files under `.evidence/changes/` and `.evidence/audit/` are exempt from claims;
+  - one session's log appended on both sides of a merge fails;
+  - whole-range log containment is by set, not by order;
+  - `CODEOWNERS` directory patterns without a slash are matched only at the top level;
+  - after a post-hook timeout, the alarm is not re-armed;
+  - `--o` for `--only` is not caught, though harmless without a pathspec.
 - **PILOT-60:** usability: CI-owned test results (ADR-0002), YAML comment handling,
   DUPLICATE-ID for Tier 2+ plans under `plan/`, temp-directory false positives, the
   `engine-tests.py -k` crash, and splitting `deny_git_config_keys` so harmless global keys

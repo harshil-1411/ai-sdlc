@@ -63,8 +63,9 @@ These refine the rules above. Each is tested in `cli-lifecycle-tests.py` "REQ-IM
   meanwhile can't be reused.
 - **Merges, rule 4:** a log must be a byte-prefix extension of the merge's **first** parent. For
   the other parents, every line must still be present. No byte-prefix of both sides can exist when
-  both appended to the same log, for example the shared `clear-violations.jsonl`, or one session
-  that worked on both sides.
+  both appended to the same shared log, such as `clear-violations.jsonl`. Resolve such a conflict
+  with the branch's lines first. One *session's* log appended on both sides still fails, because
+  its hash chain forks by more than one step. That shape is not supported (PILOT-59).
 - **Merges, rule 5:** a merge is judged against its first parent, and a record whose merged
   version is exactly a non-first parent's, where that parent is in the base, came in with an
   update from the base and is not this PR's change.

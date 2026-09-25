@@ -56,7 +56,9 @@
       "action": "recorded",
       "at": "2026-09-25T09:20:42Z",
       "session": "7ef91d89-f94a-4070-9b35-c3aae1b4f254",
-      "open": true
+      "open": false,
+      "cleared_by": "suparn.bector@msbdocs.com",
+      "cleared_at": "2026-09-25T09:23:10Z"
     },
     {
       "path": "/Library/Application Support/ClaudeCode/evidence-policy.json.pilot-backup",
@@ -64,8 +66,10 @@
       "action": "recorded",
       "at": "2026-09-25T09:20:42Z",
       "session": "7ef91d89-f94a-4070-9b35-c3aae1b4f254",
-      "open": true
+      "open": false,
+      "cleared_by": "suparn.bector@msbdocs.com",
+      "cleared_at": "2026-09-25T09:23:10Z"
     }
   ],
-  "sig": "722fa0fa13122cb25b992edd21c6a88c154fafe21b2038e117f2e65e68a11acc"
+  "sig": "24ef345be7dde6d05edcbc39693361feb7e7404b535b7467cec73c31c981120e"
 }
