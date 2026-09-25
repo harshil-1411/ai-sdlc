@@ -1373,8 +1373,11 @@ def suite_audit_concurrency_and_hook_scope():
         os.chmod(bang, 0o755)
     note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
     vtext = json.dumps([open(f).read() for f in glob.glob(os.path.join(r, ".evidence", "**", "violations*"), recursive=True)])
+    # Since PILOT-58 (REQ-IMH-01) a refused removal is its own violation instead of an exception
+    # that fails the whole check; either way it must be recorded, never swallowed.
     check("REQ-SLF-09 security: a failing integrity check is recorded as a violation, not swallowed",
-          "integrity check for that command failed" in note and "integrity-check-error" in vtext, (note, vtext))
+          ("integrity check for that command failed" in note and "integrity-check-error" in vtext)
+          or ("could not be removed safely" in note and "control-plane-removal-refused" in vtext), (note, vtext))
     shutil.rmtree(r)
 
     # the human CLI's artifact-path check is case-insensitive (macOS/Windows filesystems)

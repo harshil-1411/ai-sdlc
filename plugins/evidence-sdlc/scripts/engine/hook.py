@@ -139,6 +139,17 @@ def lifecycle_decision(ctx):
     return ep.deny("lifecycle-refused", f"The gate engine ran `{shown}` and it refused:\n{text}")
 
 
+def _git_marker_above(path):
+    d = os.path.realpath(path or ".")
+    while True:
+        if os.path.lexists(os.path.join(d, ".git")):
+            return True
+        parent = os.path.dirname(d)
+        if parent == d:
+            return False
+        d = parent
+
+
 def run_pre(payload):
     ctx = ep.Ctx(payload)
     try:
@@ -151,6 +162,12 @@ def run_pre(payload):
     if refused:
         # The engine runs git here holding the signing key; with this config, git would run a command (ADR-0003 §2).
         decision = ep.deny("git-config-refused", refused + ".")
+        _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
+        return pre_response(decision)
+    if _git_marker_above(ctx.cwd) and st.run_git(["rev-parse", "--git-dir"], ctx.cwd) is None:
+        # a repository git cannot read is not "no repository": nothing could be checked (REQ-IMH-23)
+        decision = ep.deny("git-unavailable", "This directory is inside a git repository that git cannot read, so the "
+                                              "gates cannot check anything here. A human repairs the repository.")
         _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
         return pre_response(decision)
     decision = ep.decide_pre(ctx)

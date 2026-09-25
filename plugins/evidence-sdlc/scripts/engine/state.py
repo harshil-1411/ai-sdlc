@@ -390,7 +390,7 @@ def _rel_parts(rel):
     return parts
 
 
-def _dir_fd(root, dirs):
+def _dir_fd(root, dirs, create=True):
     """A handle on root/dirs..., creating missing directories; refuses any symlinked component."""
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -398,6 +398,8 @@ def _dir_fd(root, dirs):
             try:
                 nfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             except FileNotFoundError:
+                if not create:
+                    raise
                 try:
                     os.mkdir(d, 0o755, dir_fd=fd)
                 except FileExistsError:
@@ -428,6 +430,39 @@ def write_file(root, rel, data):
         os.replace(tmp, parts[-1], src_dir_fd=dfd, dst_dir_fd=dfd)
     finally:
         os.close(dfd)
+
+
+def remove_file(root, rel):
+    """Unlink root/rel through directory handles: a symlinked component raises, and a symlink
+    at rel itself is removed, never what it points to. A directory is refused (OSError)."""
+    parts = _rel_parts(rel)
+    dfd = _dir_fd(root, parts[:-1], create=False)
+    try:
+        os.unlink(parts[-1], dir_fd=dfd)
+    finally:
+        os.close(dfd)
+
+
+def read_file_nofollow(root, rel, cap):
+    """Bytes of root/rel, read without following a link anywhere on the path. Raises OSError
+    for a link, a non-regular file or more than `cap` bytes."""
+    import stat
+    parts = _rel_parts(rel)
+    dfd = _dir_fd(root, parts[:-1], create=False)
+    try:
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0), dir_fd=dfd)
+    finally:
+        os.close(dfd)
+    with os.fdopen(fd, "rb") as f:
+        s = os.fstat(f.fileno())
+        if not stat.S_ISREG(s.st_mode):
+            raise OSError(f"{rel} is not a regular file")
+        if s.st_size > cap:
+            raise OSError(f"{rel} is larger than {cap} bytes")
+        data = f.read(cap + 1)
+    if len(data) > cap:
+        raise OSError(f"{rel} is larger than {cap} bytes")
+    return data
 
 
 def open_append(root, rel):
@@ -597,10 +632,20 @@ def record_violations(root, key, state, branch, violations, session):
 
 def _read_violations(p):
     import signing
-    if not os.path.isfile(p):
+    import stat
+    try:
+        mode = os.lstat(p).st_mode
+    except FileNotFoundError:
         return []
+    except OSError as e:
+        return [{"path": p, "rule": f"violations record unreadable ({e.strerror})", "open": True}]
+    if not stat.S_ISREG(mode):
+        # a directory, link or other non-file here must not read as "no violations" (REQ-IMH-02)
+        return [{"path": p, "rule": "violations record is not a regular file", "open": True}]
     try:
         raw = json.load(open(p))
+    except OSError as e:
+        return [{"path": p, "rule": f"violations record unreadable ({e.strerror})", "open": True}]
     except ValueError:
         return [{"path": p, "rule": "unreadable violations file", "open": True}]
     if isinstance(raw, list):  # pre-v2.0 format: trusted only when no key is deployed
