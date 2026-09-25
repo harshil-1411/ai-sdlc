@@ -229,8 +229,8 @@ def snapshot(ctx):
     dirty = _dirty(root)
     snap = {"cp": cp, "odd": odd, "dirty": dirty if isinstance(dirty, dict) else {}, "timeout": dirty == "timeout",
             "tool_use_id": ctx.payload.get("tool_use_id") or "last", "session": ctx.session, "taken_at": st.now(),
-            "audit": _audit_sizes(root), "cli_writes": sorted(cli_writes(ctx)), "root": root, "extras": _extras(root, pol),
-            "git_dir": _git_dir_id(root)}
+            "audit": _audit_prefixes(root), "cli_writes": sorted(cli_writes(ctx)), "root": root, "extras": _extras(root, pol),
+            "git_dir": _git_dir_id(root), "dirs": _dir_ids(root)}
     st.write_file(tempfile.gettempdir(), _snap_rel(ctx.session, ctx.payload.get("tool_use_id")),
                   json.dumps(signing.sign(snap)))
 
@@ -268,16 +268,64 @@ def _extras(root, policy):
     return ex
 
 
-def _audit_sizes(root):
+EVIDENCE_DIRS = (".evidence", ".evidence/audit", ".evidence/changes", ".evidence/violations")
+
+
+def _dir_ids(root):
+    """Type, mode, owner and identity of the .evidence directories (REQ-IMH-05): a chmod or a
+    swapped directory changes what the engine can write or what a later read sees."""
+    out = {}
+    for rel in EVIDENCE_DIRS:
+        try:
+            s = os.lstat(os.path.join(root, rel))
+            out[rel] = [stat.S_IFMT(s.st_mode), stat.S_IMODE(s.st_mode), s.st_uid, s.st_dev, s.st_ino]
+        except OSError:
+            out[rel] = None
+    return out
+
+
+def _audit_prefixes(root):
+    """{log name: [size, sha256 of those bytes]} for each regular audit log (REQ-IMH-20)."""
     d = st.audit_dir(root)
-    sizes = {}
-    if os.path.isdir(d):
-        for n in os.listdir(d):
-            try:
-                sizes[n] = os.path.getsize(os.path.join(d, n))
-            except OSError:
-                pass
-    return sizes
+    out = {}
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return out
+    for n in names:
+        h = _prefix_hash(root, f".evidence/audit/{n}", None)
+        if h:
+            out[n] = h
+    return out
+
+
+def _prefix_hash(root, rel, size):
+    """[size, sha256] of the first `size` bytes (all of it when None) of a regular file read
+    without following links; None if it is not a regular file or is shorter than `size`."""
+    try:
+        parts = st._rel_parts(rel)
+        dfd = st._dir_fd(root, parts[:-1], create=False)
+        try:
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0), dir_fd=dfd)
+        finally:
+            os.close(dfd)
+        with os.fdopen(fd, "rb") as f:
+            s = os.fstat(f.fileno())
+            if not stat.S_ISREG(s.st_mode):
+                return None
+            want = s.st_size if size is None else size
+            if s.st_size < want:
+                return None
+            h, left = hashlib.sha256(), want
+            while left > 0:
+                chunk = f.read(min(1 << 20, left))
+                if not chunk:
+                    return None
+                h.update(chunk)
+                left -= len(chunk)
+            return [want, h.hexdigest()]
+    except (OSError, ValueError):
+        return None
 
 
 def check(ctx, judge):
@@ -390,12 +438,40 @@ def check(ctx, judge):
             if before_ex.get(k) != after_ex.get(k):
                 notes.append(f"{k} was changed by that command (outside what git status shows).")
                 violations.append({"path": k, "rule": "hidden-change", "action": "recorded"})
-    # 2. audit logs may only grow, never shrink or be replaced
-    for name, size in snap.get("audit", {}).items():
-        full = os.path.join(st.audit_dir(root), name)
-        if not os.path.isfile(full) or os.path.getsize(full) < size:
-            notes.append(f"audit log {name} was truncated or deleted by that command.")
-            violations.append({"path": f".evidence/audit/{name}", "rule": "audit-tamper", "action": "recorded"})
+    # 1c. the .evidence directories themselves: type, mode, owner, identity (REQ-IMH-05).
+    # A directory that did not exist before may appear; one that existed may not change.
+    now_dirs = _dir_ids(root)
+    for rel, was in sorted((snap.get("dirs") or {}).items()):
+        if was is not None and now_dirs.get(rel) != was:
+            notes.append(f"{rel} (directory) had its type, mode, owner or identity changed by that command.")
+            violations.append({"path": rel, "rule": "evidence-dir-changed", "action": "recorded"})
+    # 2. audit logs may only grow: the old bytes must still be an exact prefix (REQ-IMH-20)
+    before_logs = snap.get("audit", {})
+    for name, was in sorted(before_logs.items()):
+        rel = f".evidence/audit/{name}"
+        if isinstance(was, int):  # a snapshot from before 2.1.0: size only
+            ok = _prefix_hash(root, rel, was) is not None
+        else:
+            ok = _prefix_hash(root, rel, was[0]) == was
+        if not ok:
+            notes.append(f"audit log {name} was truncated, rewritten, replaced or deleted by that command.")
+            violations.append({"path": rel, "rule": "audit-tamper", "action": "recorded"})
+    # a log created during the call must verify as a log (hash chain, signatures)
+    try:
+        created = sorted(set(os.listdir(st.audit_dir(root))) - set(before_logs))
+    except OSError:
+        created = []
+    for name in created:
+        rel = f".evidence/audit/{name}"
+        if not name.endswith(".jsonl") or _prefix_hash(root, rel, None) is None:
+            continue  # links and non-files are reported with the control plane above
+        try:
+            good = st.audit_verify(os.path.join(root, rel), [])[0]
+        except (OSError, ValueError) as e:
+            good = False
+        if not good:
+            notes.append(f"audit log {name} was created by that command and does not verify.")
+            violations.append({"path": rel, "rule": "audit-tamper", "action": "recorded"})
     # 3. every other changed file is judged as if it had been an Edit
     after = _dirty(root) if git_ok else None
     if after == "timeout":
@@ -419,6 +495,17 @@ def check(ctx, judge):
                 violations.append({"path": rel, "rule": d.rule, "action": "recorded"})
                 notes.append(f"{rel} was changed by that command although the gates would have denied it: {d.reason}")
         for rel in sorted(set(prev) - set(after)):
-            # a previously dirty file now clean: reverted to HEAD, which is allowed
-            pass
+            # A previously dirty file no longer listed. If it still exists it was reverted to
+            # HEAD, which is allowed. If it is gone, it was untracked (a deleted tracked file
+            # would still be listed), and deleting it is judged like any delete (REQ-IMH-07).
+            if os.path.lexists(os.path.join(root, rel)) or rel == ".evidence" or rel.startswith(".evidence/"):
+                continue
+            if st.glob_match(rel, pol.get("control_plane", [])) or rel in cli_ok:
+                continue
+            if not st.glob_match(rel, pol.get("ungated", [])):
+                changed_gated.append(rel)
+            d = judge(rel)
+            if d is not None and not d.allow:
+                violations.append({"path": rel, "rule": d.rule, "action": "recorded"})
+                notes.append(f"{rel} was deleted by that command although the gates would have denied it: {d.reason}")
     return notes, violations, changed_gated

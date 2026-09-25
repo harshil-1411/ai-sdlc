@@ -1490,9 +1490,9 @@ def suite_pilot58():
     # REQ-IMH-07: deleting a file inside an untracked directory is judged
     r = committed_repo()
     os.makedirs(os.path.join(r, "notes"))
-    open(os.path.join(r, "notes", "a.txt"), "w").write("x\n")
-    _, note = around(r, lambda: os.remove(os.path.join(r, "notes", "a.txt")))
-    check("REQ-IMH-07 deleting an unclaimed untracked file is judged like any delete", "notes/a.txt" in note, note)
+    open(os.path.join(r, "notes", "a.py"), "w").write("x = 1\n")  # gated (a .txt would be ungated) and unclaimed
+    _, note = around(r, lambda: os.remove(os.path.join(r, "notes", "a.py")))
+    check("REQ-IMH-07 deleting an unclaimed untracked file is judged like any delete", "notes/a.py" in note, note)
     shutil.rmtree(r)
 
     # REQ-IMH-08: a snapshot replaced by a link to a large file is treated as altered; post completes

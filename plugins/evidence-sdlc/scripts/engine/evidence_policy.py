@@ -433,12 +433,17 @@ def _check_commit(ctx, sargs, bodies=()):
             return deny("agent-trailer",
                         "Commits made by an agent must say which session made them. End the commit message with the "
                         f"trailer line:\nAgent-Session: {ctx.session}")
+    git_failed = deny("git-unavailable", "git could not list what this commit contains, so it cannot be checked. "
+                                         "Try again; if it persists a human checks the repository.")
     if key and pol.get("commit_requires_audit", True):
-        staged = set((st.git(["diff", "--cached", "--name-only"], ctx.root) or "").split())
-        tracked = set((st.git(["ls-files", ".evidence"], ctx.root) or "").split())
+        # a failed git call is never "nothing staged" (REQ-IMH-23)
+        staged, tracked, unstaged = (st.git(a, ctx.root) for a in (["diff", "--cached", "--name-only"],
+                                                                   ["ls-files", ".evidence"], ["diff", "--name-only"]))
+        if staged is None or tracked is None or unstaged is None:
+            return git_failed
+        staged, tracked, unstaged = set(staged.split()), set(tracked.split()), set(unstaged.split())
         need = []
         safe = re.sub(r"[^A-Za-z0-9_-]", "_", ctx.session or "")[:80]
-        unstaged = set((st.git(["diff", "--name-only"], ctx.root) or "").split())
         session_log = f".evidence/audit/{safe}.jsonl"
         for rel in (session_log, f".evidence/changes/{key}/state.json",
                     f".evidence/changes/{key}/approval.json", f".evidence/audit/approval-{key}.jsonl"):
@@ -462,9 +467,12 @@ def _check_commit(ctx, sargs, bodies=()):
                             f"The commit includes files outside the approved plan's claims for {key}: "
                             f"{', '.join(sorted(outside)[:6])}. Unstage them, or amend the plan and get it re-approved.")
     if pol.get("scan_secrets", True):
-        diff = st.git(["diff", "--cached", "-U0", "--no-color"], ctx.root, timeout=20) or ""
+        diffs = [st.git(["diff", "--cached", "-U0", "--no-color"], ctx.root, timeout=20)]
         if "all" in flags:
-            diff += st.git(["diff", "-U0", "--no-color"], ctx.root, timeout=20) or ""
+            diffs.append(st.git(["diff", "-U0", "--no-color"], ctx.root, timeout=20))
+        if any(d is None for d in diffs):
+            return git_failed
+        diff = "".join(diffs)
         added = "\n".join(l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
         d = _secret_decision(ctx, added, "the staged changes")
         if d is not None:

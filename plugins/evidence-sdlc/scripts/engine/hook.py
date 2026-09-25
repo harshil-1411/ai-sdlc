@@ -74,8 +74,35 @@ def _audit(ctx, entry):
         base.update(_summ(ctx))
         base.update(entry)
         st.audit_append(ctx.root, ctx.session, base)
-    except Exception:  # the audit log must never break a session
+        return True
+    except Exception:  # the audit log must never break a session; callers that need the entry check the result
         traceback.print_exc(file=sys.stderr)
+        return False
+
+
+def _audit_unwritable(ctx):
+    """A call's own post entry could not be written: record it where push and the next call look (REQ-IMH-06)."""
+    try:
+        try:
+            key, state = ctx.change()
+        except Exception:
+            key, state = None, None
+        st.record_violations(ctx.root, key, state, ctx.branch, [{"path": f".evidence/audit/{ctx.session}.jsonl",
+                                                                 "rule": "audit-unwritable", "action": "recorded"}],
+                             ctx.session)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+
+
+def _open_audit_unwritable(ctx):
+    try:
+        key, _ = ctx.change()
+    except Exception:
+        key = None
+    try:
+        return any(v.get("rule") == "audit-unwritable" for v in st.open_violations(ctx.root, key, ctx.branch))
+    except Exception:
+        return True  # unreadable violations: fail closed
 
 
 def run_lifecycle(argv, cwd):
@@ -170,6 +197,13 @@ def run_pre(payload):
                                               "gates cannot check anything here. A human repairs the repository.")
         _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
         return pre_response(decision)
+    if _open_audit_unwritable(ctx):
+        decision = ep.deny("audit-unwritable",
+                           "An earlier call's audit entry could not be written, so this session's record has a gap. "
+                           "A human checks .evidence/audit/ and clears the record with `evidence change clear-violations` "
+                           "in their own terminal.")
+        _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
+        return pre_response(decision)
     decision = ep.decide_pre(ctx)
     if decision.allow and ctx.tool == "Bash":
         decision = lifecycle_decision(ctx) or decision
@@ -191,8 +225,9 @@ def run_post(payload):
     if ctx.tool in ("Agent", "Task"):
         resp = payload.get("tool_response")
         failed = isinstance(resp, dict) and (resp.get("is_error") or resp.get("error"))
-        _audit(ctx, {"event": "agent-failed" if failed else "agent-completed",
-                     "subagent_type": ctx.tool_input.get("subagent_type") or "general-purpose"})
+        if not _audit(ctx, {"event": "agent-failed" if failed else "agent-completed",
+                            "subagent_type": ctx.tool_input.get("subagent_type") or "general-purpose"}):
+            _audit_unwritable(ctx)
         return None
     out = None
     if ctx.tool in ("Edit", "Write", "MultiEdit"):
@@ -205,7 +240,8 @@ def run_post(payload):
         p = ctx.tool_input.get("file_path") or ctx.tool_input.get("notebook_path")
         rel = st.normalize(p, ctx.cwd, ctx.root)[0] if p else None
         gated = bool(rel and not st.glob_match(rel, ctx.policy.get("ungated", []))) or bool(bash_changed)
-        _audit(ctx, {"event": "tool", "gated": gated})
+        if not _audit(ctx, {"event": "tool", "gated": gated}):
+            _audit_unwritable(ctx)
         # First source edit inside an approved change moves it to "implementing".
         key, state = ctx.change()
         if key and state and state.get("stage") == "approved" and ctx.tool != "Bash":
