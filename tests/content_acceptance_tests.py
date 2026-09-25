@@ -342,7 +342,11 @@ check("REQ-IMH-21 verify-range.yml runs on pull_request_target (opened, synchron
 check("REQ-IMH-21 checks out only the base, full depth, without persisted credentials",
       re.search(r"uses:\s*actions/checkout@", vr) and re.search(r"ref:\s*\$\{\{\s*github\.event\.pull_request\.base\.sha", vr)
       and not re.search(r"ref:\s*\$\{\{[^}]*head", vr) and re.search(r"fetch-depth:\s*0\b", vr)
-      and re.search(r"persist-credentials:\s*false", vr), vr[:400])
+      and re.search(r"persist-credentials:\s*false", vr)
+      # nor any other way of getting PR code onto disk or running it (code review, step 11)
+      and not re.search(r"repository:\s*\$\{\{[^}]*head", vr)
+      and not any(re.search(r"\bgit\s+(?:-\S+\s+)*(checkout|switch|worktree|restore|reset\s+--hard|read-tree\s+-u|merge|pull)\b", b)
+                  for b in runs), vr[:400])
 check("REQ-IMH-21 fetches refs/pull/<n>/head from env and checks it equals the event head",
       any(re.search(r"refs/pull/\$\{?PR\}?/head", b) and re.search(r"\$\{?HEAD_SHA\}?", b) for b in runs), runs)
 check("REQ-IMH-21 runs the base's CLI in verify-range and push-report modes, with the key and token in step env only",

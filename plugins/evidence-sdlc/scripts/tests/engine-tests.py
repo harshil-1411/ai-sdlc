@@ -1832,20 +1832,77 @@ def suite_pilot58():
     shutil.rmtree(nogit)
     shutil.rmtree(r)
 
-    # REQ-IMH-22: every engine subprocess call site is on the allow-list
+    # Code review (step 11): dispatching a workflow from another ref is denied; from the default branch it isn't
+    r = make_repo()
+    for c in ("gh workflow run verify-range.yml --ref feature/ABC-1-x -f pr=5", "gh workflow run ci.yml -r feature/x",
+              "gh api -X POST repos/o/r/actions/workflows/verify-range.yml/dispatches -f ref=feature/x"):
+        t, i = bash(c)
+        case(f"REQ-IMH-21 workflow dispatch from another ref denied: {c[:50]}", r, t, i, "deny", rule_hint="another ref")
+    t, i = bash("gh workflow run ci.yml")
+    case("REQ-IMH-21 control: a dispatch of the default branch's workflow is not denied by that rule", r, t, i, "allow")
+    shutil.rmtree(r)
+
+    # review item 10: an integrity check that raises is recorded as integrity-check-error, not swallowed
+    import signing
+    r = committed_repo()
+    tid = "p58-err-" + uuid.uuid4().hex[:6]
+    p = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": tid,
+         "permission_mode": "default"}
+    run_hook(r, p, env_extra=KEY)
+    os.environ["EVIDENCE_SIGNING_KEY"] = KEY["EVIDENCE_SIGNING_KEY"]
+    try:
+        importlib.reload(signing)
+        snap = json.load(open(integrity._snap_path("s1", tid)))
+        snap = {k: v for k, v in snap.items() if k != "sig"}
+        snap["cp"] = ["not", "a", "mapping"]  # signed, bound to the call, but malformed: check() raises
+        st.write_file(tempfile.gettempdir(), integrity._snap_rel("s1", tid), json.dumps(signing.sign(snap)))
+    finally:
+        del os.environ["EVIDENCE_SIGNING_KEY"]
+        importlib.reload(signing)
+    obj, _ = run_hook(r, dict(p, hook_event_name="PostToolUse"), event="post", env_extra=KEY)
+    note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+    check("REQ-SLF-09 an integrity check that raises is recorded as integrity-check-error",
+          "integrity check for that command failed" in note and "integrity-check-error" in vtext(r), (note, vtext(r)[:300]))
+    shutil.rmtree(r)
+
+    # review item 11: the release-verify command runs without the signing key or GIT_* in its environment
+    r = make_repo()
+    envout = os.path.join(r, "verify-env.txt")
+    org = os.path.join(r, "org.json")
+    json.dump({"release_approval_pattern": "^REL-", "release_approval_verify_command": f"env > {envout}"}, open(org, "w"))
+    t, i = bash("./deploy.sh production")
+    case("REQ-IMH-22 release verify runs (valid approval allowed)", r, t, i, "allow",
+         env=dict(KEY, RELEASE_APPROVAL="REL-1", EVIDENCE_ORG_POLICY=org))
+    seen = open(envout).read() if os.path.isfile(envout) else ""
+    check("REQ-IMH-22 the release-verify command's environment has no signing key and no GIT_*",
+          seen and "EVIDENCE_SIGNING_KEY" not in seen and "\nGIT_" not in "\n" + seen, seen[:200] or "the command did not run")
+    shutil.rmtree(r)
+
+    # REQ-IMH-22: every engine subprocess call site is on the allow-list, exactly
     import ast
     eng = os.path.join(HERE, "..", "engine")
     sites = []
     for fn in sorted(glob.glob(os.path.join(eng, "*.py"))):
-        for node in ast.walk(ast.parse(open(fn).read())):
-            if isinstance(node, ast.FunctionDef):
-                for sub in ast.walk(node):
-                    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and isinstance(sub.func.value, ast.Name) and \
-                            (sub.func.value.id == "subprocess" or (sub.func.value.id == "os" and sub.func.attr in ("system", "popen"))):
-                        sites.append(f"{os.path.basename(fn)}:{node.name}")
+        tree = ast.parse(open(fn).read())
+        mods = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names
+                if a.name in ("subprocess", "os")}
+        if any(isinstance(n, ast.ImportFrom) and n.module in ("subprocess", "os") and any(
+                a.name in ("run", "Popen", "call", "check_call", "check_output", "system", "popen") for a in n.names)
+               for n in ast.walk(tree)):
+            sites.append(f"{os.path.basename(fn)}:from-import")
+        funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+        def owner(target):
+            enclosing = [f for f in funcs if any(s is target for s in ast.walk(f))]
+            return min(enclosing, key=lambda f: sum(1 for _ in ast.walk(f))).name if enclosing else "<module>"
+        for sub in ast.walk(tree):
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and isinstance(sub.func.value, ast.Name) \
+                    and sub.func.value.id in mods and (sub.func.value.id != "os" or sub.func.attr in (
+                        "system", "popen", "execv", "execvp", "execve", "spawnv", "spawnvp", "posix_spawn")):
+                sites.append(f"{os.path.basename(fn)}:{owner(sub)}")
     allowed = {"state.py:run_git", "state.py:run_gh", "lifecycle.py:_ps_probe", "evidence_policy.py:_release_verify"}
-    extra = sorted(set(sites) - allowed)
-    check("REQ-IMH-22 engine subprocesses start only from the allow-listed helpers", not extra, extra)
+    check("REQ-IMH-22 engine subprocesses start only from the allow-listed helpers (exact match)",
+          set(sites) == allowed, sorted(set(sites) ^ allowed))
 
 
 if __name__ == "__main__":

@@ -11,7 +11,8 @@ Integrity-monitor, engine-git and merge-gate hardening. Spec, plan and ADR-0003/
 **Redeploy note:** the authority moves to CI. Add `.github/workflows/verify-range.yml`, make
 `verify-range` a **required status check** on `main`, keep code-owner review required, and
 re-run the check after approving a PR (`pull_request_target` doesn't fire on reviews). Pin
-`approval.github_repo` if you use GitHub approvals. This PR itself is not gated by
+`approval.github_repo` if you use GitHub approvals. A required check is matched by name, so keep
+`.github/**` under code-owner review. This PR itself is not gated by
 `verify-range`: the workflow isn't on `main` until it merges, and it is enforced from the next PR.
 
 ### Merge gate (authoritative)
@@ -43,8 +44,11 @@ re-run the check after approving a PR (`pull_request_target` doesn't fire on rev
   `--interactive`, `--pathspec-from-file`, `git add … && git commit` in one command, and
   `GIT_INDEX_FILE`/`GIT_OBJECT_DIRECTORY`/`GIT_ALTERNATE_OBJECT_DIRECTORIES`.
 - `evidence audit verify` reports replayed entries and entries of another session (REQ-IMH-11).
-- Audit logs over 64 MiB deny calls instead of hanging the monitor; a hook past 25 seconds fails
-  closed.
+- Audit logs over 64 MiB deny calls instead of hanging the monitor. A pre hook past 25 seconds
+  denies; a post hook past 25 seconds records `integrity-timeout`.
+- An agent may not dispatch a workflow from another ref (`gh workflow run --ref`, a `/dispatches`
+  API call): it would run that branch's own workflow with the repository's secrets and could post
+  a check under the merge gate's name.
 - A permission granted at Claude Code's prompt ("don't ask again") during a call is kept and
   logged as `permission-grant`, instead of being reverted as tampering. Any other change to
   `.claude/settings.local.json` is still restored.

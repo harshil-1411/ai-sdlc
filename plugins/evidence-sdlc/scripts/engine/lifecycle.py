@@ -685,8 +685,27 @@ def _blob_at(root, commit, path, text=True):
 
 
 def _mode_at(root, commit, path):
+    """The tree-entry mode of path at commit: "" if absent, None if git failed."""
     out = _vg(root, ["ls-tree", "-z", commit, "--", path])
-    return out.split(" ", 1)[0] if out else None
+    if out is None:
+        return None
+    return out.split(" ", 1)[0] if out else ""
+
+
+def _merge_base(root, base, head):
+    out = _vg(root, ["merge-base", base, head])
+    return out.strip() if out else None
+
+
+def _from_base_side(root, c, parents, path, base):
+    """True when a merge commit's version of path is exactly a non-first parent's, and that parent
+    is already in the base: the content came in with an update from the base, not from this PR."""
+    here = (_vg(root, ["rev-parse", "-q", "--verify", f"{c}:{path}"]) or "").strip()
+    for p in parents[1:]:
+        there = (_vg(root, ["rev-parse", "-q", "--verify", f"{p}:{path}"]) or "").strip()
+        if here and here == there and _is_ancestor(root, p, base):
+            return True
+    return False
 
 
 def _json_at(root, commit, path):
@@ -834,7 +853,10 @@ def _scan_blobs(root, commits, pol, base, F):
                     F.fail(3, f"{path} in {c[:12]} is {int(size) >> 20} MiB, over the {cap >> 20} MiB cap and not on the "
                               "org allow-list (verify_range_allow_large)")
                 continue
-            data = _vg(root, ["cat-file", "blob", sha], text=False) or b""
+            data = _vg(root, ["cat-file", "blob", sha], text=False)
+            if data is None:
+                F.fail(3, f"git could not read the blob of {path} in {c[:12]}, so it was not scanned")
+                continue
             text = data.decode("utf-8", "replace")
             for start in range(0, max(len(text), 1), _CHUNK):
                 for hit in secretscan.scan(text[max(0, start - _OVERLAP):start + _CHUNK], allowlist):
@@ -842,8 +864,11 @@ def _scan_blobs(root, commits, pol, base, F):
 
 
 def _check_audit(root, base, head, commits, sessions, F):
-    """Rule 4: named sessions' logs exist at the head and verify; base logs are neither deleted nor
-    type-changed; every log in every commit is a byte-prefix extension of that log in each parent."""
+    """Rule 4: named sessions' logs exist at the head and verify; logs that existed where the branch
+    left the base are neither deleted nor type-changed; every log in every commit is a byte-prefix
+    extension of its first parent's version. A merge's other parents may have appended to the same
+    log (a shared log, or a session that worked on both sides), so for them every line must still
+    be present, since no byte-prefix of both sides can exist (ADR-0004 rev. 3)."""
     for s in sorted(sessions):
         name = f"{_safe_session(s)}.jsonl"
         text = _blob_at(root, head, f".evidence/audit/{name}")
@@ -853,12 +878,17 @@ def _check_audit(root, base, head, commits, sessions, F):
         ok, problems = st.audit_verify_lines(name, text.splitlines(), [])
         if not ok:
             F.fail(4, f".evidence/audit/{name} does not verify: {'; '.join(problems[:3])}")
-    base_logs = (_vg(root, ["ls-tree", "-r", "--name-only", "-z", base, "--", ".evidence/audit"]) or "").split("\0")
-    for p in filter(None, base_logs):
-        if _mode_at(root, head, p) != _mode_at(root, base, p):
-            F.fail(4, f"{p}, which exists at the base, is deleted or type-changed at the head")
+    mb = _merge_base(root, base, head)
+    base_logs = _vg(root, ["ls-tree", "-r", "--name-only", "-z", mb, "--", ".evidence/audit"]) if mb else None
+    if base_logs is None:
+        F.fail(4, "git could not list the audit logs where the branch left the base")
+        base_logs = ""
+    for p in filter(None, base_logs.split("\0")):
+        was, now = _mode_at(root, mb, p), _mode_at(root, head, p)
+        if was is None or now is None or now != was:
+            F.fail(4, f"{p}, which existed where the branch left the base, is deleted or type-changed at the head")
     for c, *parents in commits:
-        for p in parents:
+        for n, p in enumerate(parents):
             out = _vg(root, ["diff", "--name-only", "-z", p, c, "--", ".evidence/audit"])
             if out is None:
                 F.fail(4, f"git could not compare the audit logs of {c[:12]} with its parent")
@@ -868,7 +898,12 @@ def _check_audit(root, base, head, commits, sessions, F):
                 if old is None:
                     continue  # a new log; named sessions' logs are verified above
                 new = _blob_at(root, c, path, text=False)
-                if new is None or _mode_at(root, c, path) != _mode_at(root, p, path) or not new.startswith(old):
+                same_type = new is not None and _mode_at(root, c, path) == _mode_at(root, p, path)
+                if n == 0:
+                    ok = same_type and new.startswith(old)
+                else:
+                    ok = same_type and set(old.splitlines()) <= set(new.splitlines())
+                if not ok:
                     F.fail(4, f"{path} in {c[:12]} is not an append-only extension of its parent's version "
                               "(truncated, rewritten, replaced or deleted)")
 
@@ -883,8 +918,9 @@ def _check_records(root, base, head, commits, key, own_branch_file, F):
         m = _RECORD.match(path)
         return bool(m) and key is not None and (m.group(1) == key or m.group(3) == own_branch_file)
 
+    mb = _merge_base(root, base, head)
     net = _vg(root, ["diff", "--name-only", "-z", f"{base}...{head}", "--", ".evidence"])
-    if net is None:
+    if net is None or mb is None:
         F.fail(5, "git could not list the change records that differ from the base")
         return
     for path in filter(None, net.split("\0")):
@@ -893,21 +929,36 @@ def _check_records(root, base, head, commits, key, own_branch_file, F):
             continue
         rec = _json_at(root, head, path)
         if rec is None:
-            if _mode_at(root, base, path):
-                F.fail(5, f"{path}, which exists at the base, is deleted at the head")
+            if _mode_at(root, mb, path) != "":
+                F.fail(5, f"{path}, which existed where the branch left the base, is deleted at the head")
             continue
         if not isinstance(rec, dict) or signing.verify(rec) is not True:
             F.fail(5, f"{path} at the head is not signed by the gate engine (or its signature is invalid)")
-    base_recs = (_vg(root, ["ls-tree", "-r", "--name-only", "-z", base, "--", ".evidence"]) or "").split("\0")
-    for path in filter(None, base_recs):
-        if _RECORD.match(path) and _mode_at(root, head, path) != _mode_at(root, base, path):
-            F.fail(5, f"{path}, which exists at the base, is deleted or type-changed at the head")
+        elif key is not None and m.group(1) and rec.get("key") not in (None, m.group(1)):
+            F.fail(5, f"{path} at the head belongs to change {rec.get('key')}, not {m.group(1)} (a copied record)")
+    base_recs = _vg(root, ["ls-tree", "-r", "--name-only", "-z", mb, "--", ".evidence"])
+    if base_recs is None:
+        F.fail(5, "git could not list the change records where the branch left the base")
+        base_recs = ""
+    for path in filter(None, base_recs.split("\0")):
+        if not _RECORD.match(path):
+            continue
+        was, now = _mode_at(root, mb, path), _mode_at(root, head, path)
+        if was is None or now is None or now != was:
+            F.fail(5, f"{path}, which existed where the branch left the base, is deleted or type-changed at the head")
     for c, *parents in commits:
-        for p in parents:
+        # a merge is judged against its first parent; what its other parents bring in from the
+        # base was judged when it merged there
+        for p in parents[:1]:
             out = _vg(root, ["diff", "--name-only", "-z", p, c, "--", ".evidence"])
-            for path in filter(None, (out or "").split("\0")):
+            if out is None:
+                F.fail(5, f"git could not compare the change records of {c[:12]} with its parent")
+                continue
+            for path in filter(None, out.split("\0")):
                 m = _RECORD.match(path)
                 if not m:
+                    continue
+                if len(parents) > 1 and _from_base_side(root, c, parents, path, base):
                     continue
                 old, new = _json_at(root, p, path), _json_at(root, c, path)
                 if new is None:
@@ -1065,15 +1116,15 @@ def _verify_pr(root, F):
     if key:
         state_head = _json_at(root, head, f".evidence/changes/{key}/state.json")
         state_base = _json_at(root, base, f".evidence/changes/{key}/state.json")
-        if not isinstance(state_head, dict) or signing.verify(state_head) is not True:
-            F.fail(1, f"the state of {key} at the head is missing or not signed by the gate engine")
+        if not isinstance(state_head, dict) or signing.verify(state_head) is not True or state_head.get("key") != key:
+            F.fail(1, f"the state of {key} at the head is missing, not signed by the gate engine, or another change's")
         elif state_head.get("stage") == "released":
             F.fail(1, f"{key} is already released at the head")
         if isinstance(state_base, dict) and state_base.get("stage") == "released":
             F.fail(1, f"{key} was released at the base: a released change key cannot be reused")
         appr = _json_at(root, head, f".evidence/changes/{key}/approval.json")
-        if not isinstance(appr, dict) or signing.verify(appr) is not True:
-            F.fail(1, f"the approval record of {key} at the head is missing or not signed")
+        if not isinstance(appr, dict) or signing.verify(appr) is not True or appr.get("key") != key:
+            F.fail(1, f"the approval record of {key} at the head is missing, not signed, or another change's")
         else:
             plan = _blob_at(root, head, str(appr.get("plan_path") or ""), text=False)
             if plan is None or __import__("hashlib").sha256(plan).hexdigest() != appr.get("plan_sha256"):
@@ -1113,6 +1164,10 @@ def _verify_push(root, F):
     before, after = str(ev.get("before") or ""), str(ev.get("after") or "")
     if before and set(before) == {"0"}:
         print("verify-range: skipped: first push to this branch (all-zero `before`), nothing to compare.")
+        return
+    import signing
+    if len(os.environ.get(signing.ENV, "")) < 32 or not signing.enabled():
+        F.fail(0, "no signing key of at least 32 characters, so records could not be verified; report incomplete")
         return
     if not _SHA.fullmatch(before) or not _SHA.fullmatch(after):
         F.fail(0, "the push event's before/after SHAs are missing or malformed")

@@ -44,10 +44,21 @@ signing and `gaps --strict`) is unchanged.
 **Owner actions:**
 - Make `verify-range` a **required status check** on `main`, and keep "Require review from Code
   Owners" on. Without the required check, nothing is enforced.
-- `pull_request_target` does not fire on reviews. **After approving, re-run** the `verify-range`
-  job from the PR's checks, or run the workflow with `workflow_dispatch` and the PR number.
+- `pull_request_target` does not fire on reviews. **After approving, re-run** the PR's
+  `verify-range` job ("Re-run jobs" on its check). That run is the one attached to the PR's head
+  commit. A `workflow_dispatch` run with the PR number re-checks the PR too, but its result is
+  attached to the dispatching branch's commit, so it doesn't satisfy the PR's required check.
 - **Fork PRs** (and Dependabot) fail by design: they get no secrets, so there is no key to verify
   records with.
+- **A required check is matched by name.** A workflow on a PR branch with a job named
+  `verify-range` could post a passing check under that name. What stops it is code-owner review
+  of `.github/**`: CODEOWNERS covers it, so such a PR needs a code owner to approve the new
+  workflow. Where the host supports it, pin the requirement to this workflow file on `main`
+  (a ruleset's "require workflows"). The engine also denies an agent dispatching a workflow from
+  another ref (`gh workflow run --ref`, a `/dispatches` API call), which would run that branch's
+  own workflow with the repository's secrets.
+- A commit with a `Human-Commit:` trailer needs no audit log (there is no agent session behind
+  it). It is covered by the code-owner review of the head commit like every other commit.
 
 ## The engine
 
@@ -240,7 +251,8 @@ line belonging to another session (REQ-IMH-11).
   "don't ask again" answer writes `.claude/settings.local.json` while the call is in flight. When
   the only change is new `permissions.allow` entries, the file is kept and a `permission-grant`
   audit entry is written. Any other change to it is restored and recorded.
-- A pre or post hook that runs past 25 seconds fails closed (the hook limit is 30).
+- A pre hook that runs past 25 seconds denies the call; a post hook that does records an
+  `integrity-timeout` violation (the hook limit is 30).
 
 ## Advisory hooks (never deny)
 

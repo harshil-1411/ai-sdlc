@@ -270,6 +270,10 @@ def run_integrity(ctx):
 
     try:
         notes, violations, changed = integrity.check(ctx, judge)
+    except HookTimeout:  # the watchdog: record it in the time left, never lose it (the hook limit is 30 s)
+        notes = [f"the integrity check for that command did not finish within {HOOK_BUDGET_SECONDS} s, so its "
+                 "effects were not checked."]
+        violations, changed = [{"path": "(integrity check)", "rule": "integrity-timeout", "action": "recorded"}], []
     except Exception as e:  # a check the agent can make fail must not become a silent pass
         notes = [f"the integrity check for that command failed ({e}), so its effects were not checked."[:300]]
         violations, changed = [{"path": "(integrity check)", "rule": "integrity-check-error", "action": "recorded"}], []

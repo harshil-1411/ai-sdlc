@@ -29,7 +29,25 @@
       "open": false,
       "cleared_by": "suparn.bector@msbdocs.com",
       "cleared_at": "2026-09-25T04:37:31Z"
+    },
+    {
+      "path": "/Library/Application Support/ClaudeCode/managed-settings.json",
+      "rule": "hidden-change",
+      "action": "recorded",
+      "at": "2026-09-25T07:32:00Z",
+      "session": "7ef91d89-f94a-4070-9b35-c3aae1b4f254",
+      "open": false,
+      "cleared_by": "suparn.bector@msbdocs.com",
+      "cleared_at": "2026-09-25T07:52:03Z"
+    },
+    {
+      "path": "/Library/Application Support/ClaudeCode/evidence-policy.json",
+      "rule": "hidden-change",
+      "action": "recorded",
+      "at": "2026-09-25T08:34:24Z",
+      "session": "7ef91d89-f94a-4070-9b35-c3aae1b4f254",
+      "open": true
     }
   ],
-  "sig": "54ca2816dc5e122db46c76932b15ddc3049e3b1f3faf24981c61298738843a36"
+  "sig": "f4ff4d5be6b58af5cc3748665c3588cb04b58e33ff5fa264924d9cbd1497de4a"
 }

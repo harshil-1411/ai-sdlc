@@ -257,6 +257,11 @@ def vr_expect(label, r, rule):
               (r.returncode, r.stdout[-600:] + r.stderr[-600:]))
 
 
+def _vr_shared_log(d):
+    with Signed() as s:
+        s.st.audit_append(d, "clear-violations", {"event": "violations-cleared", "key": "ABC-0"})
+
+
 def verify_range_tests():
     """PILOT-58 REQ-IMH-19: `evidence verify-range` per ADR-0004 rules 0-7, on fixture repositories."""
     def case(label, rule, mutate=None, fixture=None, **kw):
@@ -448,6 +453,50 @@ def verify_range_tests():
     def dispatch(d, b, h):
         return {"event": {"inputs": {"pr": "5"}}, "event_name": "workflow_dispatch"}
     case("a workflow_dispatch re-run with the PR number", None, dispatch)
+
+    # Code review (step 11): the shapes of a real repository, where every merged PR adds records and logs
+    def main_gains_records(d, b, h):
+        vr_git(d, "git checkout -q main")
+        w(d, "plan/ABC-3.md", VR_PLAN.replace("ABC-7", "ABC-3"))
+        vr_state(d, key="ABC-3", stage="released")
+        vr_approval(d, key="ABC-3", plan="plan/ABC-3.md")
+        with Signed() as s:
+            s.st.audit_append(d, "m1", {"event": "tool", "key": "ABC-3"})
+            s.st.audit_append(d, "clear-violations", {"event": "violations-cleared", "key": "ABC-3"})
+        vr_git(d, "git add -A && git commit -q -m 'ABC-3: merged elsewhere' -m 'Agent-Session: m1'")
+        nb = vr_git(d, "git rev-parse HEAD")
+        vr_git(d, "git checkout -q feature/ABC-7-login")
+        return {"base": nb}
+    case("a branch not updated after main gained another change's records and logs", None, main_gains_records)
+
+    def update_after_records(d, b, h):
+        got = main_gains_records(d, b, h)
+        vr_git(d, "git merge -q --no-ff -m \"Merge branch 'main' into feature/ABC-7-login\" main")
+        return dict(got, head=vr_git(d, "git rev-parse HEAD"))
+    case("an \"Update branch\" merge that brings in another change's records", None, update_after_records)
+
+    def shared_log_both_sides(d, b, h):
+        with Signed() as s:
+            s.st.audit_append(d, "clear-violations", {"event": "violations-cleared", "key": "ABC-7"})
+        vr_commit(d, "ABC-7: clear")
+        got = main_gains_records(d, b, h)  # main also appends to clear-violations.jsonl
+        subprocess.run("git merge -q --no-commit main", shell=True, cwd=d, env=ENV, capture_output=True)
+        ours = vr_git(d, "git show HEAD:.evidence/audit/clear-violations.jsonl")
+        theirs = vr_git(d, "git show main:.evidence/audit/clear-violations.jsonl")
+        extra = [l for l in theirs.splitlines() if l not in ours.splitlines()]
+        w(d, ".evidence/audit/clear-violations.jsonl", ours + "\n" + "\n".join(extra) + "\n")
+        return dict(got, head=vr_commit(d, "ABC-7: merge main (shared log appended on both sides)"))
+    case("a merge of a shared log both sides appended to", None, shared_log_both_sides,
+         fixture=lambda: vr_fixture(base_extra=lambda d: _vr_shared_log(d)))
+
+    def copied_approval(d, b, h):
+        with Signed() as s:
+            rec = s.signing.sign({"key": "ABC-3", "plan_path": "plan/ABC-7.md", "approver": "lead", "method": "github",
+                                  "plan_sha256": s.st.sha256_file(os.path.join(d, "plan", "ABC-7.md")),
+                                  "approved_at": "2026-09-25T00:00:00Z"})
+            s.st.write_file(d, ".evidence/changes/ABC-7/approval.json", json.dumps(rec, indent=2, sort_keys=True) + "\n")
+        return vr_commit(d, "ABC-7: approval copied from another change")
+    case("an approval record copied from another change", 1, copied_approval)
     # rule 7: push report mode
     d, base, head = vr_fixture()
     w(d, "docs/new.md", "x\n")

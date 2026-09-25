@@ -253,9 +253,11 @@ recorded with a name and a date.
       `.github/workflows/verify-range.yml` from the reference, give the repository the
       `EVIDENCE_SIGNING_KEY` secret, and keep "Require review from Code Owners" on. Without
       the required check the authoritative gate enforces nothing. Know its limits:
-      `pull_request_target` doesn't fire on reviews, so **re-run** the job after approving (or
-      dispatch the workflow with the PR number); **fork PRs** and Dependabot get no secrets and
-      fail by design; admins with `enforce_admins=false` can still push directly, which the
+      `pull_request_target` doesn't fire on reviews, so **re-run** the PR's `verify-range` job
+      after approving ("Re-run jobs"; a `workflow_dispatch` run isn't attached to the PR's head);
+      **fork PRs** and Dependabot get no secrets and fail by design; the check is matched by
+      name, so keep `.github/**` under code-owner review (and pin the workflow with a ruleset
+      where you can); admins with `enforce_admins=false` can still push directly, which the
       `push` report records but doesn't prevent.
 - [ ] **Pin the GitHub repository** for approvals: `approval.github_repo` in policy. Since
       2.1.0 an empty value refuses `evidence approve --github-pr` instead of asking `gh`.

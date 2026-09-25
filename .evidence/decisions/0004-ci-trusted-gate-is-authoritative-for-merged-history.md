@@ -55,6 +55,35 @@ A new workflow, `.github/workflows/verify-range.yml`, runs on `pull_request_targ
 6. **Re-run after approval.** `pull_request_target` does not fire on reviews. The same base-branch workflow accepts `workflow_dispatch` with a PR number, and the job can be re-run from the PR's checks. The owner re-runs it after approving.
 7. **Push report mode.** On `push` to `main`, `verify-range --push-report` runs over `event.before..event.after`. It checks rules 2–5, with claims taken from each commit's change key where one is present; it reports and never blocks. An all-zero `before` (first push) is skipped with a note. This catches admin direct pushes after the fact.
 
+### Revision 3 (code review of the implementation, 2026-09-25)
+These refine the rules above. Each is tested in `cli-lifecycle-tests.py` "REQ-IMH-19 …".
+- **"Exists at the base" means where the branch left it** (`git merge-base base head`). The tip of
+  `main` holds records and logs that other PRs added after this branch started; their absence at
+  the head is not a deletion. "Released at the base" still reads the tip, so a key released
+  meanwhile can't be reused.
+- **Merges, rule 4:** a log must be a byte-prefix extension of the merge's **first** parent. For
+  the other parents, every line must still be present. No byte-prefix of both sides can exist when
+  both appended to the same log, for example the shared `clear-violations.jsonl`, or one session
+  that worked on both sides.
+- **Merges, rule 5:** a merge is judged against its first parent, and a record whose merged
+  version is exactly a non-first parent's, where that parent is in the base, came in with an
+  update from the base and is not this PR's change.
+- **Rule 1 binds the records to the change:** `state.json` and `approval.json` under
+  `.evidence/changes/<KEY>/` must carry `key: <KEY>`, so another change's signed approval, copied
+  across, can't lend its plan's claims.
+- **Every git failure fails the rule it was feeding.** An absent path and a failed git call are
+  told apart.
+- **Re-run after approval (rule 6)** is "Re-run jobs" on the PR's `pull_request_target` run. A
+  `workflow_dispatch` run re-checks the PR but is attached to the dispatching branch's commit, so
+  it doesn't satisfy the PR's required check.
+- **Name-matched required checks.** A PR-branch workflow with a job named `verify-range` could post
+  a passing check under that name. The mitigations are code-owner review of `.github/**` (which the
+  approving review then covers), pinning the requirement to this workflow file with a ruleset
+  where the host supports it, and the engine's denial of agent workflow dispatches from another
+  ref.
+- **`Human-Commit:` commits** carry no audit-log requirement. They have no agent session, and the
+  head-commit code-owner review covers them.
+
 ### Third-review trace
 | Finding | Where it is closed |
 | --- | --- |

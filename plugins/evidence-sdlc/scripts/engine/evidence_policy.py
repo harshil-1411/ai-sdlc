@@ -534,6 +534,11 @@ def _check_commit(ctx, sargs, bodies=()):
     return None
 
 
+_DISPATCH_DENIED = ("Dispatching a workflow from another ref is a human action: it runs that branch's own workflow "
+                    "file with the repository's secrets, and could post a check under the merge gate's name. To "
+                    "re-check a pull request, a human re-runs its `verify-range` job from the PR's checks.")
+
+
 def _check_gh(ctx, s):
     pol = ctx.policy
     args = s.argv[1:]
@@ -556,6 +561,13 @@ def _check_gh(ctx, s):
                         f"`gh api -X {method} {endpoint}` changes merges, branch protection or refs. That is a human action.")
         if method is None and re.search(r"/merge\b", endpoint) and any(a in ("-f", "-F", "--field", "--raw-field", "--input") for a in args):
             return deny("agent-merge", "`gh api` with fields against a /merge endpoint is a merge; that is a human action.")
+        if re.search(r"/dispatches\b", endpoint) and (method in ("POST", None)):
+            return deny("workflow-dispatch", _DISPATCH_DENIED)
+    if words[:2] == ["workflow", "run"] and any(a in ("--ref", "-r") or a.startswith("--ref=") for a in args):
+        # dispatched from another ref (a PR branch), a workflow runs that branch's own YAML with the
+        # repository's secrets, and can post a check under the merge gate's name (review, ADR-0004).
+        # Without --ref it runs the default branch's workflow.
+        return deny("workflow-dispatch", _DISPATCH_DENIED)
     if words[:2] == ["repo", "set-default"]:
         return deny("remote-change", "Changing the default GitHub repository is a human action (approvals are read from it).")
     if words[:2] == ["pr", "review"] and any(a in ("--approve", "-a") for a in args):
