@@ -1,6 +1,6 @@
 {
   "name": "evidence-sdlc",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "The Evidence Chain control plane: a fail-closed gate engine (plan approval, claims, tier floors, change control, test protection, secrets, protected pushes and releases), lifecycle state, human-only approval, a hash-chained audit log, the `evidence` CLI, review agents and skills.",
   "author": {
     "name": "Suparn Bector",

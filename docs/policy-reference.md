@@ -45,6 +45,8 @@ When `.evidence/policy.json` is merged:
 | `ungated` | | **Can only shrink**: repo entries that aren't already ungated are dropped. The exception is when the org policy sets `allow_repo_ungated_additions: true`; then they are unioned |
 | `tier_floors` | | Per glob, the **higher** tier wins, and new globs are added |
 | `required_agents` | | Per tier, the agent lists are **unioned** |
+| `auto_resolve_max_per_session` (2.2.0) | | **Minimum**: the repo can only lower the cap (a non-integer or negative value is ignored) |
+| `tier3_auto_modes_with_required_gate` (2.2.0) | | **Can only become false**: a repo can switch Tier 3 auto modes off, never on |
 | Patterns and approval | `key_pattern`, `change_ticket_pattern`, `release_approval_pattern`, `approval` | **Replaced** by the repo value (see the note below) |
 | Everything else | e.g. `release_approval_verify_command`, `allow_repo_ungated_additions`, `tier3_denied_permission_modes` | **Ignored** from a repo policy |
 
@@ -102,7 +104,7 @@ repo-relative form with `realpath` before matching.
 | `require_review_agents` | `true` | Turns the rule above on |
 | `read_only_agents` | codebase-cartographer, security-reviewer, architect, code-reviewer, release-manager, compliance-reviewer, test-designer, stack-surveyor, flake-triage, verifier | Subagent types whose writes are denied. `docs-writer` is deliberately absent |
 | `require_agent_trailer` | `true` | Commits must end with `Agent-Session: <session_id>` matching the session |
-| `deny_tier3_auto_modes` | `true` | Denies Tier 3 source edits in the permission modes listed below |
+| `deny_tier3_auto_modes` | `true` | Denies Tier 3 source edits in the permission modes listed below, except as allowed by the server gate (2.2.0, `tier3_auto_modes_with_required_gate`) |
 | `tier3_denied_permission_modes` | `bypassPermissions`, `acceptEdits`, `dontAsk`, `auto` | The modes counted as "auto-accept" for Tier 3 |
 | `deny_opaque_writes` | `true` | Denies Bash commands that change files in ways the engine can't inspect: inline interpreter code, `patch`, `git apply`/`am`, `curl -O`, archive extraction |
 | `scan_secrets` | `true` | Scans write content, command text, heredocs, commit messages and staged diffs for secrets |
@@ -192,3 +194,23 @@ strictness flag off.
 | `git_allowed_config` | the four git-lfs values | See [Git, merges and production](#git-merges-and-production). |
 | `verify_range_blob_cap_mb` | `20` | `verify-range` rule 3: a blob added in a PR larger than this fails, unless its path is on `verify_range_allow_large`. Blobs under the cap are scanned for secrets. Read from the base commit's policy plus the org policy, never from the PR. |
 | `verify_range_allow_large` | `[]` | Globs of paths allowed to exceed `verify_range_blob_cap_mb` (for example `assets/**/*.png`). Org policy only; a repository policy can't loosen it. |
+
+## Keys added in 2.2.0 (PILOT-62, ADR-0005)
+
+A repository policy may only lower `auto_resolve_max_per_session` and may only set
+`tier3_auto_modes_with_required_gate` to false. Every other key below is **ignored** from a
+repository policy (org policy only). The engine reads each with an in-code default equal to the
+shipped value.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `auto_resolve_max_per_session` | `3` | How many restored or removed control-plane changes per session are recorded closed at birth (`resolved: "restored"`). Past it, the next one is open and needs a human `clear-violations`. `0` disables closing at birth. |
+| `local_settings_kept_keys` | `["model", "outputStyle"]` | Top-level keys of `.claude/settings.local.json` that may change during a call without being restored (display settings). Never list keys that run commands (`hooks`, `statusLine`, `apiKeyHelper`, MCP keys, `env`). |
+| `user_config_not_charged` | the managed-settings files, `managed-settings.d/**` and `evidence-policy.json` under `/Library/Application Support/ClaudeCode/` and `/etc/claude-code/` | System config files whose change during a call is logged as `user-config-changed` instead of `hidden-change`, but only when the session's user could not have written them (not owned by the user; neither the file nor its directory writable by the user, before and after the call). |
+| `claude_json_security_keys` | `mcpServers`, `allowedTools`, `enabledMcpjsonServers`, `disabledMcpjsonServers`, `enableAllProjectMcpServers` | The per-project keys of `~/.claude.json` that, with the top-level `mcpServers`, form its security projection. Only a change to the projection (or the file becoming invalid, missing or over 64 MiB) is a `hidden-change`. |
+| `tier3_auto_modes_with_required_gate` | `true` | Allows Tier 3 source edits in `tier3_gate_allowed_modes` when the session is signed and the server gate is confirmed on GitHub. |
+| `tier3_gate_allowed_modes` | `["acceptEdits", "auto"]` | The permission modes the server gate can allow for Tier 3. `bypassPermissions` and `dontAsk` are never allowed, whatever this lists. |
+| `ci_gate_check` | `"verify-range"` | The required status check the engine looks for on the default branch. |
+| `ci_gate_app_id` | `15368` | The app the check must be pinned to: GitHub Actions. [NEEDS VERIFICATION against a captured `gh api` response.] |
+| `ci_gate_require_enforce_admins` | `false` | When true, classic branch protection must also enforce the check for administrators (`enforcement_level: everyone`). |
+| `ci_gate_cache_seconds` | `900` | How long a confirmation is cached (signed, in the temp directory). A failure is cached for 60 seconds. |

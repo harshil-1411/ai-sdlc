@@ -3,6 +3,73 @@
 All five plugins are versioned together. Every change to a plugin's files needs a
 version bump (enforced in CI by `scripts/ci/check-version-bump.sh`) and an entry here.
 
+## 2.2.0 — 2026-09-25 (PILOT-62)
+
+The local layer is advisory in practice. Spec, plan and ADR-0005:
+`intent/2026-09-25-local-layer-advisory/`, `.evidence/decisions/0005-local-layer-is-advisory-behind-the-server-gate.md`.
+Nothing moves authority from `verify-range` and code-owner review (ADR-0004): rules 0–4 are
+unchanged and rule 5 is tightened.
+
+**Owner actions after merge:** in branch protection on `main`, make `verify-range` required
+**and set its source to GitHub Actions**; set `approval.github_repo` in the org policy; keep the
+org policy root-owned (`sudo`); remove any machine-local permission-mode loosening once a Tier 3
+edit in `auto` mode is allowed without it (MAN-LLA-01).
+
+### Integrity monitor (evidence-sdlc)
+- **A verified undo is closed at birth** (REQ-LLA-01, 02). A control-plane file the monitor
+  restores and re-reads equal to the snapshot, or a created file or planted symlink it removes
+  and confirms gone, is recorded `open: false`, `resolved: "restored"`, `resolved_at`, and logged
+  with `resolved`. It blocks neither push/PR nor source edits and needs no `clear-violations`.
+  Everything else stays open and blocks as in 2.1.0, including a restore whose write fails or
+  whose re-read differs.
+- **Bounded** (REQ-LLA-03): `auto_resolve_max_per_session` (default 3; 0 disables) per session;
+  a repository policy may only lower it.
+- **Config edits judged by effect** (REQ-LLA-05, 06, 07): `settings.local.json` allow
+  additions/removals, deny/ask additions, `additionalDirectories` changes and
+  `local_settings_kept_keys` are kept (`config-change`, or `permission-grant` for a pure allow
+  addition), everything else restored; system config in `user_config_not_charged` that the
+  session's user could not write is logged as `user-config-changed`; `~/.claude.json` is charged
+  only when its MCP/tool-permission projection changes or it becomes invalid, missing or oversize.
+
+### Gates
+- **Tier 3 in `acceptEdits` and `auto` follows the server gate** (REQ-LLA-08, 09): allowed when
+  `tier3_auto_modes_with_required_gate` is on, the session is signed, and GitHub (read through
+  `gh` pinned to `approval.github_repo`) reports `verify-range` required on the default branch and
+  pinned to the GitHub Actions app, by classic protection or a ruleset. Cached in a signed temp
+  file (900 s confirmed, 60 s not). `bypassPermissions` and `dontAsk` stay denied; the denial names
+  the missing condition. `run_gh` now also accepts the endpoint `repos/{repo}` itself.
+- **`check-forgery`** (REQ-LLA-10): `gh api` calls that create or update a commit status, check
+  run or check suite are denied; reading them is allowed.
+
+### Merge gate
+- **`verify-range` rule 5** (REQ-LLA-04) judges entries that first appear in the range: a closed
+  entry passes only as a verified restore of an auto-resolvable rule (printed as a `NOTE:` for the
+  code owner) or with `cleared_by`.
+
+### Policy
+- New keys: `auto_resolve_max_per_session`, `local_settings_kept_keys`,
+  `user_config_not_charged`, `claude_json_security_keys`, `tier3_auto_modes_with_required_gate`,
+  `tier3_gate_allowed_modes`, `ci_gate_check`, `ci_gate_app_id`, `ci_gate_require_enforce_admins`,
+  `ci_gate_cache_seconds`. From a repository policy only the first two merge rules apply (minimum;
+  may only become false); the rest are ignored.
+
+### Known issues and verification
+- **[NEEDS VERIFICATION]** The gate-detection fixtures (`plugins/evidence-sdlc/scripts/tests/fixtures/pilot62/`)
+  were **built from GitHub's documented response shapes, not captured**: `gh api` failed in the
+  agent sandbox with a TLS error (`x509: OSStatus -26276`). The GitHub Actions app id **15368**,
+  the `checks[].app_id` field of "Get a branch" and `integration_id` in "Get rules for a branch"
+  must be confirmed against `gh api repos/harshil-1411/ai-sdlc`, `…/branches/main` and
+  `…/rules/branches/main`.
+- **[NEEDS VERIFICATION]** Whether rules returned by "Get rules for a branch" include
+  evaluate-mode rulesets; the engine treats any returned required-status-checks rule as enforced.
+- **[NEEDS VERIFICATION]** Claude Code's file layout under `CLAUDE_CONFIG_DIR`: only
+  `$CLAUDE_CONFIG_DIR/.claude.json` is handled here; the rest goes to PILOT-60.
+- A cache miss may take three `gh` calls (repository, branch, rules), bounded by a 15-second total
+  budget inside the hook's 25 seconds; the plan estimated two.
+- **Release automation in CI on merge is deferred to PILOT-63.**
+- Still open: PILOT-59 (concurrency, signed record changes accepted mid-call), PILOT-60
+  (usability), PILOT-61 (key isolation).
+
 ## 2.1.0 — 2026-09-25 (PILOT-58)
 
 Integrity-monitor, engine-git and merge-gate hardening. Spec, plan and ADR-0003/0004:

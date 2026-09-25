@@ -261,6 +261,20 @@ recorded with a name and a date.
       `push` report records but doesn't prevent.
 - [ ] **Pin the GitHub repository** for approvals: `approval.github_repo` in policy. Since
       2.1.0 an empty value refuses `evidence approve --github-pr` instead of asking `gh`.
+- [ ] **Pin `verify-range` to GitHub Actions** (2.2.0, ADR-0005). In branch protection on
+      `main`, set the required check's source to "GitHub Actions" (not "any source"), or give
+      it `integration_id` 15368 in a ruleset. Tier 3 edits in `acceptEdits` and `auto` are
+      allowed only when the engine reads that pin from GitHub; without it they stay denied.
+- [ ] **Set `approval.github_repo` in the org policy** (2.2.0). Gate detection reads GitHub only
+      through `gh` pinned to that repository; an empty value means the gate is not confirmed.
+- [ ] **Keep the org policy root-owned** (2.2.0). Create `evidence-policy.json` and
+      `managed-settings.json` with `sudo`, owned by root and not writable by the developer's
+      user. Only then is a human's edit to them during a call logged as `user-config-changed`
+      instead of a `hidden-change` violation. Check with
+      `ls -l "/Library/Application Support/ClaudeCode/"`.
+- [ ] **Remove any machine-local permission-mode loosening** (2.2.0) from the org policy
+      (`deny_tier3_auto_modes: false`, or a shortened `tier3_denied_permission_modes`) once the
+      pin is in place and a Tier 3 edit in `auto` mode is allowed without it (MAN-LLA-01).
 - [ ] **Pin the model.** Set `model` (and `availableModels`, if you restrict choice)
       in managed settings to the model your tool risk assessment validated. Changing it
       then becomes a change under

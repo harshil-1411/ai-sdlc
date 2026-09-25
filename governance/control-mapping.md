@@ -39,6 +39,21 @@ depend on the signing key. It holds only when the owner makes `verify-range` a r
 keeps code-owner review required (OWNER ACTION). Admin direct pushes are reported after the fact
 by `verify-range --push-report`, not prevented.
 
+### The local monitor since 2.2.0 (ADR-0005)
+
+The integrity monitor is **detection with verified automatic undo**. A control-plane change it
+restores (re-read equals the snapshot) or removes (the path is gone) is recorded closed at birth
+(`resolved: "restored"`), bounded by `auto_resolve_max_per_session` per session, and stays in the
+signed record and the audit log. **Unresolved violations still block** push, pull requests and
+source edits until a human clears them: anything not undone, undone without verification, over
+the cap, or outside the control plane. `verify-range` rule 5 accepts a closed-at-birth entry only
+when it is a verified restore of an auto-resolvable rule, and prints each one for the code owner;
+any other entry that first appears closed without a signed clear fails the PR. Configuration edits
+are judged by effect: `settings.local.json` grants and tightening, root-owned system config the
+session's user could not write, and `~/.claude.json` bookkeeping are logged, not charged. Tier 3 in
+`acceptEdits` or `auto` depends on reading from GitHub that `verify-range` is required and pinned to
+GitHub Actions. Nothing here moves authority from `verify-range` and code-owner review.
+
 ## How to read the Status column
 
 | Status | Meaning |

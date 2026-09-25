@@ -382,6 +382,51 @@ check("REQ-IMH-18 HANDOFF and the 2.1.0 CHANGELOG Known issues name what moved t
       "verify-range" in ho and re.search(r"known issues", cl21, re.I) and all(k in cl21 for k in ("PILOT-59", "PILOT-60", "PILOT-61")),
       cl21[:300])
 
+# ------------------------------------------------------------ PILOT-62
+cl22 = cl.split("## 2.2.0", 1)[1].split("\n## ", 1)[0] if "## 2.2.0" in cl else ""
+sec = read("SECURITY.md")
+LLA_KEYS = {"auto_resolve_max_per_session": 3, "local_settings_kept_keys": ["model", "outputStyle"],
+            "claude_json_security_keys": ["mcpServers", "allowedTools", "enabledMcpjsonServers", "disabledMcpjsonServers",
+                                          "enableAllProjectMcpServers"],
+            "tier3_auto_modes_with_required_gate": True, "tier3_gate_allowed_modes": ["acceptEdits", "auto"],
+            "ci_gate_check": "verify-range", "ci_gate_app_id": 15368, "ci_gate_require_enforce_admins": False,
+            "ci_gate_cache_seconds": 900}
+try:
+    dp = json.load(open(P("plugins", "evidence-sdlc", "policy", "default-policy.json")))
+except (OSError, ValueError):
+    dp = {}
+check("REQ-LLA-11 default policy ships the ten PILOT-62 keys with the spec's defaults",
+      all(dp.get(k) == v for k, v in LLA_KEYS.items()) and len(dp.get("user_config_not_charged") or []) == 6
+      and all(p.startswith(("/Library/Application Support/ClaudeCode/", "/etc/claude-code/"))
+              for p in dp.get("user_config_not_charged") or []),
+      {k: dp.get(k) for k in LLA_KEYS})
+check("REQ-LLA-11 policy reference documents every new key and its repository merge rule",
+      all(k in pref for k in list(LLA_KEYS) + ["user_config_not_charged"])
+      and re.search(r"only lower", pref) and re.search(r"only (become|set .{0,60}to) false", pref))
+check("REQ-LLA-11 gates reference: restored violations closed at birth and bounded, config edits, Tier 3 auto modes "
+      "behind the pinned server gate, check-forgery, rule 5 notes",
+      all(t in gr for t in ("closed at birth", "auto_resolve_max_per_session", "config-change", "user-config-changed",
+                            "`check-forgery`", "GitHub Actions", "tier3_auto_modes_with_required_gate", "NOTE:"))
+      and re.search(r"bypassPermissions.{0,40}dontAsk.{0,40}stay\s+denied", gr, re.S))
+check("REQ-LLA-11 managed-settings owner actions: pin the check to GitHub Actions, approval.github_repo, a root-owned "
+      "org policy, remove the permission-mode loosening",
+      re.search(r"Pin `verify-range` to GitHub Actions", mdoc) and "approval.github_repo" in mdoc
+      and re.search(r"root-owned", mdoc) and re.search(r"permission-mode loosening", mdoc))
+check("REQ-LLA-11 governance and SECURITY restate the monitor as verified automatic undo, and unresolved violations "
+      "still block",
+      all(re.search(r"verified", t, re.I) and re.search(r"unresolved violations still block", t, re.I) for t in (cm, sap, sec)))
+check("REQ-LLA-11 CHANGELOG 2.2.0 states the owner actions, the NEEDS VERIFICATION items and the PILOT-63 "
+      "release-automation deferral; HANDOFF names PILOT-62 and PILOT-63",
+      cl22 and "GitHub Actions" in cl22 and "approval.github_repo" in cl22 and "NEEDS VERIFICATION" in cl22
+      and re.search(r"known issues", cl22, re.I) and "PILOT-63" in cl22 and "PILOT-62" in ho and "PILOT-63" in ho, cl22[:300])
+vers = {p: json.load(open(p)).get("version") for p in glob.glob(P("plugins", "*", ".claude-plugin", "plugin.json"))}
+mk = json.load(open(P(".claude-plugin", "marketplace.json")))
+mvers = [x.get("version") for x in mk.get("plugins", [])] + [mk.get("version") or (mk.get("metadata") or {}).get("version")]
+import state as _st  # noqa: E402
+check("REQ-LLA-11 all five plugins, the marketplace and the engine are version 2.2.0",
+      len(vers) == 5 and set(vers.values()) == {"2.2.0"} and set(v for v in mvers if v) == {"2.2.0"}
+      and _st.ENGINE_VERSION == "2.2.0", (vers, mvers, _st.ENGINE_VERSION))
+
 fails = sum(1 for _, ok, _ in res if not ok)
 print(f"\n{len(res) - fails} passed, {fails} failed")
 if os.environ.get("JUNIT_OUT"):

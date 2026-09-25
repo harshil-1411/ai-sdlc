@@ -98,6 +98,17 @@ State these to anyone relying on the gates:
   monitor catches what it could not, after the command runs, and restores control-plane
   files. With `EVIDENCE_SIGNING_KEY` deployed and the sandbox on, forged records are
   rejected. Without the key, forgery is detected but not prevented.
+- **Verified automatic undo (2.2.0, ADR-0005).** A control-plane change the monitor restores
+  and verifies by re-reading (or a created file or link it removes) is recorded closed at
+  birth, up to `auto_resolve_max_per_session` per session; it is kept in the signed record and
+  shown by `verify-range`. Unresolved violations still block push and source edits until a
+  human clears them. Configuration edits are judged by what they could do: keys that run
+  commands (`hooks`, `statusLine`, `apiKeyHelper`, `env`, MCP servers) are always undone, and a
+  system config file is exempt only when the session's user could not have written it. Tier 3
+  in `acceptEdits`/`auto` depends on GitHub reporting `verify-range` as required and pinned to
+  GitHub Actions; creating commit statuses or check runs from a session is denied
+  (`check-forgery`). The local layer gains no authority: `verify-range` and code-owner review
+  decide what merges.
 - **Very large repositories.** Each Bash call snapshots `git status`. If that exceeds
   the time limit, the call is recorded as unchecked (an integrity violation), not
   silently passed.

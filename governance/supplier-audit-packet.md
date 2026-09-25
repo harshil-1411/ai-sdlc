@@ -78,6 +78,14 @@ can shape, so a determined agent could expose it and forge local records. The me
 does not depend on that key: it requires the GitHub code-owner review. Key isolation is
 scheduled (PILOT-61). Admin direct pushes are reported after the fact, not prevented.
 
+Since 2.2.0 (ADR-0005) the local integrity monitor is detection with **verified** automatic undo:
+a control-plane change it restores and re-reads, or removes, is recorded closed rather than
+waiting for a human, up to a per-session cap, and the record is kept and shown to the code owner
+by `verify-range`. **Unresolved violations still block** push and source edits until a human
+clears them. Configuration edits by the human (root-owned managed settings, permission grants and
+tightening in `settings.local.json`, Claude Code's own `~/.claude.json` bookkeeping) are logged,
+not charged to the agent; edits that could run commands are always undone.
+
 **Q. How is traceability maintained?**
 Requirement IDs originate in the specification and flow to test cases and to the
 traceability matrix. Sample export available on request.

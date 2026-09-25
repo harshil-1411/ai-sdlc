@@ -35,7 +35,7 @@ with git plumbing and executes nothing from the PR. It fails the PR when (ADR-00
 | 2 | any path, in any commit, any merge or the net diff, is outside the plan's claims. Only `.evidence/audit/`, `.evidence/changes/` and `.evidence/violations/` are exempt, because rules 4–5 judge them; `.evidence/policy.json` and the secrets allow-list must be claimed |
 | 3 | an added blob holds a possible secret, or is over `verify_range_blob_cap_mb` and not on `verify_range_allow_large` |
 | 4 | a named session's audit log is missing or doesn't verify, a base log is deleted, or any log is not an append-only extension of its parent's |
-| 5 | a change record is unsigned, deleted or rolled back, a violation is closed without a signed clear, or another change's record is edited other than by a signed release or clear |
+| 5 | a change record is unsigned, deleted or rolled back, a violation is closed without a signed clear, an entry first appears closed without a signed clear or a verified restore (2.2.0), or another change's record is edited other than by a signed release or clear. An entry closed at birth by a verified restore passes and is printed as a `NOTE:` line for the code owner |
 
 On `push` to `main`, `verify-range --push-report` checks rules 2–5 after the fact and reports
 without blocking (it catches admin direct pushes). The existing `sign-and-gate` job (results
@@ -43,7 +43,9 @@ signing and `gaps --strict`) is unchanged.
 
 **Owner actions:**
 - Make `verify-range` a **required status check** on `main`, and keep "Require review from Code
-  Owners" on. Without the required check, nothing is enforced.
+  Owners" on. Without the required check, nothing is enforced. Since 2.2.0, **set the check's
+  source to GitHub Actions** (branch protection, or `integration_id` in a ruleset): Tier 3 auto
+  modes are allowed only when the engine reads that pin from GitHub (see below).
 - `pull_request_target` does not fire on reviews. **After approving, re-run** the PR's
   `verify-range` job ("Re-run jobs" on its check). That run is the one attached to the PR's head
   commit. A `workflow_dispatch` run with the PR number re-checks the PR too, but its result is
@@ -151,7 +153,7 @@ user-level control plane.
 | 11 | `not-approved` | V2A-01 | There is no `approval.json` | "…the plan for KEY has not been approved. Ask a human to review <plan> and send `/evidence-sdlc:approve KEY <sha12>` (or run `evidence approve KEY <sha12>` in their own terminal). An agent cannot approve its own plan." | The human sends `/evidence-sdlc:approve KEY <sha-prefix>` |
 | 12 | `approval-stale` | V2A-01 | The plan's sha256 is no longer the one the human approved | "…the plan for KEY changed after it was approved, so the approval no longer applies. A human must re-read it and send `/evidence-sdlc:approve KEY <new sha12>`." | The human re-approves the new hash |
 | 13 | `tier-floor` | V2S-02 | The path's policy floor is above the change's tier (for example `**/auth/**` in a Tier 2 change) | "…policy sets a minimum of Tier 3 for this path, but change KEY is Tier 2. A human raises the tier with `evidence change set-tier KEY 3`…" | A human runs `set-tier` at their terminal |
-| 14 | `tier3-auto-mode` | V2S-03 | A Tier 3 source edit while `permission_mode` is `bypassPermissions`, `acceptEdits`, `dontAsk` or `auto` | "…change KEY is Tier 3, which requires per-change human review, but this session is in 'acceptEdits' mode." | Switch to default mode |
+| 14 | `tier3-auto-mode` | V2S-03, LLA-08 | A Tier 3 source edit while `permission_mode` is `bypassPermissions` or `dontAsk` (always), or `acceptEdits` / `auto` unless the server gate is confirmed (2.2.0: `tier3_auto_modes_with_required_gate` on, a signed session, and `verify-range` required on the default branch and pinned to GitHub Actions, read from GitHub) | "…change KEY is Tier 3, which requires per-change human review, but this session is in 'auto' mode… <the missing condition and the owner action>" | Switch to default mode, or the owner pins the check and sets `approval.github_repo` |
 | 15 | `outside-claims` | V2G-12 | A path that no glob in the approved plan's `## Files claimed` matches | "…<path> is not in the approved plan's \"Files claimed\" for KEY. Add it to the plan (which voids the approval) and ask for re-approval, or leave the file alone." | Amend the plan and get re-approval |
 | 16 | `change-controlled` | V2G-08 | A `change_controlled` path (migrations, CI, infra, audit, signing, crypto, validation) without a valid `CHANGE_TICKET` | "…<path> is under formal change control… A human starts the session with CHANGE_TICKET set to an approved change record matching …" | The human sets `CHANGE_TICKET` |
 | 17 | `test-weakening` | V2G-10 | In a `fix` change past `failing-test`, editing or deleting a test file that existed at the recorded `fix_base` commit | "…change KEY is a fix past its failing-test stage, and <path> is a test that existed before the fix. Fix the code, not the test… New test files are allowed." | A human decides the test is wrong. New tests are fine |
@@ -183,6 +185,7 @@ rules to each simple command, and runs every write target through the table abov
 | `audit-oversize` | IMH-20 | Any call while an audit log is over 64 MiB (checked by size only) | "Audit log … is larger than the 64 MiB the gates can check in time…" |
 | `audit-unwritable` | IMH-06 | Any call while an earlier call's own audit entry could not be written (an open violation) | "An earlier call's audit entry could not be written…" |
 | `agent-merge` | V2G-05 | `gh pr merge` (always with `--admin`). `gh api -X PUT/POST/PATCH/DELETE` to `/merge`, `/protection`, `/rulesets`, branch rename or `/git/refs`. `gh api graphql` mutations that merge, auto-merge, add a review, or change protection or refs. `curl`/`wget`/`http`/`xh` with a mutating method or body against `api.github.com` or a GitLab API | "Merging is a human decision in this repository…" / "Mutating a code host's API directly … is not available to an agent session" |
+| `check-forgery` | LLA-10 | `gh api` calls that create or update a commit status or check run: POST/PATCH/PUT, or fields with no method (gh then posts), to `…/statuses/<sha>`, `…/check-runs` or `…/check-suites`; the GraphQL `createCheckRun`/`updateCheckRun`/`createCheckSuite` mutations. Reading them is allowed | "Creating or updating a commit status or check run from an agent session is not allowed: a required check matched by name could be satisfied that way." |
 | `release-approval` | V2G-06 | A deploy tool, recognised by command position, pointed at a production target (a `prod_words` match, case-insensitive), or at a computed target, without a valid `RELEASE_APPROVAL`. The tools: `kubectl`/`oc` mutating verbs, `helm install/upgrade/rollback`, `terraform`/`tofu apply/destroy`, `pulumi up`, `cdk`/`serverless`/`sam`/`firebase`/`wrangler deploy`, `aws`/`gcloud`/`az` deploy verbs, `gh workflow run deploy*`, make/npm/yarn deploy targets, and scripts named deploy/release/promote/rollout/ship. Plain text such as `grep production` never triggers it | "`kubectl apply` names a production target (prod-eu). Production changes need a release authorization… The agent cannot supply it." |
 
 ### Secrets
@@ -250,9 +253,62 @@ line belonging to another session (REQ-IMH-11).
 - **Permission grants are kept.** The hook runs before Claude Code's permission prompt, so a
   "don't ask again" answer writes `.claude/settings.local.json` while the call is in flight. When
   the only change is new `permissions.allow` entries, the file is kept and a `permission-grant`
-  audit entry is written. Any other change to it is restored and recorded.
+  audit entry is written. Since 2.2.0 more edits are kept (see below); anything else is restored.
 - A pre hook that runs past 25 seconds denies the call; a post hook that does records an
   `integrity-timeout` violation (the hook limit is 30).
+
+### The local layer is advisory in practice (2.2.0, ADR-0005)
+
+The local layer gains no authority in 2.2.0; it stops costing a human round trip for events that
+are not the agent's doing or that it has already undone.
+
+- **A verified undo is closed at birth.** When the monitor restores a changed control-plane file
+  and the re-read equals the snapshot, or removes a created file or planted symlink and the path
+  is gone, the violation is written `open: false`, `resolved: "restored"`, `resolved_at`, and
+  logged as an `integrity-violation` audit event with `resolved`. It blocks neither push/PR nor
+  source edits, and needs no `clear-violations`; the post-call note says the change was undone and
+  there is nothing to clear. The record stays, and `verify-range` shows each one to the code
+  owner (rule 5 `NOTE:`). Only the pairs in `AUTO_RESOLVABLE` qualify: `control-plane` restored or
+  removed, `control-plane-symlink` removed.
+- **Everything else stays open and blocks as in 2.1.0:** an unsigned-mode `recorded`, a restore
+  whose write fails or whose re-read differs, `control-plane-removal-refused`, `audit-tamper`,
+  `hidden-change`, `evidence-dir-changed`, `git-unavailable`, `git-dir-replaced`, the
+  `integrity-snapshot-*`, `integrity-timeout`, `integrity-check-error` and `audit-unwritable`
+  entries, and any gated path written by a program the gates could not see.
+- **The per-session cap.** Once a session has `auto_resolve_max_per_session` (default 3)
+  entries closed at birth in the change's or branch's record, the next restored change is open
+  and the note says why. `0` disables closing at birth. The org policy sets it; a repository
+  policy may only lower it.
+- **Config edits are judged by effect, not author** (the engine cannot tell the human from the agent):
+  - `.claude/settings.local.json` is kept, with a `config-change` audit event, when every
+    difference is an `allow` entry added or removed, a `deny` or `ask` entry added, an
+    `additionalDirectories` entry added or removed, or a top-level key in
+    `local_settings_kept_keys` (default `model`, `outputStyle`). A pure allow addition is still a
+    `permission-grant`. Everything else is restored: `hooks`, `disableAllHooks`, `env`,
+    `statusLine`, `apiKeyHelper`, `enabledPlugins`, MCP keys, `permissions.defaultMode`, a deny or
+    ask rule removed, invalid JSON, a BOM.
+  - A file in `user_config_not_charged` (the managed-settings files and `evidence-policy.json`
+    under `/Library/Application Support/ClaudeCode/` and `/etc/claude-code/`) changed during a call
+    is logged as `user-config-changed` (path, old and new hash, owner uid, mode) and is not a
+    violation, **only if** before and after the call it is not owned by the hook's user and
+    neither it nor its directory is writable by that user. A listed file the user could have
+    written is still `hidden-change`.
+  - `~/.claude.json` (and `$CLAUDE_CONFIG_DIR/.claude.json`) is charged only when its security
+    projection changes: the top-level `mcpServers` and, under `projects.*`, the keys in
+    `claude_json_security_keys`. Claude Code's bookkeeping rewrites are ignored; a file that
+    becomes invalid, missing or over 64 MiB is `hidden-change`.
+- **Tier 3 auto modes follow the server gate.** A Tier 3 edit in a mode listed in
+  `tier3_gate_allowed_modes` (default `acceptEdits`, `auto`) is allowed when
+  `tier3_auto_modes_with_required_gate` is on, the session is signed, and the engine reads from
+  GitHub, through `gh` pinned to `approval.github_repo`, that `ci_gate_check` (`verify-range`) is
+  a required status check on the default branch **pinned to the GitHub Actions app**
+  (`ci_gate_app_id`, `checks[].app_id` in branch protection or `integration_id` in a ruleset).
+  "Any source", another app, a missing check, `gh` failing or timing out, non-JSON output or an
+  empty `github_repo` all mean not confirmed, and the denial names which. The result is cached in
+  a signed file in the temp directory (900 s for a confirmation, 60 s for a failure); an
+  unsigned, altered, expired or linked cache is ignored. A `tier3-auto-mode-allowed` audit event
+  records the evidence each time the cache is filled. `bypassPermissions` and `dontAsk` stay
+  denied.
 
 ## Advisory hooks (never deny)
 
