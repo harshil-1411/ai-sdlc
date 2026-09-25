@@ -3,6 +3,75 @@
 All five plugins are versioned together. Every change to a plugin's files needs a
 version bump (enforced in CI by `scripts/ci/check-version-bump.sh`) and an entry here.
 
+## 2.1.0 — 2026-09-25 (PILOT-58)
+
+Integrity-monitor, engine-git and merge-gate hardening. Spec, plan and ADR-0003/0004:
+`intent/2026-09-24-integrity-monitor-hardening/`, `.evidence/decisions/`.
+
+**Redeploy note:** the authority moves to CI. Add `.github/workflows/verify-range.yml`, make
+`verify-range` a **required status check** on `main`, keep code-owner review required, and
+re-run the check after approving a PR (`pull_request_target` doesn't fire on reviews). Pin
+`approval.github_repo` if you use GitHub approvals. This PR itself is not gated by
+`verify-range`: the workflow isn't on `main` until it merges, and it is enforced from the next PR.
+
+### Merge gate (authoritative)
+- `evidence verify-range` (REQ-IMH-19), run by the base branch's `pull_request_target` workflow
+  (REQ-IMH-21). It reads the PR's commits with git plumbing and fails the PR on ADR-0004 rules 0–5:
+  bad inputs; a missing key, trailer or signed state; no code-owner approval of the head commit;
+  unclaimed paths; secrets or oversize blobs; audit logs that shrink or go missing; change records
+  rolled back, closed without a signed clear, or another change's records edited. On `push` to
+  `main`, `--push-report` reports and never blocks.
+
+### Gates (evidence-sdlc), now advisory for merged history
+- Engine git is neutralised (REQ-IMH-09, 22, 24): all git and `gh` calls go through
+  `run_git`/`run_gh` with command-running config switched off, attributes from the empty tree,
+  and no `GIT_*` or signing key in the child environment. The repository's git config is checked
+  once per call: a key in `deny_git_config_keys` at any scope but `command` refuses the call
+  (`git-config-refused`), except `credential.*` at global or system scope and exact
+  `git_allowed_config` values (the git-lfs defaults). The deny list gains the spec's set and
+  `lfs.extension.*`, `lfs.customtransfer.*`, `lfs.standalonetransferagent`. `gh` is always pinned
+  with `--repo`; an empty `approval.github_repo` is refused.
+- Git failure fails closed (REQ-IMH-23): a repository git can't read denies calls, and after a
+  call it is a `git-unavailable` violation, with the control-plane restore still run.
+- The integrity monitor never follows a link (REQ-IMH-01, 02, 08): listing, restore and removal
+  go through no-follow directory handles, links and non-files at control-plane paths are
+  violations, and snapshots are written and read safely with a size cap. It also records
+  `.evidence` directory mode and identity changes (REQ-IMH-05), deleted untracked files
+  (REQ-IMH-07), rewritten or replaced audit logs by prefix hash (REQ-IMH-20), and its own
+  unwritable audit entry, which then denies calls (REQ-IMH-06).
+- Commit bypasses denied (REQ-IMH-10): pathspecs, `--only`, `--include`, `--patch`,
+  `--interactive`, `--pathspec-from-file`, `git add … && git commit` in one command, and
+  `GIT_INDEX_FILE`/`GIT_OBJECT_DIRECTORY`/`GIT_ALTERNATE_OBJECT_DIRECTORIES`.
+- `evidence audit verify` reports replayed entries and entries of another session (REQ-IMH-11).
+- Audit logs over 64 MiB deny calls instead of hanging the monitor; a hook past 25 seconds fails
+  closed.
+- A permission granted at Claude Code's prompt ("don't ask again") during a call is kept and
+  logged as `permission-grant`, instead of being reverted as tampering. Any other change to
+  `.claude/settings.local.json` is still restored.
+
+### Docs and governance
+- `gates-reference.md` and `managed-settings.md`: the local push gate is advisory; `verify-range`
+  is authoritative; the owner actions. `policy-reference.md`: `git_allowed_config`,
+  `verify_range_blob_cap_mb`, `verify_range_allow_large`. `control-mapping.md` and
+  `supplier-audit-packet.md` rest change control on `verify-range` and state the ADR-0003 §4
+  residual risk.
+
+### Known issues (moved to later changes)
+- **PILOT-59:** concurrency (attested writes, signed lease, chained snapshots); a pre-call
+  `tool-start` audit entry so a call whose post entry is lost still leaves a trace; FIFO or device
+  files in untracked directories can stall the monitor's hashing; the snapshot's root isn't
+  compared with the post call's; snapshot files are created world-readable; `cmdparse` merges the
+  line after a heredoc into the previous command; the GitHub approval route doesn't compare the
+  approver with the change's creator.
+- **PILOT-60:** usability: CI-owned test results (ADR-0002), YAML comment handling,
+  DUPLICATE-ID for Tier 2+ plans under `plan/`, temp-directory false positives, the
+  `engine-tests.py -k` crash, and splitting `deny_git_config_keys` so harmless global keys
+  (`alias.*`, `core.editor`, `core.pager`) are not refused.
+- **PILOT-61:** isolate the signing key in a signer that never runs git, retiring the ADR-0003 §4
+  residual risk.
+- **PILOT-62:** make the local layer advisory in practice: a violation the monitor already
+  restored doesn't block push, and Tier 3 works in `acceptEdits` once `verify-range` is required.
+
 ## 2.0.2 — 2026-09-24 (PILOT-54)
 
 Publication metadata and a security fix to the managed-settings template. Plan: `plan/PILOT-54.md`.

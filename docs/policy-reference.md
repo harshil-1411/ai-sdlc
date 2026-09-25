@@ -90,7 +90,8 @@ repo-relative form with `realpath` before matching.
 | `deny_agent_merge` | `true` | Denies `gh pr merge`, and `gh api` writes to merge, protection, rulesets or refs endpoints. (`gh pr merge --admin` is always denied) |
 | `prod_words` | `prod`, `production`, `prd`, `live`, `prod1`, `prod2` | Words that mark a deploy target as production. Matched case-insensitively |
 | `treat_unknown_deploy_target_as_production` | `true` | Treats a target computed at run time (`$ENV`) as production |
-| `deny_git_config_keys` | `alias.*`, `core.hooksPath`, `core.sshCommand`, `core.fsmonitor`, `core.editor`, `core.pager`, `credential.*`, `include.path`, `includeIf.*`, `filter.*`, `diff.*.textconv`, `sequence.editor`, `gpg.program` | Config keys an agent may not set through `git -c` or `git config`, because each can run arbitrary programs or change authentication |
+| `deny_git_config_keys` | `alias.*`, `core.hooksPath`, `core.sshCommand`, `core.fsmonitor`, `core.editor`, `core.pager`, `credential.*`, `include.path`, `includeIf.*`, `filter.*`, `diff.*.textconv`, `sequence.editor`, `gpg.program`, and since 2.1.0 `diff.*.command`, `merge.*.driver`, `core.askPass`, `core.gitProxy`, `core.worktree`, `core.attributesFile`, `gpg.*program`, `ssh.variant`, `remote.*.uploadpack`, `remote.*.receivepack`, `uploadpack.*`, `*tool.*.cmd`, `interactive.diffFilter`, `pager.*`, `url.*.insteadOf`, `submodule.*.update`, `lfs.extension.*`, `lfs.customtransfer.*`, `lfs.standalonetransferagent` | Config keys an agent may not set through `git -c` or `git config`, because each can run arbitrary programs or change authentication. Since 2.1.0 the same list is checked against the config the engine's own git would use: a key in it at any scope except `command` refuses every call (`git-config-refused`), except `credential.*` at global or system scope and exact `git_allowed_config` values. **Known issue:** this also refuses harmless global keys such as `alias.*` and `core.editor`; PILOT-60 splits the list |
+| `git_allowed_config` | the four `git lfs install` values: `filter.lfs.clean=git-lfs clean -- %f`, `filter.lfs.smudge=git-lfs smudge -- %f`, `filter.lfs.process=git-lfs filter-process`, `filter.lfs.required=true` | Exact `key=value` pairs that pass the engine's config check although the key is in `deny_git_config_keys`. A value containing a newline or carriage return never passes. Org policy only: a repository policy can't add to it (2.1.0) |
 
 ### Changes, reviews and agents
 
@@ -112,7 +113,7 @@ repo-relative form with `realpath` before matching.
 | --- | --- | --- |
 | `approval.mode` | `"local"` | `local`: approvals come from the prompt (`/evidence-sdlc:approve`) or the terminal, and the approver is `git user.email`. `github`: declares that identity-bound approval through `evidence approve KEY --github-pr N` is the intended path. **Engine 2.0.0 doesn't read this key yet.** Prompt and terminal approvals are still accepted when it is `github`, so don't rely on it to switch local approval off |
 | `approval.github_allowed_approvers` | `[]` | The GitHub logins whose APPROVED review, or `/approve-plan <sha12>` comment, counts. The PR author never counts. **If the list is empty, any other GitHub user counts**, so set it |
-| `approval.github_repo` | `""` | `owner/repo` when `gh` can't infer it |
+| `approval.github_repo` | `""` | `owner/repo` for GitHub approvals. Since 2.1.0 it is required: `gh` is always called with `--repo` set to it, and an empty value refuses `evidence approve --github-pr` rather than letting `gh` resolve the repository from agent-writable remotes (REQ-IMH-24). In CI, `verify-range` uses `$GITHUB_REPOSITORY` |
 
 ## Example: an organisation policy
 
@@ -183,3 +184,11 @@ strictness flag off.
 | `tier3_distinct_approver` | `true` | A Tier 3 plan approved through the prompt or terminal channel must be approved by someone other than the person who started the change. |
 | `unknown_programs` | `monitor` | `deny` turns on strict mode: any program not in the built-in known list or `known_programs` is refused, because what it writes cannot be judged. `monitor` leaves them to the integrity monitor. |
 | `known_programs` | `[]` | Programs an organisation adds to the strict-mode list. |
+
+## Keys added in 2.1.0 (PILOT-58)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `git_allowed_config` | the four git-lfs values | See [Git, merges and production](#git-merges-and-production). |
+| `verify_range_blob_cap_mb` | `20` | `verify-range` rule 3: a blob added in a PR larger than this fails, unless its path is on `verify_range_allow_large`. Blobs under the cap are scanned for secrets. Read from the base commit's policy plus the org policy, never from the PR. |
+| `verify_range_allow_large` | `[]` | Globs of paths allowed to exceed `verify_range_blob_cap_mb` (for example `assets/**/*.png`). Org policy only; a repository policy can't loosen it. |

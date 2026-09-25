@@ -21,6 +21,24 @@ force-enabled, the sandbox on, and `EVIDENCE_SIGNING_KEY` set for the Claude Cod
 the sandbox. Without the key, approval and audit integrity drop from *enforced* to *detected*: the
 integrity monitor records unapproved writes, but a forged record cannot be told from a real one.
 
+### Where change control rests (2.1.0, ADR-0004)
+
+The in-session gates are **advisory for merged history**. **Residual risk (ADR-0003 §4):** the
+signing key lives in the hook process, which runs git in a repository the agent shapes. A
+race with a command the agent started, or a same-user process reading the hook's environment,
+can expose the key, and with it every local record could be forged. This risk is accepted and
+stated until PILOT-61 isolates the key.
+
+So change control (CC8.1, A.8.32) rests on the **`verify-range` required status check**: a
+`pull_request_target` job that runs the base branch's workflow, reads the PR's commits with git
+plumbing, and fails the PR unless every commit carries the change key and a session or human
+trailer, every path is within the approved plan's claims, no secret or oversize blob is added,
+audit logs only grow, change records are neither rolled back nor forged into another change's
+history, and a **code owner approved the PR's head commit on GitHub**. The last condition doesn't
+depend on the signing key. It holds only when the owner makes `verify-range` a required check and
+keeps code-owner review required (OWNER ACTION). Admin direct pushes are reported after the fact
+by `verify-range --push-report`, not prevented.
+
 ## How to read the Status column
 
 | Status | Meaning |
@@ -56,7 +74,7 @@ Where more than one applies, the row says which part is which.
 | CC6.8 Prevent/detect unauthorised or malicious software | Dangerous git config (`core.hooksPath`, `alias.*`, `credential.*`, `filter.*`, `include.path`) denied (V2K-02*); control plane protected (V2G-09*); `allowManagedHooksOnly` and `strictKnownMarketplaces` in managed settings. | ENFORCED (in-session); OWNER ACTION (set marketplace value, deploy managed settings, run canary) | `engine-tests.py` V2K-02*, V2G-09*; canary | No malware or dependency (SCA) scanning is shipped. |
 | CC7.1 Detect configuration changes and vulnerabilities | Agent writes to configuration are denied or logged; every agent write is in the audit log; plugin version-bump CI check. | ENFORCED (logging, control plane); OWNER ACTION (enable CI, vulnerability scanning) | `evidence audit verify`; audit log entries by path; CI results | No vulnerability scanning; configuration drift outside the repo (e.g. host settings) is not observed. |
 | CC7.2 Monitor for anomalies | Gate denials with rule and reason in the audit log; `evidence metrics`; OTel env block shipped in managed settings. | ENFORCED (recording); OWNER ACTION (collector endpoint, alerting, review) | `evidence metrics --json` → `gate_denials`; `grep '"event": "deny"'` | No alerting is shipped. Someone must look at denials and self-approval attempts. |
-| CC8.1 Change management | Source write requires an active change with tier artifacts, a non-stub plan and a human approval bound to the plan sha256 (V2G-04*, V2A-01*); claims scope (V2G-12*); tier floors (V2S-02*); change ticket on controlled paths (V2G-08*); review agents before push/PR (V2S-04*); key + `Agent-Session` in commits (V2G-07*, V2A-03*); test protection in fixes (V2G-10*); Bash writes held to the same rules (V2G-02*). | ENFORCED (agent); OWNER ACTION (branch protection + CODEOWNERS — authoritative merge control; CI enablement) | `evidence change list --json`; `evidence metrics --json` → `stage_skip_rate`; `approval.json`; `evidence gaps`; `git log --grep 'Agent-Session:'` | Human commits outside an agent are not gated by the engine; branch protection must cover them. |
+| CC8.1 Change management | Source write requires an active change with tier artifacts, a non-stub plan and a human approval bound to the plan sha256 (V2G-04*, V2A-01*); claims scope (V2G-12*); tier floors (V2S-02*); change ticket on controlled paths (V2G-08*); review agents before push/PR (V2S-04*); key + `Agent-Session` in commits (V2G-07*, V2A-03*); test protection in fixes (V2G-10*); Bash writes held to the same rules (V2G-02*). | ENFORCED at merge by `verify-range` (ADR-0004 rules 0–5, a required `pull_request_target` check; `cli-lifecycle-tests.py` IMH-19*), and in-session (agent, advisory: ADR-0003 residual risk); OWNER ACTION (make `verify-range` required, keep code-owner review, re-run after approval) | `verify-range` check run on each PR; `evidence change list --json`; `evidence metrics --json` → `stage_skip_rate`; `approval.json`; `evidence gaps`; `git log --grep 'Agent-Session:'` | Human commits need a `Human-Commit:` trailer and the key, and are covered by the head-commit review. Admin direct pushes are reported (`--push-report`), not prevented. Fork PRs fail by design. |
 
 ## ISO/IEC 27001:2022 Annex A
 

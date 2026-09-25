@@ -40,6 +40,7 @@ The work since the v1 audit is recorded as intent/spec/plan in:
   - Traceability: `doctor`, `scan`, `gaps`, `export`, `results sign`, `tracker`.
 - **Governance**, `governance/`. `control-mapping.md` maps SOC 2, ISO 27001:2022 and NIST SSDF to mechanisms. Every enforcement claim cites a test.
 - **CI**, `.github/workflows/ci.yml`. The `checks` job runs every suite without the key. The `sign-and-gate` job signs results with the *base branch's* CLI and runs `gaps --strict`. Evals run on manual dispatch only.
+- **The merge gate (2.1.0)**, `.github/workflows/verify-range.yml`: a `pull_request_target` job that runs `evidence verify-range` from the base branch against the PR's commits (ADR-0004). It is authoritative; the local hooks are advisory (ADR-0003 §4 states the residual risk). It needs to be a required check on `main`, and must be re-run after approving.
 - **Adopter templates**: `managed-settings.json`, `pipelines/` (GitHub Actions, GitLab, CI-hosted agent, CODEOWNERS example), `docs/managed-hooks.example.json`.
 
 ## Run and verify
@@ -81,6 +82,11 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
 ## Open work
 
 ### Code, in priority order
+0. **After PILOT-58 (2.1.0):**
+   - **PILOT-62, local layer advisory** (next, owner decision 2026-09-25): a violation the monitor already restored doesn't block push; Tier 3 allowed in `acceptEdits` once `verify-range` is required. Dogfooding showed the blocking local layer costs the developer several manual steps per session.
+   - **PILOT-59, concurrency and monitor gaps:** attested writes, a signed lease, chained snapshots, a pre-call `tool-start` audit entry (review A4), FIFO/device hashing in `_dirty` (B1), snapshot root mismatch (B2), snapshot directory 0700 plus an owner check (B3), `file_in_commit`-style fail-open sweeps. Also `cmdparse` merges the line after a heredoc into the previous command's argv, and the GitHub approval route doesn't compare the approver with the change's creator.
+   - **PILOT-60, usability:** CI owns test results (ADR-0002), YAML comments, DUPLICATE-ID, the temp-dir false positives, `engine-tests.py -k` crash, split `deny_git_config_keys` so harmless global keys (`alias.*`, `core.editor`) aren't refused.
+   - **PILOT-61, key isolation:** a signer that never runs git or exposes the key, which retires ADR-0003 §4.
 1. **Inline interpreter code** (`python -c`, `node -e`) is judged by a keyword denylist
    (`cmdparse._WRITE_HINTS`), so string tricks get past the pre-check. Replace it with an
    allowlist of read-only forms, or make strict mode the default.
@@ -100,6 +106,7 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
 - [x] `.github/CODEOWNERS` with a real handle (2026-09-24, PILOT-54).
 - [x] `EVIDENCE_SIGNING_KEY` Actions secret: `sign-and-gate` passed on PR #1 (2026-09-24).
 - [ ] Confirm the Actions variable `EVIDENCE_REQUIRE_SIGNED=true` is set (not verified).
+- [ ] After PILOT-58 merges: add `verify-range` as a required status check on `main`, and confirm "Require review from Code Owners" is on. Then run MAN-IMH-01 on the next PR: a deliberately bad branch must fail `verify-range`, and pass after a code-owner approval and a re-run.
 - [ ] A second person for code-owner review. The owner in CODEOWNERS can't approve their own PRs, so until a second reviewer exists, merges need the admin override.
 - [ ] Set up GitHub approval mode in an org policy:
   - `approval.mode: "github"`

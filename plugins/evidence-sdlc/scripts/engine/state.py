@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-ENGINE_VERSION = "2.0.1"
+ENGINE_VERSION = "2.1.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_POLICY = os.path.join(HERE, "..", "..", "policy", "default-policy.json")
 ORG_POLICY_PATHS = [

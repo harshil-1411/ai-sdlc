@@ -254,8 +254,12 @@ check("REQ-P54-02 CODEOWNERS has a default owner and covers the control plane an
       and "@your-org" not in co, co[:300])
 mkt = json.load(open(P(".claude-plugin", "marketplace.json")))
 mver = {p["name"]: p["version"] for p in mkt.get("plugins", [])}
-check("REQ-P54-03 every plugin is 2.0.2 in plugin.json and marketplace.json, and CHANGELOG has the entry",
-      all(m.get("version") == "2.0.2" and mver.get(n) == "2.0.2" for n, m in man.items()) and "## 2.0.2" in read("CHANGELOG.md"),
+# Since PILOT-58 (2.1.0) this checks the versions agree at 2.0.2 or later, instead of pinning 2.0.2.
+_vers = {m.get("version") for m in man.values()} | set(mver.values())
+_ver = next(iter(_vers)) if len(_vers) == 1 else ""
+check("REQ-P54-03 every plugin has one version (2.0.2 or later) in plugin.json and marketplace.json, and CHANGELOG has the entry",
+      _ver and tuple(int(x) for x in _ver.split(".")) >= (2, 0, 2) and set(mver) == set(man)
+      and f"## {_ver}" in read("CHANGELOG.md") and "## 2.0.2" in read("CHANGELOG.md"),
       (mver, {n: m.get("version") for n, m in man.items()}))
 
 

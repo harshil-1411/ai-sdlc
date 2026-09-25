@@ -14,6 +14,40 @@ What each rule matches is set by policy. See [policy-reference.md](policy-refere
 
 The requirement IDs (`REQ-V2G-…`, `V2S`, `V2A`, `V2K`, `V2X`) come from
 [`intent/2026-09-24-v2-enterprise-hardening/spec.md`](../intent/2026-09-24-v2-enterprise-hardening/spec.md).
+`REQ-IMH-…` come from [`intent/2026-09-24-integrity-monitor-hardening/spec.md`](../intent/2026-09-24-integrity-monitor-hardening/spec.md) (2.1.0).
+
+## Where the authority is (2.1.0, ADR-0004)
+
+**The local hooks are advisory.** They run on the developer's machine, in a repository the agent
+can shape, so a determined agent can get past them (ADR-0003 §4 states the residual risk). They
+give early feedback and keep the audit record. They are not what decides a merge.
+
+**The authoritative gate is `verify-range`**, a `pull_request_target` job in
+`.github/workflows/verify-range.yml`. `pull_request_target` runs the **base branch's** copy of the
+workflow, so a PR cannot edit or remove the gate that judges it. The job checks out only the base
+(the trusted CLI), fetches the PR's objects, and runs `evidence verify-range`, which reads them
+with git plumbing and executes nothing from the PR. It fails the PR when (ADR-0004 rules 0–5):
+
+| Rule | Fails when |
+| --- | --- |
+| 0 | the event, SHAs, signing key (32+ characters) or token are missing or malformed, or the fetched PR head is not the event's head |
+| 1 | the head branch doesn't carry exactly one change key; a commit lacks the key or an `Agent-Session:` / `Human-Commit:` trailer; the change state is unsigned or released; `approval.json` doesn't match the plan's hash; or no **code owner** of every changed path (the base's `CODEOWNERS`, last matching rule) approved the **head commit**, other than the PR author |
+| 2 | any path outside `.evidence/**`, in any commit, any merge or the net diff, is outside the plan's claims |
+| 3 | an added blob holds a possible secret, or is over `verify_range_blob_cap_mb` and not on `verify_range_allow_large` |
+| 4 | a named session's audit log is missing or doesn't verify, a base log is deleted, or any log is not an append-only extension of its parent's |
+| 5 | a change record is unsigned, deleted or rolled back, a violation is closed without a signed clear, or another change's record is edited other than by a signed release or clear |
+
+On `push` to `main`, `verify-range --push-report` checks rules 2–5 after the fact and reports
+without blocking (it catches admin direct pushes). The existing `sign-and-gate` job (results
+signing and `gaps --strict`) is unchanged.
+
+**Owner actions:**
+- Make `verify-range` a **required status check** on `main`, and keep "Require review from Code
+  Owners" on. Without the required check, nothing is enforced.
+- `pull_request_target` does not fire on reviews. **After approving, re-run** the `verify-range`
+  job from the PR's checks, or run the workflow with `workflow_dispatch` and the PR number.
+- **Fork PRs** (and Dependabot) fail by design: they get no secrets, so there is no key to verify
+  records with.
 
 ## The engine
 
@@ -132,6 +166,11 @@ rules to each simple command, and runs every write target through the table abov
 | `commit-key` | V2G-07 | No tracker key in the **message**, or a key different from the active change's. Messages are read from `-m`, `-F file`, `-F -` with a heredoc, and `"$(cat <<'EOF' … EOF)"`; for `--amend --no-edit`, from HEAD | "The commit message carries no tracker key… The key in the branch name alone is not enough." |
 | `agent-trailer` | V2A-03 | A message without `Agent-Session: <this session's id>` | "Commits made by an agent must say which session made them. End the commit message with the trailer line: Agent-Session: …" |
 | `secret` | V2K-01 | Secrets in the staged diff (plus the working tree for `-a`) or in the commit message | as above |
+| `commit-bypass` | IMH-10 | `git commit` with a pathspec, `--only`/`-o`, `--include`/`-i`, `--patch`/`-p`, `--interactive` or `--pathspec-from-file`; `git commit` in the same command as an index-changing git command (`git add … && git commit`); `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` on a command (rule `identity`) | "`git commit` with a pathspec commits files other than the staged index the gates check. Stage … then run a plain `git commit -m …`." |
+| `git-config-refused` | IMH-09 | Any call, when the git config the engine would run with (any scope but `command`, includes followed) sets a key in `deny_git_config_keys`, other than `credential.*` at global or system scope, or an exact `git_allowed_config` value | "git config core.fsmonitor (local, file:.git/config) can make git run a command… A human removes it, or the organisation allow-lists the exact value…" |
+| `git-unavailable` | IMH-23 | Any call inside a repository git cannot read; a commit whose staged listing or diff git could not produce | "This directory is inside a git repository that git cannot read…" |
+| `audit-oversize` | IMH-20 | Any call while an audit log is over 64 MiB (checked by size only) | "Audit log … is larger than the 64 MiB the gates can check in time…" |
+| `audit-unwritable` | IMH-06 | Any call while an earlier call's own audit entry could not be written (an open violation) | "An earlier call's audit entry could not be written…" |
 | `agent-merge` | V2G-05 | `gh pr merge` (always with `--admin`). `gh api -X PUT/POST/PATCH/DELETE` to `/merge`, `/protection`, `/rulesets`, branch rename or `/git/refs`. `gh api graphql` mutations that merge, auto-merge, add a review, or change protection or refs. `curl`/`wget`/`http`/`xh` with a mutating method or body against `api.github.com` or a GitLab API | "Merging is a human decision in this repository…" / "Mutating a code host's API directly … is not available to an agent session" |
 | `release-approval` | V2G-06 | A deploy tool, recognised by command position, pointed at a production target (a `prod_words` match, case-insensitive), or at a computed target, without a valid `RELEASE_APPROVAL`. The tools: `kubectl`/`oc` mutating verbs, `helm install/upgrade/rollback`, `terraform`/`tofu apply/destroy`, `pulumi up`, `cdk`/`serverless`/`sam`/`firebase`/`wrangler deploy`, `aws`/`gcloud`/`az` deploy verbs, `gh workflow run deploy*`, make/npm/yarn deploy targets, and scripts named deploy/release/promote/rollout/ship. Plain text such as `grep production` never triggers it | "`kubectl apply` names a production target (prod-eu). Production changes need a release authorization… The agent cannot supply it." |
 
@@ -159,7 +198,12 @@ There are three human-only channels:
 3. **GitHub.** `evidence approve KEY --github-pr N` records an APPROVED review, or a
    `/approve-plan <sha12>` comment, by an allowed login other than the PR author. The
    PR's branch must carry the key, the plan blob at the PR head must equal the local
-   plan, and the approver must not be the PR author. Agents may run this one.
+   plan, and the approver must not be the PR author. Agents may run this one. Since 2.1.0
+   the repository must be pinned in policy (`approval.github_repo`); `gh` is always called
+   with `--repo`, never left to resolve it from the working copy's remotes (REQ-IMH-24).
+
+This local record is evidence, not the merge decision: `verify-range` requires a code-owner
+review on the PR's head commit whatever `approval.json` says (see "Where the authority is").
 
 ### Audit (REQ-V2A-02)
 
@@ -169,7 +213,34 @@ tool, path or command, key, agent type and id, permission mode, and engine versi
 There are entries for every Edit, Write, MultiEdit, NotebookEdit and Bash call, every
 deny (with its rule and reason), and every agent dispatch, completion and failure.
 Approvals go to `.evidence/audit/approval.jsonl`. `evidence audit verify` reports a line that was altered or removed.
+Since 2.1.0 it also reports a replayed line (a repeated entry hash) and, in a session's log, a
+line belonging to another session (REQ-IMH-11).
 `evidence metrics` summarises denials by rule and self-approval attempts.
+
+### Engine git and the integrity monitor (2.1.0, ADR-0003)
+
+- **Engine git is neutralised.** Every git and `gh` process the engine starts goes through
+  `state.run_git` / `run_gh`: `core.fsmonitor`, hooks, pager, attributes file, external diff and
+  textconv are switched off, attributes are read from the empty tree, and the child's
+  environment has no `GIT_*` variables and no signing key (REQ-IMH-09, 22, 24). The allow-list
+  of subprocess call sites is enforced by an AST test.
+- **The monitor never follows a link.** Control-plane files are listed, restored and removed
+  through directory handles opened with `O_NOFOLLOW`. A symlink or non-file at a control-plane
+  path (audit logs included) is a violation, and nothing it points to is touched (REQ-IMH-01).
+  A non-file at a violations path counts as an open violation (REQ-IMH-02).
+- **Snapshots** in the temp directory are written and read the same way, with a 4 MiB cap. Their
+  protection is the HMAC signature and the binding to the call's `tool_use_id`; a link, non-file or
+  oversize snapshot counts as altered (REQ-IMH-08).
+- **Also violations:** a changed type, mode, owner or identity of `.evidence`, `.evidence/audit`,
+  `.evidence/changes` or `.evidence/violations` (REQ-IMH-05); a deleted untracked file the gates
+  would have denied (REQ-IMH-07); an audit log whose earlier bytes changed, or a new log that
+  doesn't verify (REQ-IMH-20); git failing after the call (`git-unavailable`: the control-plane
+  restore and audit checks still run, REQ-IMH-23).
+- **Permission grants are kept.** The hook runs before Claude Code's permission prompt, so a
+  "don't ask again" answer writes `.claude/settings.local.json` while the call is in flight. When
+  the only change is new `permissions.allow` entries, the file is kept and a `permission-grant`
+  audit entry is written. Any other change to it is restored and recorded.
+- A pre or post hook that runs past 25 seconds fails closed (the hook limit is 30).
 
 ## Advisory hooks (never deny)
 
