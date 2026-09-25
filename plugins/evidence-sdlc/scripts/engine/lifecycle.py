@@ -456,12 +456,8 @@ def cmd_approve(args):
     return 0
 
 
-def _gh(args):
-    exe = os.environ.get("EVIDENCE_GH", "gh")
-    r = subprocess.run([exe] + args, capture_output=True, text=True, timeout=60)
-    if r.returncode != 0:
-        raise RuntimeError(r.stderr.strip() or f"gh {' '.join(args)} failed")
-    return r.stdout
+def _gh(args, root, repo):
+    return st.run_gh(args, root, repo)
 
 
 def reverify_github(root, key, plan, approval):
@@ -486,20 +482,20 @@ def _approve_github(root, policy, key, plan, sha, pr):
     if policy.get("approval", {}).get("mode") == "github" and not allowed:
         sys.exit("GitHub approval mode needs approval.github_allowed_approvers in the org policy; refusing to accept "
                  "an approval from an arbitrary account.")
+    # Only the pinned repository: never whatever `gh repo view` resolves from agent-writable remotes.
+    repo = policy.get("approval", {}).get("github_repo") or ""
+    if not repo:
+        sys.exit("GitHub approval needs approval.github_repo in the policy; refusing to let gh pick the repository.")
     try:
-        data = json.loads(_gh(["pr", "view", str(pr), "--json", "number,author,headRefName,headRefOid,reviews,comments,url"]))
+        data = json.loads(_gh(["pr", "view", str(pr), "--json", "number,author,headRefName,headRefOid,reviews,comments,url"],
+                              root, repo))
     except (RuntimeError, ValueError, OSError) as e:
-        sys.exit(f"Could not read PR {pr} with gh: {e}")
+        sys.exit(f"Could not read PR {pr} in {repo} with gh: {e}")
     if key not in data.get("headRefName", ""):
         sys.exit(f"PR {pr} branch '{data.get('headRefName')}' does not carry {key}.")
     rel = _rel(root, plan)
     try:
-        repo = policy.get("approval", {}).get("github_repo") or json.loads(_gh(["repo", "view", "--json", "nameWithOwner"]))["nameWithOwner"]
-        if policy.get("approval", {}).get("github_repo"):
-            data_repo = json.loads(_gh(["pr", "view", str(pr), "--repo", repo, "--json", "number"]))  # must exist in the pinned repo
-            if not data_repo:
-                sys.exit(f"PR {pr} not found in {repo}")
-        blob = json.loads(_gh(["api", f"repos/{repo}/contents/{rel}?ref={data['headRefOid']}"]))
+        blob = json.loads(_gh(["api", f"repos/{repo}/contents/{rel}?ref={data['headRefOid']}"], root, repo))
         remote_sha = __import__("hashlib").sha256(base64.b64decode(blob["content"])).hexdigest()
     except (RuntimeError, ValueError, KeyError, OSError) as e:
         sys.exit(f"Could not read {rel} at the PR head: {e}")
@@ -530,6 +526,15 @@ def _approve_github(root, policy, key, plan, sha, pr):
     return 0
 
 
+def _ps_probe(pid):
+    """`ppid command` of one process, or None. Runs without the key or GIT_* (REQ-IMH-22)."""
+    try:
+        return subprocess.run(["ps", "-o", "ppid=,command=", "-p", pid], env=st._child_env(), capture_output=True,
+                              text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
 def _nested_claude():
     """True if the Claude Code process running this hook has another Claude Code
     process among its ancestors -- i.e. an agent launched this session from its own
@@ -541,9 +546,8 @@ def _nested_claude():
     cur = pid
     while cur and cur not in ("0", "1") and seen < 64:
         seen += 1
-        try:
-            out = subprocess.run(["ps", "-o", "ppid=,command=", "-p", cur], capture_output=True, text=True, timeout=5).stdout.strip()
-        except (OSError, subprocess.TimeoutExpired):
+        out = _ps_probe(cur)
+        if out is None:
             return False
         if not out:
             return False

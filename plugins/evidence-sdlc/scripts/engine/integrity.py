@@ -58,24 +58,21 @@ def _hash(path):
 
 
 def _is_git(root):
-    try:
-        return subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root, capture_output=True, timeout=10).returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    return st.run_git(["rev-parse", "--git-dir"], root) is not None
 
 
 def _dirty(root):
     # --untracked-files=normal collapses untracked directories, which keeps this fast on
     # large repositories (a new file in an untracked directory shows as the directory).
     try:
-        out = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=normal"], cwd=root,
-                             capture_output=True, timeout=20)
+        out = st.run_git(["status", "--porcelain=v1", "-z", "--untracked-files=normal"], root, timeout=20, text=False,
+                         raise_timeout=True)
     except subprocess.TimeoutExpired:
         return "timeout"
-    if out.returncode != 0:
+    if out is None:
         return None
     files = {}
-    parts = out.stdout.decode("utf-8", "replace").split("\0")
+    parts = out.decode("utf-8", "replace").split("\0")
     i = 0
     while i < len(parts):
         entry = parts[i]
@@ -148,7 +145,7 @@ def _extras(root, policy):
     git hooks/config/excludes, index flags that hide working-tree edits, the set of
     ignored top-level entries, and the user-level control plane."""
     ex = {}
-    gd = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=root, capture_output=True, text=True, timeout=10).stdout.strip()
+    gd = (st.run_git(["rev-parse", "--git-dir"], root) or "").strip()
     gd = gd if os.path.isabs(gd) else os.path.join(root, gd)
     for rel in ("config", "info/exclude", "info/attributes"):
         p = os.path.join(gd, rel)
@@ -159,12 +156,13 @@ def _extras(root, policy):
             if not n.endswith(".sample"):
                 ex[f".git/hooks/{n}"] = _hash(os.path.join(hooks, n))
     try:
-        flags = subprocess.run(["git", "ls-files", "-v"], cwd=root, capture_output=True, text=True, timeout=20).stdout
-        hidden = sorted(l[2:] for l in flags.splitlines() if l[:1].islower() or l[:1] == "S")
-        ex["(index flags)"] = hashlib.sha256("\n".join(hidden).encode()).hexdigest()
-        ign = subprocess.run(["git", "status", "--porcelain", "--ignored=matching", "--untracked-files=no"], cwd=root,
-                             capture_output=True, text=True, timeout=20).stdout
-        ex["(ignored entries)"] = hashlib.sha256("\n".join(sorted(l for l in ign.splitlines() if l.startswith("!!"))).encode()).hexdigest()
+        flags = st.run_git(["ls-files", "-v"], root, timeout=20, raise_timeout=True)
+        hidden = sorted(l[2:] for l in (flags or "").splitlines() if l[:1].islower() or l[:1] == "S")
+        ex["(index flags)"] = hashlib.sha256("\n".join(hidden).encode()).hexdigest() if flags is not None else "git-failed"
+        ign = st.run_git(["status", "--porcelain", "--ignored=matching", "--untracked-files=no"], root, timeout=20,
+                         raise_timeout=True)
+        ex["(ignored entries)"] = (hashlib.sha256("\n".join(sorted(l for l in ign.splitlines() if l.startswith("!!"))).encode()).hexdigest()
+                                   if ign is not None else "git-failed")
     except subprocess.TimeoutExpired:
         ex["(index flags)"] = "timeout"
     for pat in list(policy.get("user_control_plane", [])) + ["~/.gitconfig", "~/.config/git/config", "~/.claude/CLAUDE.md"]:

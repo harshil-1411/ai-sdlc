@@ -147,6 +147,12 @@ def run_pre(payload):
         return pre_response(ep.deny("audit-unwritable",
                                     f"This session's audit log cannot be written ({e}), so nothing it does could be "
                                     "recorded. A human restores write access to .evidence/audit/."))
+    refused = st.check_git_config(ctx.root, ctx.policy)
+    if refused:
+        # The engine runs git here holding the signing key; with this config, git would run a command (ADR-0003 §2).
+        decision = ep.deny("git-config-refused", refused + ".")
+        _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
+        return pre_response(decision)
     decision = ep.decide_pre(ctx)
     if decision.allow and ctx.tool == "Bash":
         decision = lifecycle_decision(ctx) or decision

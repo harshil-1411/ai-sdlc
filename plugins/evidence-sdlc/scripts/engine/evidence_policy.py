@@ -366,10 +366,12 @@ def _log_tail_only(root, rel):
     lines. The engine appends to the session log on every tool call, including the call that
     staged it, so an exact match is impossible; an altered, truncated or long-unstaged log
     still fails."""
+    staged = st.run_git(["show", f":{rel}"], root, timeout=20, text=False)
+    if staged is None:
+        return False
     try:
-        staged = subprocess.run(["git", "show", f":{rel}"], cwd=root, capture_output=True, timeout=20).stdout
         current = open(os.path.join(root, rel), "rb").read()
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
         return False
     if not current.startswith(staged) or (staged and not staged.endswith(b"\n")):
         return False
@@ -548,15 +550,22 @@ def _check_deploy(ctx, s):
                     + (f" The current value '{approval}' does not match." if approval else ""))
     verify = pol.get("release_approval_verify_command")
     if verify:
-        try:
-            r = subprocess.run(verify.replace("{approval}", approval), shell=True, cwd=ctx.root,
-                               capture_output=True, text=True, timeout=30)
-            if r.returncode != 0:
-                return deny("release-approval",
-                            f"Release approval '{approval}' could not be verified by the policy's check "
-                            f"({r.stderr.strip()[:200] or 'non-zero exit'}).")
-        except (OSError, subprocess.TimeoutExpired) as e:
-            return deny("release-approval", f"Release approval verification failed to run: {e}.")
+        return _release_verify(ctx, verify, approval)
+    return None
+
+
+def _release_verify(ctx, verify, approval):
+    """The org policy's release-approval check: an org-configured command, run without the
+    signing key or GIT_* in its environment (REQ-IMH-22)."""
+    try:
+        r = subprocess.run(verify.replace("{approval}", approval), shell=True, cwd=ctx.root, env=st._child_env(),
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return deny("release-approval",
+                        f"Release approval '{approval}' could not be verified by the policy's check "
+                        f"({r.stderr.strip()[:200] or 'non-zero exit'}).")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return deny("release-approval", f"Release approval verification failed to run: {e}.")
     return None
 
 

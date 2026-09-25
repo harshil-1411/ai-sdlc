@@ -38,14 +38,135 @@ def sha256_file(path):
     return h.hexdigest()
 
 
-def git(args, cwd, timeout=10):
+# ------------------------------------------------------------------ child processes (ADR-0003)
+# Hooks hold the signing key and run git in a repository the agent shapes. Every engine
+# git or gh process starts here: command-executing config neutralised, and neither GIT_*
+# nor the key in its environment.
+
+GIT_NEUTRAL = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
+               "-c", "core.attributesFile=/dev/null", "-c", "diff.external=", "-c", "protocol.ext.allow=never",
+               "-c", "submodule.recurse=false"]
+_NO_SUBMODULES = {"status", "diff"}
+_NO_DRIVERS = {"diff", "log", "show"}
+_NO_CONFIG_CHECK = {"rev-parse", "config", "version"}  # these run no configured commands
+_EMPTY_TREE = {"sha1": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+               "sha256": "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"}
+
+
+def _child_env():
+    """The environment for any process the engine starts: no GIT_* (config, index, object
+    and directory overrides) and no signing key."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "EVIDENCE_SIGNING_KEY"}
+
+
+def _git_argv(args):
+    sub = args[:1]
+    extra = []
+    if sub and sub[0] in _NO_SUBMODULES:
+        extra.append("--ignore-submodules=all")
+    if sub and sub[0] in _NO_DRIVERS:
+        extra += ["--no-ext-diff", "--no-textconv"]
+    return ["git"] + GIT_NEUTRAL + sub + extra + list(args[1:])
+
+
+_ATTR_SOURCE = {}
+
+
+def _attr_source(cwd):
+    """The empty tree, so attributes (diff drivers, filters) come from nowhere the agent can write."""
+    key = os.path.realpath(cwd)
+    if key not in _ATTR_SOURCE:
+        fmt = (run_git(["rev-parse", "--show-object-format"], cwd, _attrs=False) or "").strip()
+        _ATTR_SOURCE[key] = _EMPTY_TREE.get(fmt)
+    return _ATTR_SOURCE[key]
+
+
+def run_git(args, cwd, timeout=10, text=True, raise_timeout=False, _attrs=True):
+    """Run git with ADR-0003's neutralisation. Returns stdout, or None when git fails, times
+    out (unless raise_timeout) or the repository's config is refused (check_git_config).
+    None never means "nothing to check": callers on a security path fail closed on it."""
+    if args[:1] and args[0] not in _NO_CONFIG_CHECK and check_git_config(cwd):
+        return None
+    env = _child_env()
+    tree = _attr_source(cwd) if _attrs else None
+    if tree:
+        env["GIT_ATTR_SOURCE"] = tree
     try:
-        out = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired):
+        out = subprocess.run(_git_argv(args), cwd=cwd, env=env, capture_output=True, text=text, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if raise_timeout:
+            raise
+        return None
+    except OSError:
         return None
     if out.returncode != 0:
         return None
     return out.stdout
+
+
+def git(args, cwd, timeout=10):
+    return run_git(args, cwd, timeout=timeout)
+
+
+_CONFIG_REFUSAL = {}
+
+
+def check_git_config(cwd, policy=None):
+    """ADR-0003 §2. None if the configuration git would apply here is acceptable, otherwise
+    the reason it is refused. A key in the deny set is refused at every scope except
+    `command` (the engine's own -c), except `credential.*` at global or system scope; an
+    exact key=value from the org's git_allowed_config passes when it has no newline or CR.
+    Checked once per process; the race with a concurrent change is ADR-0003 §4."""
+    key = os.path.realpath(cwd)
+    if key in _CONFIG_REFUSAL:
+        return _CONFIG_REFUSAL[key]
+    if policy is None:
+        policy = load_policy(repo_root(cwd))
+    deny = [g.lower() for g in policy.get("deny_git_config_keys", [])]
+    allowed = {(e.partition("=")[0].lower(), e.partition("=")[2]) for e in policy.get("git_allowed_config", [])}
+    reason = None
+    out = run_git(["config", "--list", "-z", "--show-scope", "--show-origin", "--includes"], cwd, text=False)
+    if out is None:
+        reason = "git could not read its configuration here (run `git config --list` to see why)"
+    else:
+        fields = out.decode("utf-8", "replace").split("\0")
+        for i in range(0, len(fields) - 2, 3):
+            scope, origin, kv = fields[i], fields[i + 1], fields[i + 2]
+            k, _, v = kv.partition("\n")
+            kl = k.lower()
+            if scope == "command" or not any(fnmatch.fnmatch(kl, g) for g in deny):
+                continue
+            if kl.startswith("credential.") and scope in ("global", "system"):
+                continue
+            if (kl, v) in allowed and "\n" not in v and "\r" not in v:
+                continue
+            reason = (f"git config {k} ({scope}, {origin}) can make git run a command, and the gate engine runs git "
+                      f"with the signing key. A human removes it, or the organisation allow-lists the exact value in "
+                      f"the org policy's git_allowed_config")
+            break
+    _CONFIG_REFUSAL[key] = reason
+    return reason
+
+
+def run_gh(args, cwd, repo, timeout=60):
+    """Run gh against the pinned repository only (never whatever `gh repo view` resolves),
+    without GIT_* or the key. Raises RuntimeError on refusal or failure."""
+    if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise RuntimeError("no pinned GitHub repository (policy approval.github_repo, or $GITHUB_REPOSITORY in CI); "
+                           "refusing to let gh pick one")
+    if args[:1] == ["api"]:
+        # gh api takes no --repo: the endpoint itself must name the pinned repository
+        path = next((a for a in args[1:] if not a.startswith("-")), "")
+        if not path.lstrip("/").startswith(f"repos/{repo}/"):
+            raise RuntimeError(f"gh api {path} is outside the pinned repository {repo}")
+        argv = list(args)
+    else:
+        argv = list(args) + ["--repo", repo]
+    exe = os.environ.get("EVIDENCE_GH", "gh")
+    r = subprocess.run([exe] + argv, cwd=cwd, env=_child_env(), capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or f"gh {' '.join(argv)} failed")
+    return r.stdout
 
 
 def repo_root(cwd):
