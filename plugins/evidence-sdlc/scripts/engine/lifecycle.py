@@ -655,6 +655,512 @@ def cmd_metrics(args):
     return 0
 
 
+# ------------------------------------------------------------------ verify-range (ADR-0004)
+# Runs in the base branch's pull_request_target workflow: the trusted CLI reads the PR's objects
+# with git plumbing and executes nothing from them. Policy, CODEOWNERS and allow-lists come from
+# the base commit; approval comes from a GitHub code-owner review on the head SHA.
+
+_SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+_RECORD = re.compile(r"^\.evidence/(?:changes/([^/]+)/(state|approval|violations)\.json|violations/([^/]+)\.json)$")
+_AGENT_TRAILER = re.compile(r"^Agent-Session:\s*(\S+)\s*$", re.M)
+_HUMAN_TRAILER = re.compile(r"^Human-Commit:\s*(\S+)\s*$", re.M)
+_CHUNK, _OVERLAP = 1 << 20, 4096
+
+
+class _Findings:
+    def __init__(self):
+        self.items = []
+
+    def fail(self, rule, msg):
+        if (rule, msg) not in self.items:
+            self.items.append((rule, msg))
+
+
+def _vg(root, args, text=True):
+    return st.run_git(args, root, timeout=300, text=text)
+
+
+def _blob_at(root, commit, path, text=True):
+    return _vg(root, ["cat-file", "blob", f"{commit}:{path}"], text=text)
+
+
+def _mode_at(root, commit, path):
+    out = _vg(root, ["ls-tree", "-z", commit, "--", path])
+    return out.split(" ", 1)[0] if out else None
+
+
+def _json_at(root, commit, path):
+    t = _blob_at(root, commit, path)
+    if t is None:
+        return None
+    try:
+        return json.loads(t)
+    except ValueError:
+        return {"_unparsable": True}
+
+
+def _policy_at(root, commit):
+    """Default and org policy plus the base commit's repository policy -- never the head's or the worktree's."""
+    pol = st.load_policy(os.devnull)
+    t = _blob_at(root, commit, ".evidence/policy.json")
+    if t:
+        try:
+            pol = st._merge(pol, json.loads(t), tighten_only=True)
+        except (ValueError, AttributeError, TypeError):
+            pass
+    return pol
+
+
+def _name_status(out):
+    """[(status, [paths])] from `--name-status -z` output."""
+    parts, res, i = out.split("\0"), [], 0
+    while i < len(parts):
+        s = parts[i]
+        if not s:
+            i += 1
+            continue
+        n = 2 if s[0] in "RC" else 1
+        res.append((s, parts[i + 1:i + 1 + n]))
+        i += 1 + n
+    return res
+
+
+def _safe_session(s):
+    return re.sub(r"[^A-Za-z0-9_-]", "_", s or "unknown")[:80] or "unknown"
+
+
+def _codeowners(root, base):
+    for p in (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"):
+        t = _blob_at(root, base, p)
+        if t is not None:
+            rules = []
+            for line in t.splitlines():
+                line = line.split(" #", 1)[0].strip()
+                if line and not line.startswith("#"):
+                    pat, *owners = line.split()
+                    rules.append((pat, owners))
+            return rules
+    return []
+
+
+def _owners_of(rules, path):
+    got = None
+    for pat, owners in rules:  # the last matching rule wins
+        if st.glob_to_regex(pat).match(path):
+            got = owners
+    return got
+
+
+def _commit_list(root, base, head):
+    out = _vg(root, ["rev-list", "--reverse", "--topo-order", "--parents", f"{base}..{head}"])
+    return None if out is None else [l.split() for l in out.splitlines() if l.strip()]
+
+
+def _is_ancestor(root, a, b):
+    return _vg(root, ["merge-base", "--is-ancestor", a, b]) is not None
+
+
+def _stage_index(rec):
+    s = (rec or {}).get("stage")
+    return st.STAGES.index(s) if s in st.STAGES else None
+
+
+def _vkey(v):
+    return (v.get("path"), v.get("rule"), v.get("at"), v.get("session"))
+
+
+def _violation_entries(rec):
+    if isinstance(rec, dict) and isinstance(rec.get("entries"), list):
+        return rec["entries"]
+    return rec if isinstance(rec, list) else []
+
+
+def _commit_changes(root, c, parents, combined):
+    if combined:
+        out = _vg(root, ["diff-tree", "--cc", "-M", "--no-commit-id", "--name-status", "-z", c])
+    else:
+        out = _vg(root, ["diff-tree", "-r", "-M", "--root", "--no-commit-id", "--name-status", "-z", c])
+    return None if out is None else _name_status(out)
+
+
+def _check_paths(entries, claims, where, F):
+    """Rule 2: every added, modified, deleted, type-changed or renamed path outside .evidence/ is claimed."""
+    for status, paths in entries:
+        for p in paths:
+            if p == ".evidence" or p.startswith(".evidence/"):
+                continue  # judged by rules 4-5
+            if not st.claim_matches(p, claims):
+                F.fail(2, f"{p} ({status[:1]} in {where}) is outside the approved plan's claims")
+
+
+def _scan_blobs(root, commits, pol, base, F):
+    """Rule 3: every blob a commit adds is scanned for secrets, in chunks with overlap, and size-capped."""
+    import secretscan
+    cap = int(pol.get("verify_range_blob_cap_mb", 20)) * 1024 * 1024
+    allow_large = pol.get("verify_range_allow_large", [])
+    try:
+        al = json.loads(_blob_at(root, base, ".evidence/secrets-allowlist.json") or "[]")
+        allowlist = [e["fingerprint"] if isinstance(e, dict) else e
+                     for e in (al.get("fingerprints", []) if isinstance(al, dict) else al)]
+    except (ValueError, KeyError, TypeError):
+        allowlist = []
+    seen = set()
+    for c, *parents in commits:
+        args = ["diff-tree", "-r", "--no-commit-id", "--raw", "-z"] + ([parents[0], c] if parents else ["--root", c])
+        out = _vg(root, args)
+        if out is None:
+            F.fail(3, f"git could not list the blobs of {c[:12]}")
+            continue
+        parts, i = out.split("\0"), 0
+        while i < len(parts):
+            meta = parts[i]
+            if not meta.startswith(":"):
+                i += 1
+                continue
+            f = meta[1:].split()
+            n = 2 if f[4][:1] in "RC" else 1
+            path = parts[i + n] if i + n < len(parts) else ""
+            i += 1 + n
+            sha, mode = f[3], f[1]
+            if set(sha) == {"0"} or mode == "160000" or sha in seen:
+                continue
+            seen.add(sha)
+            size = _vg(root, ["cat-file", "-s", sha])
+            if size is None:
+                F.fail(3, f"git could not read the blob of {path} in {c[:12]}")
+                continue
+            if int(size) > cap:
+                if not st.glob_match(path, allow_large):
+                    F.fail(3, f"{path} in {c[:12]} is {int(size) >> 20} MiB, over the {cap >> 20} MiB cap and not on the "
+                              "org allow-list (verify_range_allow_large)")
+                continue
+            data = _vg(root, ["cat-file", "blob", sha], text=False) or b""
+            text = data.decode("utf-8", "replace")
+            for start in range(0, max(len(text), 1), _CHUNK):
+                for hit in secretscan.scan(text[max(0, start - _OVERLAP):start + _CHUNK], allowlist):
+                    F.fail(3, f"possible secret in {path} added in {c[:12]}: {hit['rule']} (fingerprint {hit['fingerprint']})")
+
+
+def _check_audit(root, base, head, commits, sessions, F):
+    """Rule 4: named sessions' logs exist at the head and verify; base logs are neither deleted nor
+    type-changed; every log in every commit is a byte-prefix extension of that log in each parent."""
+    for s in sorted(sessions):
+        name = f"{_safe_session(s)}.jsonl"
+        text = _blob_at(root, head, f".evidence/audit/{name}")
+        if text is None:
+            F.fail(4, f"the audit log of session {s} (.evidence/audit/{name}) is missing at the head")
+            continue
+        ok, problems = st.audit_verify_lines(name, text.splitlines(), [])
+        if not ok:
+            F.fail(4, f".evidence/audit/{name} does not verify: {'; '.join(problems[:3])}")
+    base_logs = (_vg(root, ["ls-tree", "-r", "--name-only", "-z", base, "--", ".evidence/audit"]) or "").split("\0")
+    for p in filter(None, base_logs):
+        if _mode_at(root, head, p) != _mode_at(root, base, p):
+            F.fail(4, f"{p}, which exists at the base, is deleted or type-changed at the head")
+    for c, *parents in commits:
+        for p in parents:
+            out = _vg(root, ["diff", "--name-only", "-z", p, c, "--", ".evidence/audit"])
+            if out is None:
+                F.fail(4, f"git could not compare the audit logs of {c[:12]} with its parent")
+                continue
+            for path in filter(None, out.split("\0")):
+                old = _blob_at(root, p, path, text=False)
+                if old is None:
+                    continue  # a new log; named sessions' logs are verified above
+                new = _blob_at(root, c, path, text=False)
+                if new is None or _mode_at(root, c, path) != _mode_at(root, p, path) or not new.startswith(old):
+                    F.fail(4, f"{path} in {c[:12]} is not an append-only extension of its parent's version "
+                              "(truncated, rewritten, replaced or deleted)")
+
+
+def _check_records(root, base, head, commits, key, own_branch_file, F):
+    """Rule 5: change records at the head verify; none at the base is deleted or type-changed; stages
+    never move backwards; violations are never rolled back or closed without a signed clear; other
+    changes' records change only by a signed release or a signed clear. `key` None = push report."""
+    import signing
+
+    def mine(path):
+        m = _RECORD.match(path)
+        return bool(m) and key is not None and (m.group(1) == key or m.group(3) == own_branch_file)
+
+    net = _vg(root, ["diff", "--name-only", "-z", f"{base}...{head}", "--", ".evidence"])
+    if net is None:
+        F.fail(5, "git could not list the change records that differ from the base")
+        return
+    for path in filter(None, net.split("\0")):
+        m = _RECORD.match(path)
+        if not m:
+            continue
+        rec = _json_at(root, head, path)
+        if rec is None:
+            if _mode_at(root, base, path):
+                F.fail(5, f"{path}, which exists at the base, is deleted at the head")
+            continue
+        if not isinstance(rec, dict) or signing.verify(rec) is not True:
+            F.fail(5, f"{path} at the head is not signed by the gate engine (or its signature is invalid)")
+    base_recs = (_vg(root, ["ls-tree", "-r", "--name-only", "-z", base, "--", ".evidence"]) or "").split("\0")
+    for path in filter(None, base_recs):
+        if _RECORD.match(path) and _mode_at(root, head, path) != _mode_at(root, base, path):
+            F.fail(5, f"{path}, which exists at the base, is deleted or type-changed at the head")
+    for c, *parents in commits:
+        for p in parents:
+            out = _vg(root, ["diff", "--name-only", "-z", p, c, "--", ".evidence"])
+            for path in filter(None, (out or "").split("\0")):
+                m = _RECORD.match(path)
+                if not m:
+                    continue
+                old, new = _json_at(root, p, path), _json_at(root, c, path)
+                if new is None:
+                    if old is not None:
+                        F.fail(5, f"{path} is deleted in {c[:12]}")
+                    continue
+                kind = m.group(2) or "violations"
+                if kind == "state" and old is not None:
+                    a, b = _stage_index(old), _stage_index(new)
+                    if a is None or b is None or b < a:
+                        F.fail(5, f"{path}: stage moves from {old.get('stage')} to {new.get('stage')} in {c[:12]}")
+                if kind == "violations":
+                    now = {_vkey(v): v for v in _violation_entries(new)}
+                    for v in _violation_entries(old or {}):
+                        if not v.get("open"):
+                            continue
+                        w = now.get(_vkey(v))
+                        if w is None:
+                            F.fail(5, f"{path}: open violation {v.get('path')} ({v.get('rule')}) removed in {c[:12]}")
+                        elif not w.get("open") and not w.get("cleared_by"):
+                            F.fail(5, f"{path}: violation {v.get('path')} ({v.get('rule')}) closed without a signed "
+                                      f"clear in {c[:12]}")
+                if key is None or mine(path):
+                    continue
+                if old is None:
+                    if kind == "approval":  # a change's approval arrives with its own PR, never in another's
+                        F.fail(5, f"{path} (another change's approval) is added in {c[:12]}")
+                    continue
+                # another change's record: only a signed release or a signed clear
+                if kind == "state":
+                    def rest(r):
+                        return {k: v for k, v in r.items() if k not in ("stage", "history", "sig")}
+                    if not (new.get("stage") == "released" and rest(new) == rest(old)):
+                        F.fail(5, f"{path} (another change) is edited in {c[:12]} other than by a release")
+                elif kind == "approval":
+                    if new != old:
+                        F.fail(5, f"{path} (another change) is edited in {c[:12]}")
+                else:
+                    was = {_vkey(v): v for v in _violation_entries(old)}
+                    for k2, w in {_vkey(v): v for v in _violation_entries(new)}.items():
+                        v = was.get(k2)
+                        closed = v is not None and v.get("open") and not w.get("open") and w.get("cleared_by")
+                        if v is None or (w != v and not closed):
+                            F.fail(5, f"{path} (another change) is edited in {c[:12]} other than by a signed clear")
+
+
+def _review_approval(root, repo, number, head, author, paths, base, F):
+    """Rule 1: an APPROVED review on the head SHA, not by the PR author, from a user who owns every
+    changed path by the base's CODEOWNERS (last matching rule; team owners unsupported)."""
+    try:
+        reviews = json.loads(st.run_gh(["api", f"repos/{repo}/pulls/{number}/reviews?per_page=100"], root, repo))
+    except (RuntimeError, ValueError, OSError) as e:
+        F.fail(1, f"could not read the PR's reviews: {e}")
+        return
+    latest = {}
+    for rv in reviews if isinstance(reviews, list) else []:
+        login = ((rv.get("user") or {}).get("login") or "").lower()
+        if login and rv.get("state") in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            latest[login] = rv
+    approvers = {l for l, rv in latest.items()
+                 if rv.get("state") == "APPROVED" and rv.get("commit_id") == head and l != (author or "").lower()}
+    if not approvers:
+        F.fail(1, f"no approving review on the head commit {head[:12]} by someone other than the PR author")
+        return
+    rules = _codeowners(root, base)
+    for p in sorted(set(paths)):
+        owners = _owners_of(rules, p)
+        if not owners:
+            F.fail(1, f"{p} has no code owner in the base's CODEOWNERS, so no review can approve it")
+            continue
+        if any("/" in o or not o.startswith("@") for o in owners):
+            F.fail(1, f"{p} is owned by {' '.join(owners)}: team and e-mail owners are not supported by verify-range")
+            continue
+        if not approvers & {o[1:].lower() for o in owners}:
+            F.fail(1, f"{p} is owned by {' '.join(owners)}, and none of them approved the head commit")
+
+
+def _verify_pr(root, F):
+    import signing
+    # rule 0: inputs, fail closed
+    name = os.environ.get("GITHUB_EVENT_NAME", "")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    try:
+        with open(os.environ.get("GITHUB_EVENT_PATH", "")) as f:
+            ev = json.load(f)
+    except (OSError, ValueError) as e:
+        F.fail(0, f"the event payload ($GITHUB_EVENT_PATH) could not be read ({e})")
+        return
+    if len(os.environ.get(signing.ENV, "")) < 32 or not signing.enabled():
+        F.fail(0, "no signing key of at least 32 characters, so records cannot be verified")
+    if not (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
+        F.fail(0, "no GitHub token (GH_TOKEN or GITHUB_TOKEN), so reviews cannot be read")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        F.fail(0, "GITHUB_REPOSITORY is not set to owner/name")
+    if F.items:
+        return
+    if name == "pull_request_target":
+        pr = ev.get("pull_request") or {}
+    elif name == "workflow_dispatch":
+        n = str((ev.get("inputs") or {}).get("pr", ""))
+        if not n.isdigit():
+            F.fail(0, "workflow_dispatch needs the PR number as input `pr`")
+            return
+        try:
+            pr = json.loads(st.run_gh(["api", f"repos/{repo}/pulls/{n}"], root, repo))
+        except (RuntimeError, ValueError, OSError) as e:
+            F.fail(0, f"could not read PR {n}: {e}")
+            return
+    else:
+        F.fail(0, f"event {name or '(none)'} is not pull_request_target or workflow_dispatch (use --push-report for push)")
+        return
+    number = pr.get("number")
+    base = str((pr.get("base") or {}).get("sha") or "")
+    head = str((pr.get("head") or {}).get("sha") or "")
+    ref = str((pr.get("head") or {}).get("ref") or "")
+    author = str((pr.get("user") or {}).get("login") or "")
+    if not isinstance(number, int) or not _SHA.fullmatch(base) or not _SHA.fullmatch(head):
+        F.fail(0, "the PR number, base SHA or head SHA is missing or malformed")
+        return
+    fetched = (_vg(root, ["rev-parse", "--verify", "-q", f"refs/pull/{number}/head^{{commit}}"]) or "").strip()
+    if fetched != head:
+        F.fail(0, f"refs/pull/{number}/head ({fetched[:12] or 'missing'}) is not the event's head {head[:12]}")
+    if _vg(root, ["rev-parse", "--verify", "-q", f"{base}^{{commit}}"]) is None:
+        F.fail(0, f"the base commit {base[:12]} is not available")
+    if F.items:
+        return
+    pol = _policy_at(root, base)
+    commits = _commit_list(root, base, head)
+    if commits is None:
+        F.fail(0, "git could not list the commits in the range")
+        return
+
+    # rule 1: the change and its approval
+    keys = list(dict.fromkeys(st.find_keys(ref, pol)))
+    key = keys[0] if len(keys) == 1 else None
+    if key is None:
+        F.fail(1, f"the head branch {ref!r} must carry exactly one change key (found {len(keys)})")
+    claims, sessions, checked = None, set(), []
+    for c, *parents in commits:
+        combined = len(parents) > 1
+        changes = _commit_changes(root, c, parents, combined)
+        if changes is None:
+            F.fail(2, f"git could not list the paths of {c[:12]}")
+            continue
+        if combined and not changes and all(_is_ancestor(root, p, base) for p in parents[1:]):
+            continue  # a clean "Update branch" merge of the base
+        checked.append((c, changes))
+        msg = _vg(root, ["log", "-1", "--format=%B", c]) or ""
+        if key and key not in st.find_keys(msg, pol):
+            F.fail(1, f"commit {c[:12]} does not carry the change key {key}")
+        agent, human = _AGENT_TRAILER.findall(msg), _HUMAN_TRAILER.findall(msg)
+        if not agent and not human:
+            F.fail(1, f"commit {c[:12]} has neither an Agent-Session: nor a Human-Commit: trailer")
+        sessions.update(agent)
+    if key:
+        state_head = _json_at(root, head, f".evidence/changes/{key}/state.json")
+        state_base = _json_at(root, base, f".evidence/changes/{key}/state.json")
+        if not isinstance(state_head, dict) or signing.verify(state_head) is not True:
+            F.fail(1, f"the state of {key} at the head is missing or not signed by the gate engine")
+        elif state_head.get("stage") == "released":
+            F.fail(1, f"{key} is already released at the head")
+        if isinstance(state_base, dict) and state_base.get("stage") == "released":
+            F.fail(1, f"{key} was released at the base: a released change key cannot be reused")
+        appr = _json_at(root, head, f".evidence/changes/{key}/approval.json")
+        if not isinstance(appr, dict) or signing.verify(appr) is not True:
+            F.fail(1, f"the approval record of {key} at the head is missing or not signed")
+        else:
+            plan = _blob_at(root, head, str(appr.get("plan_path") or ""), text=False)
+            if plan is None or __import__("hashlib").sha256(plan).hexdigest() != appr.get("plan_sha256"):
+                F.fail(1, f"the plan at {appr.get('plan_path')} does not match the approved hash in approval.json")
+            else:
+                claims = st.plan_claims(plan.decode("utf-8", "replace"))
+    net = _vg(root, ["diff", "-M", "--name-status", "-z", f"{base}...{head}"])
+    net_changes = _name_status(net) if net is not None else None
+    if net_changes is None:
+        F.fail(2, "git could not compute the net diff base...head")
+        net_changes = []
+    _review_approval(root, repo, number, head, author, [p for _, ps in net_changes for p in ps], base, F)
+
+    # rule 2: paths
+    if claims is not None:
+        for c, changes in checked:
+            _check_paths(changes, claims, c[:12], F)
+        _check_paths(net_changes, claims, "the net diff", F)
+    # rules 3-5
+    _scan_blobs(root, commits, pol, base, F)
+    _check_audit(root, base, head, commits, sessions, F)
+    _check_records(root, base, head, commits, key, _safe_branch(ref), F)
+
+
+def _safe_branch(ref):
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", ref or "detached")
+
+
+def _verify_push(root, F):
+    """Rule 7: after a push to main, report rules 2-5 over before..after. Never blocks."""
+    try:
+        with open(os.environ.get("GITHUB_EVENT_PATH", "")) as f:
+            ev = json.load(f)
+    except (OSError, ValueError) as e:
+        F.fail(0, f"the event payload could not be read ({e})")
+        return
+    before, after = str(ev.get("before") or ""), str(ev.get("after") or "")
+    if before and set(before) == {"0"}:
+        print("verify-range: skipped: first push to this branch (all-zero `before`), nothing to compare.")
+        return
+    if not _SHA.fullmatch(before) or not _SHA.fullmatch(after):
+        F.fail(0, "the push event's before/after SHAs are missing or malformed")
+        return
+    pol = _policy_at(root, before)
+    commits = _commit_list(root, before, after)
+    if commits is None:
+        F.fail(0, "git could not list the pushed commits")
+        return
+    sessions = set()
+    for c, *parents in commits:
+        combined = len(parents) > 1
+        changes = _commit_changes(root, c, parents, combined) or []
+        msg = _vg(root, ["log", "-1", "--format=%B", c]) or ""
+        sessions.update(_AGENT_TRAILER.findall(msg))
+        keys = list(dict.fromkeys(st.find_keys(msg, pol)))
+        appr = _json_at(root, c, f".evidence/changes/{keys[0]}/approval.json") if len(keys) == 1 else None
+        plan = _blob_at(root, c, str(appr.get("plan_path") or "")) if isinstance(appr, dict) else None
+        if plan is None:
+            if changes and not (combined and all(_is_ancestor(root, p, before) for p in parents[1:])):
+                F.fail(2, f"{c[:12]} has no single change key with an approved plan, so its paths are unchecked: "
+                          + ", ".join(p for _, ps in changes for p in ps)[:300])
+            continue
+        _check_paths(changes, st.plan_claims(plan), c[:12], F)
+    _scan_blobs(root, commits, pol, before, F)
+    _check_audit(root, before, after, commits, sessions, F)
+    _check_records(root, before, after, commits, None, None, F)
+
+
+def cmd_verify_range(args):
+    root = st.repo_root(os.getcwd())
+    F = _Findings()
+    try:
+        (_verify_push if args.push_report else _verify_pr)(root, F)
+    except Exception as e:  # never a traceback, never a pass
+        F.fail(0, f"verify-range could not complete ({type(e).__name__}: {e})")
+    for rule, msg in F.items:
+        print(f"FAIL rule {rule}: {msg}")
+    if args.push_report:
+        print(f"verify-range (push report): {len(F.items)} finding(s). This report never blocks.")
+        return 0
+    if F.items:
+        print(f"verify-range: {len(F.items)} failure(s). See ADR-0004 for the rules.")
+        return 1
+    print("verify-range: OK.")
+    return 0
+
+
 def register(sub):
     p = sub.add_parser("change", help="start, inspect and advance a change's lifecycle state")
     csub = p.add_subparsers(dest="change_cmd", required=True)
@@ -701,6 +1207,10 @@ def register(sub):
     m = sub.add_parser("metrics", help="stage-skip rate, gate denials, self-approval attempts")
     m.add_argument("--json", action="store_true")
     m.set_defaults(func=cmd_metrics)
+
+    vr = sub.add_parser("verify-range", help="CI: check a PR's commits against ADR-0004 (reads $GITHUB_EVENT_PATH)")
+    vr.add_argument("--push-report", action="store_true", help="after a push to main: report rules 2-5, never block")
+    vr.set_defaults(func=cmd_verify_range)
 
 
 def main(argv=None):

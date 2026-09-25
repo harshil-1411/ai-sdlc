@@ -411,6 +411,19 @@ def verify_range_tests():
     case("another change's record edited other than by release or clear", 5,
          lambda d, b, h: (vr_state(d, key="ABC-3", stage="implementing", note="edited"), vr_commit(d, "ABC-7: touch ABC-3"))[1],
          fixture=lambda: vr_fixture(base_extra=other_change))
+    case("another change's approval added in this PR", 5,
+         lambda d, b, h: (vr_state(d, key="ABC-3"), vr_approval(d, key="ABC-3"), vr_commit(d, "ABC-7: approve ABC-3"))[2],
+         fixture=lambda: vr_fixture(base_extra=other_change))
+
+    def release_other(d, b, h):  # this branch's own shape: another change's release and cleared violations ride along
+        with Signed() as s:
+            s.st.save_state(d, "ABC-3", {"key": "ABC-3", "tier": 1, "kind": "feature", "stage": "released"})
+            s.st.write_violations(os.path.join(d, ".evidence/changes/ABC-3/violations.json"),
+                                  [{"path": "x", "rule": "r", "open": False, "cleared_by": "lead"}], d)
+        return vr_commit(d, "ABC-7: release records of ABC-3")
+    case("another change's signed release and cleared violations", None, release_other,
+         fixture=lambda: vr_fixture(base_extra=other_change))
+
     # passing shapes
     def main_moved(d, b, h):
         vr_git(d, "git checkout -q main")
@@ -538,8 +551,13 @@ def main():
                           "  *) exit 1;;\n"
                           "esac\n")
     os.chmod(fake, 0o755)
-    r = run(["approve", "ABC-8", "--github-pr", "5"], d, env={"EVIDENCE_GH": fake, "CLAUDECODE": "1"})
     ap8 = os.path.join(d, ".evidence/changes/ABC-8/approval.json")
+    # PILOT-58 REQ-IMH-24: gh is pinned to the policy's repository; with none, nothing is asked of gh
+    r = run(["approve", "ABC-8", "--github-pr", "5"], d, env={"EVIDENCE_GH": fake, "CLAUDECODE": "1"})
+    check("REQ-IMH-24 GitHub approval without a pinned github_repo is refused, never resolved by gh",
+          r.returncode != 0 and "github_repo" in (r.stdout + r.stderr) and not os.path.isfile(ap8), r.stdout + r.stderr)
+    json.dump({"approval": {"github_repo": "o/r"}}, open(os.path.join(d, ".evidence", "policy.json"), "w"))
+    r = run(["approve", "ABC-8", "--github-pr", "5"], d, env={"EVIDENCE_GH": fake, "CLAUDECODE": "1"})
     ok = r.returncode == 0 and os.path.isfile(ap8) and json.load(open(ap8))["approver"] == "lead"
     check("REQ-V2A-01 GitHub approval recorded from an approving review (agent may record it)", ok, r.stderr + r.stdout)
     os.remove(ap8)
@@ -574,4 +592,8 @@ def main():
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["verify-range"]:  # just the REQ-IMH-19 fixtures
+        verify_range_tests()
+        print(f"\n{res['pass']} passed, {res['fail']} failed")
+        sys.exit(1 if res["fail"] else 0)
     sys.exit(main())
