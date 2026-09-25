@@ -366,10 +366,12 @@ def _log_tail_only(root, rel):
     lines. The engine appends to the session log on every tool call, including the call that
     staged it, so an exact match is impossible; an altered, truncated or long-unstaged log
     still fails."""
+    staged = st.run_git(["show", f":{rel}"], root, timeout=20, text=False)
+    if staged is None:
+        return False
     try:
-        staged = subprocess.run(["git", "show", f":{rel}"], cwd=root, capture_output=True, timeout=20).stdout
         current = open(os.path.join(root, rel), "rb").read()
-    except (OSError, subprocess.TimeoutExpired):
+    except OSError:
         return False
     if not current.startswith(staged) or (staged and not staged.endswith(b"\n")):
         return False
@@ -398,8 +400,64 @@ def _log_tail_only(root, rel):
     return True
 
 
+# `git commit` options that take the next argument as their value (so it is not a pathspec)
+_COMMIT_VALUE_OPTS = {"-m", "--message", "-F", "--file", "-C", "-c", "--reuse-message", "--reedit-message", "--author",
+                      "--date", "--cleanup", "--trailer", "--fixup", "--squash", "-t", "--template", "--pathspec-from-file"}
+# git subcommands that change the index; combined with a commit in one command they change what
+# is committed after the gate looked at it (REQ-IMH-10)
+_INDEX_CHANGING = {"add", "rm", "mv", "reset", "restore", "checkout", "switch", "stash", "update-index", "read-tree",
+                   "apply", "am", "merge", "cherry-pick", "revert", "pull", "rebase"}
+_INDEX_ENV = ("GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+
+
+def _commit_bypass(sargs):
+    """The `git commit` forms that commit something other than the index the gate checked:
+    a pathspec, --only, --include, --patch, --interactive, --pathspec-from-file (REQ-IMH-10)."""
+    found, i = [], 0
+    while i < len(sargs):
+        a = sargs[i]
+        if a == "--":
+            if sargs[i + 1:]:
+                found.append("a pathspec")
+            break
+        if a in _COMMIT_VALUE_OPTS:
+            if a == "--pathspec-from-file":
+                found.append(a)
+            i += 2
+            continue
+        name = a.split("=", 1)[0]
+        # git accepts any unambiguous prefix of a long option (--patc, --pathspec-from-f=…)
+        long_hit = next((o for o in ("--only", "--include", "--patch", "--interactive", "--pathspec-from-file")
+                         if name.startswith("--") and len(name) > 3 and o.startswith(name)), None)
+        if long_hit:
+            found.append(long_hit)
+            if long_hit == "--pathspec-from-file" and "=" not in a:
+                i += 2
+                continue
+        elif re.fullmatch(r"-[A-Za-z]+", a):
+            letters = a[1:]
+            # value-taking letters end the cluster: -am 'msg', -uno, -Skeyid
+            for n, ch in enumerate(letters):
+                if ch in "oip":
+                    found.append(f"-{ch}")
+                if ch in "mFCctuS":
+                    if ch in "mFCct" and n == len(letters) - 1:
+                        i += 1  # its value is the next argument
+                    break
+        elif not a.startswith("-") and a:
+            found.append("a pathspec")
+        i += 1
+    return found
+
+
 def _check_commit(ctx, sargs, bodies=()):
     pol = ctx.policy
+    bypass = _commit_bypass(sargs)
+    if bypass:
+        return deny("commit-bypass",
+                    f"`git commit` with {', '.join(dict.fromkeys(bypass))} commits files other than the staged index "
+                    "the gates check. Stage exactly what you mean to commit with `git add` (as its own command), then "
+                    "run a plain `git commit -m …`.")
     heredoc = "\n".join(bodies)
     msgs, flags = cmdparse.git_commit_messages(sargs, lambda p: heredoc if p == "-" else _read_file(ctx, p))
     # `git commit -m "$(cat <<'EOF' ... EOF)"`: the message text lives in the heredoc.
@@ -431,12 +489,17 @@ def _check_commit(ctx, sargs, bodies=()):
             return deny("agent-trailer",
                         "Commits made by an agent must say which session made them. End the commit message with the "
                         f"trailer line:\nAgent-Session: {ctx.session}")
+    git_failed = deny("git-unavailable", "git could not list what this commit contains, so it cannot be checked. "
+                                         "Try again; if it persists a human checks the repository.")
     if key and pol.get("commit_requires_audit", True):
-        staged = set((st.git(["diff", "--cached", "--name-only"], ctx.root) or "").split())
-        tracked = set((st.git(["ls-files", ".evidence"], ctx.root) or "").split())
+        # a failed git call is never "nothing staged" (REQ-IMH-23)
+        staged, tracked, unstaged = (st.git(a, ctx.root) for a in (["diff", "--cached", "--name-only"],
+                                                                   ["ls-files", ".evidence"], ["diff", "--name-only"]))
+        if staged is None or tracked is None or unstaged is None:
+            return git_failed
+        staged, tracked, unstaged = set(staged.split()), set(tracked.split()), set(unstaged.split())
         need = []
         safe = re.sub(r"[^A-Za-z0-9_-]", "_", ctx.session or "")[:80]
-        unstaged = set((st.git(["diff", "--name-only"], ctx.root) or "").split())
         session_log = f".evidence/audit/{safe}.jsonl"
         for rel in (session_log, f".evidence/changes/{key}/state.json",
                     f".evidence/changes/{key}/approval.json", f".evidence/audit/approval-{key}.jsonl"):
@@ -460,9 +523,12 @@ def _check_commit(ctx, sargs, bodies=()):
                             f"The commit includes files outside the approved plan's claims for {key}: "
                             f"{', '.join(sorted(outside)[:6])}. Unstage them, or amend the plan and get it re-approved.")
     if pol.get("scan_secrets", True):
-        diff = st.git(["diff", "--cached", "-U0", "--no-color"], ctx.root, timeout=20) or ""
+        diffs = [st.git(["diff", "--cached", "-U0", "--no-color"], ctx.root, timeout=20)]
         if "all" in flags:
-            diff += st.git(["diff", "-U0", "--no-color"], ctx.root, timeout=20) or ""
+            diffs.append(st.git(["diff", "-U0", "--no-color"], ctx.root, timeout=20))
+        if any(d is None for d in diffs):
+            return git_failed
+        diff = "".join(diffs)
         added = "\n".join(l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
         d = _secret_decision(ctx, added, "the staged changes")
         if d is not None:
@@ -471,6 +537,11 @@ def _check_commit(ctx, sargs, bodies=()):
         if d is not None:
             return d
     return None
+
+
+_DISPATCH_DENIED = ("Dispatching a workflow from another ref is a human action: it runs that branch's own workflow "
+                    "file with the repository's secrets, and could post a check under the merge gate's name. To "
+                    "re-check a pull request, a human re-runs its `verify-range` job from the PR's checks.")
 
 
 def _check_gh(ctx, s):
@@ -495,6 +566,13 @@ def _check_gh(ctx, s):
                         f"`gh api -X {method} {endpoint}` changes merges, branch protection or refs. That is a human action.")
         if method is None and re.search(r"/merge\b", endpoint) and any(a in ("-f", "-F", "--field", "--raw-field", "--input") for a in args):
             return deny("agent-merge", "`gh api` with fields against a /merge endpoint is a merge; that is a human action.")
+        if re.search(r"/dispatches\b", endpoint) and (method in ("POST", None)):
+            return deny("workflow-dispatch", _DISPATCH_DENIED)
+    if words[:2] == ["workflow", "run"] and any(a.startswith(("-r", "--ref")) for a in args):  # -rX, -r=X, --ref=X
+        # dispatched from another ref (a PR branch), a workflow runs that branch's own YAML with the
+        # repository's secrets, and can post a check under the merge gate's name (review, ADR-0004).
+        # Without --ref it runs the default branch's workflow.
+        return deny("workflow-dispatch", _DISPATCH_DENIED)
     if words[:2] == ["repo", "set-default"]:
         return deny("remote-change", "Changing the default GitHub repository is a human action (approvals are read from it).")
     if words[:2] == ["pr", "review"] and any(a in ("--approve", "-a") for a in args):
@@ -548,15 +626,22 @@ def _check_deploy(ctx, s):
                     + (f" The current value '{approval}' does not match." if approval else ""))
     verify = pol.get("release_approval_verify_command")
     if verify:
-        try:
-            r = subprocess.run(verify.replace("{approval}", approval), shell=True, cwd=ctx.root,
-                               capture_output=True, text=True, timeout=30)
-            if r.returncode != 0:
-                return deny("release-approval",
-                            f"Release approval '{approval}' could not be verified by the policy's check "
-                            f"({r.stderr.strip()[:200] or 'non-zero exit'}).")
-        except (OSError, subprocess.TimeoutExpired) as e:
-            return deny("release-approval", f"Release approval verification failed to run: {e}.")
+        return _release_verify(ctx, verify, approval)
+    return None
+
+
+def _release_verify(ctx, verify, approval):
+    """The org policy's release-approval check: an org-configured command, run without the
+    signing key or GIT_* in its environment (REQ-IMH-22)."""
+    try:
+        r = subprocess.run(verify.replace("{approval}", approval), shell=True, cwd=ctx.root, env=st._child_env(),
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return deny("release-approval",
+                        f"Release approval '{approval}' could not be verified by the policy's check "
+                        f"({r.stderr.strip()[:200] or 'non-zero exit'}).")
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return deny("release-approval", f"Release approval verification failed to run: {e}.")
     return None
 
 
@@ -743,6 +828,13 @@ def check_bash(ctx, command):
         d = _secret_decision(ctx, command, "this command")
         if d is not None:
             return d
+    git_subs = [cmdparse.git_split(s.argv)[1] for s in simples if s.prog == "git"]
+    if "commit" in git_subs and any(g in _INDEX_CHANGING for g in git_subs):
+        # the gate checks the index as it is now; the other command would change it before the commit runs
+        return deny("commit-bypass",
+                    "Run `git commit` as its own command: combined with "
+                    f"`git {next(g for g in git_subs if g in _INDEX_CHANGING)}` it would commit an index the gates never "
+                    "saw. Stage first, then commit in a separate call.")
     cwd = ctx.cwd
     for s in simples:
         if pol.get("deny_persistence", True) and (set(s.wrappers) - {s.prog}) & cmdparse.PERSISTENCE or (
@@ -761,7 +853,8 @@ def check_bash(ctx, command):
             return deny("unknown-program",
                         f"`{s.prog}` is not on this organisation's list of known programs (strict mode), so what it "
                         "writes cannot be judged. Ask the platform team to add it to known_programs.")
-        spoof = [k for k in s.env if k.startswith(("GIT_CONFIG_", "GIT_AUTHOR_", "GIT_COMMITTER_")) or k in ("EMAIL", "GIT_DIR", "GIT_WORK_TREE")]
+        spoof = [k for k in s.env if k.startswith(("GIT_CONFIG_", "GIT_AUTHOR_", "GIT_COMMITTER_"))
+                 or k in ("EMAIL", "GIT_DIR", "GIT_WORK_TREE") + _INDEX_ENV]
         if spoof:
             return deny("identity",
                         f"Setting {', '.join(sorted(spoof)[:3])} on a command changes your git identity (who git and the "

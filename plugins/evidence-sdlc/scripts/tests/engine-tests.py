@@ -1135,7 +1135,7 @@ def suite_audit_concurrency_and_hook_scope():
         tmp = tempfile.mkdtemp(prefix="evidence-audit-")
 
         def verify(lines):
-            p = os.path.join(tmp, "x.jsonl")
+            p = os.path.join(tmp, "s1.jsonl")  # named for its session, as real logs are (REQ-IMH-11 checks it)
             open(p, "w").write("".join(json.dumps(e, sort_keys=True) + "\n" for e in lines))
             w = []
             ok, probs = st.audit_verify(p, w)
@@ -1373,8 +1373,11 @@ def suite_audit_concurrency_and_hook_scope():
         os.chmod(bang, 0o755)
     note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
     vtext = json.dumps([open(f).read() for f in glob.glob(os.path.join(r, ".evidence", "**", "violations*"), recursive=True)])
+    # Since PILOT-58 (REQ-IMH-01) a refused removal is its own violation instead of an exception
+    # that fails the whole check; either way it must be recorded, never swallowed.
     check("REQ-SLF-09 security: a failing integrity check is recorded as a violation, not swallowed",
-          "integrity check for that command failed" in note and "integrity-check-error" in vtext, (note, vtext))
+          ("integrity check for that command failed" in note and "integrity-check-error" in vtext)
+          or ("could not be removed safely" in note and "control-plane-removal-refused" in vtext), (note, vtext))
     shutil.rmtree(r)
 
     # the human CLI's artifact-path check is case-insensitive (macOS/Windows filesystems)
@@ -1386,8 +1389,532 @@ def suite_audit_concurrency_and_hook_scope():
     shutil.rmtree(r)
 
 
+def suite_pilot58():
+    """PILOT-58: integrity-monitor and engine git hardening (spec REQ-IMH-01..24, local set)."""
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import importlib
+    import state as st
+    KEY = {"EVIDENCE_SIGNING_KEY": "k" * 40}
+    import uuid
+
+    def around(r, mutate, env=None, cmd="./vendor/tool", session="s1"):
+        tid = "p58-" + uuid.uuid4().hex[:8]
+        p = {"session_id": session, "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": tid,
+             "permission_mode": "default"}
+        pre = decision(run_hook(r, p, env_extra=env)[0])
+        if pre[0] == "deny":
+            return pre, ""
+        mutate()
+        obj, _ = run_hook(r, dict(p, hook_event_name="PostToolUse", tool_response={"stdout": ""}), event="post", env_extra=env)
+        return pre, obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+    def vtext(r):
+        return json.dumps([open(f).read() for f in glob.glob(os.path.join(r, ".evidence", "**", "violations*"), recursive=True)
+                           if os.path.isfile(f)])
+
+    def committed_repo(claims=("src/app.py",)):
+        r = make_repo()
+        start_change(r, claims=claims)
+        sh("git add -A && git commit -q -m 'ABC-1: c'", r)
+        return r
+
+    # REQ-IMH-01: removal/restore never goes through a symlink or outside the repository
+    r = committed_repo()
+    outside = os.path.realpath(tempfile.mkdtemp(prefix="evidence-outside-"))
+    open(os.path.join(outside, "keep.txt"), "w").write("keep\n")
+    os.makedirs(os.path.join(r, ".evidence", "violations"), exist_ok=True)
+    _, note = around(r, lambda: os.symlink(outside, os.path.join(r, ".evidence", "violations", "x")), env=KEY)
+    check("REQ-IMH-01 a symlinked control-plane directory is reported, and nothing outside the repository is removed",
+          os.path.isfile(os.path.join(outside, "keep.txt")) and "symlink" in note.lower(), note)
+    if os.path.lexists(os.path.join(r, ".evidence", "violations", "x")):
+        os.remove(os.path.join(r, ".evidence", "violations", "x"))
+    shutil.rmtree(outside)
+    shutil.rmtree(r)
+    for label, rel, is_dir in (("a symlinked change directory", (".evidence", "changes", "ZZZ-9"), True),
+                               ("a symlinked audit log", (".evidence", "audit", "evil.jsonl"), False)):
+        r = committed_repo()
+        st.audit_append(r, "s1", {"event": "x"})
+        outside = os.path.realpath(tempfile.mkdtemp(prefix="evidence-outside-"))
+        target = outside if is_dir else os.path.join(outside, "log.jsonl")
+        keep = os.path.join(outside, "keep.txt") if is_dir else target
+        open(keep, "w").write("keep\n")
+        link = os.path.join(r, *rel)
+        _, note = around(r, lambda: os.symlink(target, link), env=KEY)
+        check(f"REQ-IMH-01 {label} is reported, and its target outside the repository is untouched",
+              os.path.isfile(keep) and open(keep).read() == "keep\n" and "symlink" in note.lower(), note)
+        if os.path.lexists(link):
+            os.remove(link)
+        shutil.rmtree(outside)
+        shutil.rmtree(r)
+
+    # REQ-IMH-02: a non-file at a violations path is an open violation
+    r = committed_repo()
+    os.makedirs(os.path.join(r, ".evidence", "changes", "ABC-1", "violations.json"))
+    record_agent(r, "ABC-1", "evidence-sdlc:verifier")
+    t, i = bash("git push -u origin feature/ABC-1-login")
+    case("REQ-IMH-02 a directory at a violations-record path keeps push closed", r, t, i, "deny", rule_hint="violation")
+    shutil.rmtree(r)
+
+    # REQ-IMH-05: .evidence directory mode/identity changes are violations
+    r = committed_repo()
+    st.audit_append(r, "s1", {"event": "x"})
+    adir = os.path.join(r, ".evidence", "audit")
+    _, note = around(r, lambda: os.chmod(adir, 0o555))
+    os.chmod(adir, 0o755)
+    check("REQ-IMH-05 a chmod of .evidence/audit during a call is a violation", ".evidence/audit" in note, note)
+    _, note = around(r, lambda: (os.rename(adir, adir + ".old"), shutil.copytree(adir + ".old", adir)))
+    check("REQ-IMH-05 a swapped .evidence/audit directory is a violation", ".evidence/audit" in note, note)
+    shutil.rmtree(r)
+
+    # REQ-IMH-06: an unwritable post-call audit entry records a violation
+    r = committed_repo()
+    st.audit_append(r, "s1", {"event": "x"})
+    adir6 = os.path.join(r, ".evidence", "audit")
+    log6 = os.path.join(adir6, "s1.jsonl")
+
+    def lock_audit():
+        os.chmod(log6, 0o444)
+        os.chmod(adir6, 0o555)
+    try:
+        around(r, lock_audit)
+        v = vtext(r)
+    finally:
+        os.chmod(adir6, 0o755)
+        os.chmod(log6, 0o644)
+    check("REQ-IMH-06 an unwritable post-call audit entry is recorded as an audit-unwritable violation", "audit-unwritable" in v, v)
+    got, reason = decision(run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"},
+                                        "tool_use_id": "p58-after6", "permission_mode": "default"})[0])
+    check("REQ-IMH-06 the next call after an unwritable audit entry is denied", got == "deny", reason[:200])
+    shutil.rmtree(r)
+
+    # REQ-IMH-07: deleting a file inside an untracked directory is judged
+    r = committed_repo()
+    os.makedirs(os.path.join(r, "notes"))
+    open(os.path.join(r, "notes", "a.py"), "w").write("x = 1\n")  # gated (a .txt would be ungated) and unclaimed
+    _, note = around(r, lambda: os.remove(os.path.join(r, "notes", "a.py")))
+    check("REQ-IMH-07 deleting an unclaimed untracked file is judged like any delete", "notes/a.py" in note, note)
+    shutil.rmtree(r)
+
+    # REQ-IMH-08: a snapshot replaced by a link to a large file is treated as altered; post completes
+    r = committed_repo()
+    import integrity
+    bigdir = tempfile.mkdtemp(prefix="evidence-big-")
+    big = os.path.join(bigdir, "big")
+    with open(big, "wb") as f:
+        f.truncate(64 * 1024 * 1024)
+    tid = "p58-snap-" + uuid.uuid4().hex[:6]
+    p = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": tid,
+         "permission_mode": "default"}
+    run_hook(r, p)
+    sp = integrity._snap_path("s1", tid)
+    if os.path.lexists(sp):
+        os.remove(sp)
+    os.symlink(big, sp)
+    obj, err = run_hook(r, dict(p, hook_event_name="PostToolUse"), event="post")
+    note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+    check("REQ-IMH-08 a snapshot replaced by a symlink is a violation and post completes",
+          "snapshot" in note.lower() and "Traceback" not in err, (note, err[-300:]))
+    if os.path.lexists(sp):
+        os.remove(sp)
+    shutil.rmtree(bigdir)
+    shutil.rmtree(r)
+
+    # REQ-IMH-09: command-executing repository config is refused; a marker script never runs
+    def git_cfg_case(label, setup, env=None, expect_deny=True):
+        """`setup(r, script)` plants `script` where git might run it; it must never run. Config the engine reads
+        is refused (deny); config from the environment is scrubbed instead (expect_deny=False)."""
+        r = committed_repo()
+        marker = os.path.join(r, "MARKER")
+        script = os.path.join(r, "mk.sh")
+        open(script, "w").write(f"#!/bin/sh\ntouch {marker}\ncat\n")
+        os.chmod(script, 0o755)
+        got = setup(r, script)
+        env = got if isinstance(got, dict) else env
+        # something dirty and tracked, so a diff or status has content to process
+        open(os.path.join(r, "src", "app.py"), "a").write("b = 2\n")
+        tid = "p58-g-" + uuid.uuid4().hex[:6]
+        p = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "ls"}, "tool_use_id": tid,
+             "permission_mode": "default"}
+        got, reason = decision(run_hook(r, p, env_extra=env)[0])
+        run_hook(r, dict(p, hook_event_name="PostToolUse"), event="post", env_extra=env)
+        check(f"REQ-IMH-09 {label}: {'refused and ' if expect_deny else ''}the marker never runs",
+              (got == "deny" or not expect_deny) and not os.path.exists(marker), (got, reason[:200], os.path.exists(marker)))
+        shutil.rmtree(r, ignore_errors=True)
+
+    def cfg(r, *kv):
+        for k, v in kv:
+            sh(f"git config {k} '{v}'", r)
+    git_cfg_case("core.fsmonitor", lambda r, s: cfg(r, ("core.fsmonitor", s)))
+    git_cfg_case("diff driver command + .gitattributes",
+                 lambda r, s: (cfg(r, ("diff.evil.command", s)), open(os.path.join(r, ".gitattributes"), "w").write("*.py diff=evil\n")))
+    git_cfg_case("textconv", lambda r, s: cfg(r, ("diff.evil.textconv", s)))
+    git_cfg_case("info/attributes filter",
+                 lambda r, s: (cfg(r, ("filter.evil.clean", s)),
+                               open(os.path.join(r, ".git", "info", "attributes"), "w").write("* filter=evil\n")))
+    git_cfg_case("core.attributesFile", lambda r, s: cfg(r, ("core.attributesFile", s)))
+    git_cfg_case("filter.lfs.clean with an embedded newline",
+                 lambda r, s: open(os.path.join(r, ".git", "config"), "a").write(
+                     f'[filter "lfs"]\n\tclean = "git-lfs clean -- %f\\n{s}"\n'))
+
+    def include_case(r, s):
+        inc = os.path.join(r, "evil.inc")
+        open(inc, "w").write(f"[core]\n\tfsmonitor = {s}\n")
+        cfg(r, ("include.path", inc))
+    git_cfg_case("config via include.path", include_case)
+
+    def include_if_case(r, s):
+        inc = os.path.join(r, "evil.inc")
+        open(inc, "w").write(f"[core]\n\tfsmonitor = {s}\n")
+        cfg(r, ("includeIf.onbranch:feature/**.path", inc))
+    git_cfg_case("config via includeIf", include_if_case)
+
+    def worktree_cfg(r, s):
+        cfg(r, ("extensions.worktreeConfig", "true"))
+        open(os.path.join(r, ".git", "config.worktree"), "w").write(f"[core]\n\tfsmonitor = {s}\n")
+    git_cfg_case("config.worktree", worktree_cfg)
+
+    def gitfile(r, s):
+        real = os.path.realpath(tempfile.mkdtemp(prefix="evidence-gitdir-"))
+        os.rmdir(real)
+        shutil.move(os.path.join(r, ".git"), real)
+        open(os.path.join(r, ".git"), "w").write(f"gitdir: {real}\n")
+        sh(f"git config core.fsmonitor '{s}'", r)
+    git_cfg_case("a .git file pointing at a git dir with command config", gitfile)
+
+    def submodule(r, s):
+        sub = os.path.realpath(tempfile.mkdtemp(prefix="evidence-sub-"))
+        sh("git init -q -b main && echo a > f && git add f && git commit -q -m init", sub)
+        sh(f"git -c protocol.file.allow=always submodule -q add {sub} sub && git commit -q -m 'ABC-1: sub'", r)
+        sh(f"git config filter.evil.clean '{s}' && a=$(git rev-parse --git-path info/attributes) && mkdir -p \"$(dirname \"$a\")\" "
+           f"&& echo '* filter=evil' > \"$a\" && echo b >> f", os.path.join(r, "sub"))
+        sh(f"git config core.fsmonitor '{s}'", os.path.join(r, "sub"))
+    git_cfg_case("a submodule's filter and fsmonitor", submodule, expect_deny=False)
+    git_cfg_case("an inherited GIT_CONFIG_PARAMETERS", lambda r, s: {"GIT_CONFIG_PARAMETERS": f"'core.fsmonitor'='{s}'"},
+                 expect_deny=False)
+    git_cfg_case("an inherited GIT_EXTERNAL_DIFF", lambda r, s: {"GIT_EXTERNAL_DIFF": s}, expect_deny=False)
+
+    # a git child process gets the neutralising flags and no key in its environment
+    r = committed_repo()
+    seen = []
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    try:
+        importlib.reload(st)
+        real_run = st.subprocess.run
+
+        def spy(argv, *a, **k):
+            seen.append((list(argv), k.get("env")))
+            return real_run(argv, *a, **k)
+        st.subprocess.run = spy
+        try:
+            if hasattr(st, "run_git"):
+                st.run_git(["status", "--porcelain"], r)
+        finally:
+            st.subprocess.run = real_run
+    finally:
+        del os.environ["EVIDENCE_SIGNING_KEY"]
+    gitcalls = [(a, e) for a, e in seen if a and os.path.basename(a[0]) == "git"]
+    check("REQ-IMH-09 run_git starts git with core.fsmonitor=false and core.hooksPath=/dev/null, and without the key",
+          gitcalls and all("core.fsmonitor=false" in a and "core.hooksPath=/dev/null" in a and e is not None
+                           and "EVIDENCE_SIGNING_KEY" not in e for a, e in gitcalls),
+          [(a[:8], None if e is None else "EVIDENCE_SIGNING_KEY" in e) for a, e in gitcalls] or "run_git missing")
+    shutil.rmtree(r)
+    os.environ["EVIDENCE_SIGNING_KEY"] = "k" * 40
+    os.environ["GIT_CONFIG_PARAMETERS"] = "'core.fsmonitor'='/bin/false'"
+    try:
+        importlib.reload(st)
+        child = st._child_env() if hasattr(st, "_child_env") else dict(os.environ)
+    finally:
+        del os.environ["EVIDENCE_SIGNING_KEY"]
+        del os.environ["GIT_CONFIG_PARAMETERS"]
+    check("REQ-IMH-09 engine child processes never inherit EVIDENCE_SIGNING_KEY or GIT_* variables",
+          "EVIDENCE_SIGNING_KEY" not in child and not any(k.startswith("GIT_") and k not in ("GIT_CONFIG_NOSYSTEM", "GIT_ATTR_SOURCE")
+                                                          for k in child),
+          sorted(k for k in child if k.startswith("GIT_") or k == "EVIDENCE_SIGNING_KEY"))
+    r = committed_repo()
+    home = tempfile.mkdtemp(prefix="evidence-home-")
+    open(os.path.join(home, ".gitconfig"), "w").write("[credential]\n\thelper = osxkeychain\n")
+    got, reason = decision(run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "ls"},
+                                        "tool_use_id": "p58-cred", "permission_mode": "default"}, env_extra={"HOME": home})[0])
+    check("REQ-IMH-09 a global credential.helper is accepted", got == "allow", reason)
+    sh("git config credential.helper store", r)
+    got, reason = decision(run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "ls"},
+                                        "tool_use_id": "p58-cred2", "permission_mode": "default"}, env_extra={"HOME": home})[0])
+    check("REQ-IMH-09 a local credential.helper is refused", got == "deny" and "credential" in reason, reason)
+    shutil.rmtree(home)
+    shutil.rmtree(r)
+
+    # REQ-IMH-23: git failing mid-call fails closed, and the control plane is still restored
+    r = committed_repo()
+    cp = os.path.join(r, ".evidence", "changes", "ABC-1", "approval.json")
+    before = open(cp).read()
+    cfgp = os.path.join(r, ".git", "config")
+    good_cfg = open(cfgp).read()
+
+    def break_git():
+        open(cfgp, "a").write("[\n")
+        os.remove(cp)
+    _, note = around(r, break_git, env=KEY)
+    restored = os.path.isfile(cp) and open(cp).read() == before
+    got, reason = decision(run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "ls"},
+                                        "tool_use_id": "p58-gu", "permission_mode": "default"}, env_extra=KEY)[0])
+    check("REQ-IMH-23 git failing mid-call is a violation, the control plane is still restored, and the next call is denied",
+          "git-unavailable" in (note + vtext(r)) and restored and got == "deny", (note[:200], restored, got, reason[:200]))
+    open(cfgp, "w").write(good_cfg)
+    shutil.rmtree(r)
+
+    # REQ-IMH-24: gh is pinned to --repo and runs without the key or GIT_*
+    r = committed_repo()
+    ghlog = os.path.join(r, "gh.log")
+    fake = os.path.join(r, "fake-gh")
+    open(fake, "w").write(f"#!/bin/sh\necho \"ARGS $@\" > {ghlog}\nenv >> {ghlog}\necho '{{}}'\n")
+    os.chmod(fake, 0o755)
+    os.environ.update({"EVIDENCE_GH": fake, "EVIDENCE_SIGNING_KEY": "k" * 40, "GIT_DIR": "/nonexistent"})
+    ran, out, refused = False, "", False
+    try:
+        importlib.reload(st)
+        if hasattr(st, "run_gh"):
+            try:
+                st.run_gh(["pr", "view", "1"], r, repo="o/r")
+                ran = True
+            except Exception as e:
+                ran = repr(e)
+            out = open(ghlog).read() if os.path.isfile(ghlog) else ""
+            try:
+                st.run_gh(["pr", "view", "1"], r, repo="")
+            except Exception:
+                refused = True
+    finally:
+        for k in ("EVIDENCE_GH", "EVIDENCE_SIGNING_KEY", "GIT_DIR"):
+            os.environ.pop(k, None)
+    check("REQ-IMH-24 gh gets --repo, and neither the key nor GIT_* reaches it; an empty repo is refused",
+          ran is True and "--repo o/r" in out and "EVIDENCE_SIGNING_KEY" not in out and "GIT_DIR" not in out and refused,
+          (ran, out[:200], refused))
+    shutil.rmtree(r)
+
+    # REQ-IMH-10: commit forms that bypass the index check are denied
+    r = committed_repo()
+    tr = " -m 'Agent-Session: s1'"
+    open(os.path.join(r, "src", "app.py"), "a").write("c = 3\n")
+    sh("git add src/app.py", r)
+    run_hook(r, {"session_id": "s1", "cwd": r, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                 "tool_input": {"command": "ls"}, "permission_mode": "default"})  # opens the session's audit log
+    sh("git add -A .evidence", r)
+    t, i = bash("git commit -m 'ABC-1: x'" + tr)
+    case("REQ-IMH-10 control: a plain commit of the staged index is allowed", r, t, i, "allow")
+    for c in ("git commit -m 'ABC-1: x'" + tr + " -- src/app.py", "git commit --only -m 'ABC-1: x'" + tr,
+              "git commit -i -m 'ABC-1: x'" + tr, "git commit -p -m 'ABC-1: x'" + tr,
+              "git commit --pathspec-from-file=list.txt -m 'ABC-1: x'" + tr,
+              "git add src/app.py && git commit -m 'ABC-1: x'" + tr,
+              "GIT_INDEX_FILE=/tmp/idx git commit -m 'ABC-1: x'" + tr,
+              # abbreviated long options, which git accepts (security review, step 11)
+              "git commit --patc -m 'ABC-1: x'" + tr, "git commit --inter -m 'ABC-1: x'" + tr,
+              "git commit --pathspec-from-f=list.txt -m 'ABC-1: x'" + tr, "git commit --onl -m 'ABC-1: x'" + tr):
+        t, i = bash(c)
+        sh("git add -A .evidence", r)  # evidence staged, so only the bypass itself can deny
+        case(f"REQ-IMH-10 commit bypass denied: {c[:60]}", r, t, i, "deny")
+    shutil.rmtree(r)
+
+    # REQ-IMH-11: replayed and cross-session audit entries break verification
+    tmp = tempfile.mkdtemp(prefix="evidence-audit-")
+
+    def entry(prev, i, session="s1"):
+        e = {"event": "x", "i": i, "prev": prev, "session": session}
+        e["hash"] = st.entry_hash(e, prev)
+        return e
+    a = entry("", 1)
+    b = entry(a["hash"], 2)
+    b2 = entry(a["hash"], 3)
+    ap = os.path.join(tmp, "s1.jsonl")
+    open(ap, "w").write("".join(json.dumps(e) + "\n" for e in (a, b, b2, b)))
+    check("REQ-IMH-11 a replayed audit entry breaks verification", not st.audit_verify(ap, [])[0])
+    open(ap, "w").write(json.dumps(entry("", 1, session="s2")) + "\n")
+    check("REQ-IMH-11 an entry from another session breaks verification", not st.audit_verify(ap, [])[0])
+    shutil.rmtree(tmp)
+
+    # REQ-IMH-20: the audit-log prefix hash catches same-length rewrites
+    r = committed_repo()
+    for n in range(3):
+        st.audit_append(r, "s1", {"event": "tool", "n": n})
+    lp = os.path.join(r, ".evidence", "audit", "s1.jsonl")
+
+    def rewrite():
+        t = open(lp).read()
+        open(lp, "w").write(t.replace('"n": 0', '"n": 9', 1))
+    _, note = around(r, rewrite)
+    check("REQ-IMH-20 a same-length rewrite of an earlier audit entry is a violation", "s1.jsonl" in note, note)
+    shutil.rmtree(r)
+    r = committed_repo()
+    for n in range(3):
+        st.audit_append(r, "s1", {"event": "tool", "n": n})
+        st.audit_append(r, "s2", {"event": "tool", "n": n, "pad": "x" * 5})
+    lp1, lp2 = (os.path.join(r, ".evidence", "audit", f"{s}.jsonl") for s in ("s1", "s2"))
+    _, note = around(r, lambda: shutil.copyfile(lp2, lp1), session="s3")
+    check("REQ-IMH-20 an audit log replaced by another session's log is a violation", "s1.jsonl" in note, note)
+    shutil.rmtree(r)
+    r = committed_repo()
+    forged = os.path.join(r, ".evidence", "audit", "s9.jsonl")
+    _, note = around(r, lambda: open(forged, "w").write(json.dumps({"event": "agent-completed", "session": "s9",
+                                                                    "prev": "", "hash": "0" * 64}) + "\n"))
+    check("REQ-IMH-20 an audit log created during the call must verify", "s9.jsonl" in note, note)
+    shutil.rmtree(r)
+
+    # Checkpoint security review (step 5) fixes
+    # A3: git-lfs extension commands are refused; the exact allow-listed lfs filter alone passes
+    git_cfg_case("lfs.extension clean command", lambda r, s: cfg(r, ("lfs.extension.x.clean", s)))
+    r = committed_repo()
+    for k, v in (("filter.lfs.clean", "git-lfs clean -- %f"), ("filter.lfs.smudge", "git-lfs smudge -- %f"),
+                 ("filter.lfs.process", "git-lfs filter-process"), ("filter.lfs.required", "true")):
+        sh(f"git config {k} '{v}'", r)
+    got, reason = decision(run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "ls"},
+                                        "tool_use_id": "p58-lfs", "permission_mode": "default"})[0])
+    check("REQ-IMH-09 the exact allow-listed git-lfs filter values pass", got == "allow", reason)
+    shutil.rmtree(r)
+
+    # A1: an audit log too large to hash in time is refused by lstat alone, quickly
+    r = committed_repo()
+    import time
+    os.makedirs(os.path.join(r, ".evidence", "audit"), exist_ok=True)
+    with open(os.path.join(r, ".evidence", "audit", "z.jsonl"), "wb") as f:
+        f.truncate(1 << 36)  # sparse: instant to make, 64 GiB to read
+    t0 = time.time()
+    got, reason = decision(run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "ls"},
+                                        "tool_use_id": "p58-big", "permission_mode": "default"})[0])
+    check("REQ-IMH-20 an oversize audit log denies the call without reading it",
+          got == "deny" and "larger than" in reason and time.time() - t0 < 15, (got, reason[:200], time.time() - t0))
+    shutil.rmtree(r)
+
+    # A2: a deleted snapshot plus broken git is still a violation, not "no repository"
+    r = committed_repo()
+    tid = "p58-a2-" + uuid.uuid4().hex[:6]
+    p = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": tid,
+         "permission_mode": "default"}
+    run_hook(r, p, env_extra=KEY)
+    cfgp = os.path.join(r, ".git", "config")
+    good_cfg = open(cfgp).read()
+    open(cfgp, "a").write("[\n")
+    if os.path.lexists(integrity._snap_path("s1", tid)):
+        os.remove(integrity._snap_path("s1", tid))
+    obj, _ = run_hook(r, dict(p, hook_event_name="PostToolUse"), event="post", env_extra=KEY)
+    note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+    check("REQ-IMH-23 a removed snapshot with git broken is recorded as integrity-snapshot-missing",
+          "snapshot" in note and "missing" in note, note)
+    open(cfgp, "w").write(good_cfg)
+    shutil.rmtree(r)
+
+    # A5: a control-plane directory that was already a symlink is reported, not silently skipped
+    r = committed_repo()
+    os.makedirs(os.path.join(r, "skills-src"))
+    os.makedirs(os.path.join(r, ".claude"), exist_ok=True)
+    os.symlink(os.path.join(r, "skills-src"), os.path.join(r, ".claude", "skills"))
+    _, note = around(r, lambda: open(os.path.join(r, "skills-src", "x.md"), "w").write("x\n"), env=KEY)
+    check("REQ-IMH-01 a pre-existing symlinked control-plane directory is reported", ".claude/skills" in note, note)
+    shutil.rmtree(r)
+
+    # B4 (owner decision 2026-09-25): a "don't ask again" grant written mid-call is kept and logged, not reverted
+    r = committed_repo()
+    os.makedirs(os.path.join(r, ".claude"), exist_ok=True)
+    sl = os.path.join(r, ".claude", "settings.local.json")
+    open(sl, "w").write(json.dumps({"permissions": {"allow": ["Bash(ls)"], "deny": ["Bash(rm:*)"]}}))
+    grant = {"permissions": {"allow": ["Bash(ls)", "Bash(git status)"], "deny": ["Bash(rm:*)"]}}
+    _, note = around(r, lambda: open(sl, "w").write(json.dumps(grant)), env=KEY)
+    logged = any('"permission-grant"' in l for l in open(os.path.join(r, ".evidence", "audit", "s1.jsonl")))
+    check("REQ-IMH-01 a permission grant added to settings.local.json during a call is kept and logged, not a violation",
+          not note and json.load(open(sl)) == grant and logged and "permission-grant" not in vtext(r), (note, logged))
+    widened = {"permissions": {"allow": ["Bash(ls)", "Bash(git status)"], "deny": []}}
+    _, note = around(r, lambda: open(sl, "w").write(json.dumps(widened)), env=KEY)
+    check("REQ-IMH-01 any other change to settings.local.json (a deny rule removed) is still restored and recorded",
+          "settings.local.json" in note and json.load(open(sl)) == grant, note)
+    bom = {"permissions": {"allow": ["Bash(ls)", "Bash(git status)", "Bash(make)"], "deny": ["Bash(rm:*)"]}}
+    _, note = around(r, lambda: open(sl, "wb").write(b"\xef\xbb\xbf" + json.dumps(bom).encode()), env=KEY)
+    check("REQ-IMH-01 an allow-only change re-encoded with a BOM is not taken as a permission grant",
+          "settings.local.json" in note and json.load(open(sl)) == grant, note)
+    shutil.rmtree(r)
+
+    # nit 1: file_in_commit answers "present" (callers deny) when git cannot answer
+    r = committed_repo()
+    nogit = os.path.realpath(tempfile.mkdtemp(prefix="evidence-nogit-"))
+    check("REQ-IMH-23 file_in_commit: present, absent, and git failure treated as present",
+          st.file_in_commit(r, "HEAD", "src/app.py") and not st.file_in_commit(r, "HEAD", "src/nope.py")
+          and st.file_in_commit(nogit, "HEAD", "src/app.py"))
+    shutil.rmtree(nogit)
+    shutil.rmtree(r)
+
+    # Code review (step 11): dispatching a workflow from another ref is denied; from the default branch it isn't
+    r = make_repo()
+    for c in ("gh workflow run verify-range.yml --ref feature/ABC-1-x -f pr=5", "gh workflow run ci.yml -r feature/x",
+              "gh workflow run verify-range.yml -rfeature/x -f pr=5", "gh workflow run ci.yml -r=feature/x",
+              "gh api -X POST repos/o/r/actions/workflows/verify-range.yml/dispatches -f ref=feature/x"):
+        t, i = bash(c)
+        case(f"REQ-IMH-21 workflow dispatch from another ref denied: {c[:50]}", r, t, i, "deny", rule_hint="another ref")
+    t, i = bash("gh workflow run ci.yml")
+    case("REQ-IMH-21 control: a dispatch of the default branch's workflow is not denied by that rule", r, t, i, "allow")
+    shutil.rmtree(r)
+
+    # review item 10: an integrity check that raises is recorded as integrity-check-error, not swallowed
+    import signing
+    r = committed_repo()
+    tid = "p58-err-" + uuid.uuid4().hex[:6]
+    p = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": tid,
+         "permission_mode": "default"}
+    run_hook(r, p, env_extra=KEY)
+    os.environ["EVIDENCE_SIGNING_KEY"] = KEY["EVIDENCE_SIGNING_KEY"]
+    try:
+        importlib.reload(signing)
+        snap = json.load(open(integrity._snap_path("s1", tid)))
+        snap = {k: v for k, v in snap.items() if k != "sig"}
+        snap["cp"] = ["not", "a", "mapping"]  # signed, bound to the call, but malformed: check() raises
+        st.write_file(tempfile.gettempdir(), integrity._snap_rel("s1", tid), json.dumps(signing.sign(snap)))
+    finally:
+        del os.environ["EVIDENCE_SIGNING_KEY"]
+        importlib.reload(signing)
+    obj, _ = run_hook(r, dict(p, hook_event_name="PostToolUse"), event="post", env_extra=KEY)
+    note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+    check("REQ-SLF-09 an integrity check that raises is recorded as integrity-check-error",
+          "integrity check for that command failed" in note and "integrity-check-error" in vtext(r), (note, vtext(r)[:300]))
+    shutil.rmtree(r)
+
+    # review item 11: the release-verify command runs without the signing key or GIT_* in its environment
+    r = make_repo()
+    envout = os.path.join(r, "verify-env.txt")
+    org = os.path.join(r, "org.json")
+    json.dump({"release_approval_pattern": "^REL-", "release_approval_verify_command": f"env > {envout}"}, open(org, "w"))
+    t, i = bash("./deploy.sh production")
+    case("REQ-IMH-22 release verify runs (valid approval allowed)", r, t, i, "allow",
+         env=dict(KEY, RELEASE_APPROVAL="REL-1", EVIDENCE_ORG_POLICY=org))
+    seen = open(envout).read() if os.path.isfile(envout) else ""
+    check("REQ-IMH-22 the release-verify command's environment has no signing key and no GIT_*",
+          seen and "EVIDENCE_SIGNING_KEY" not in seen and "\nGIT_" not in "\n" + seen, seen[:200] or "the command did not run")
+    shutil.rmtree(r)
+
+    # REQ-IMH-22: every engine subprocess call site is on the allow-list, exactly
+    import ast
+    eng = os.path.join(HERE, "..", "engine")
+    sites = []
+    for fn in sorted(glob.glob(os.path.join(eng, "*.py"))):
+        tree = ast.parse(open(fn).read())
+        mods = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names
+                if a.name in ("subprocess", "os")}
+        if any(isinstance(n, ast.ImportFrom) and n.module in ("subprocess", "os") and any(
+                a.name in ("run", "Popen", "call", "check_call", "check_output", "system", "popen") for a in n.names)
+               for n in ast.walk(tree)):
+            sites.append(f"{os.path.basename(fn)}:from-import")
+        funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+        def owner(target):
+            enclosing = [f for f in funcs if any(s is target for s in ast.walk(f))]
+            return min(enclosing, key=lambda f: sum(1 for _ in ast.walk(f))).name if enclosing else "<module>"
+        for sub in ast.walk(tree):
+            if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute) and isinstance(sub.func.value, ast.Name) \
+                    and sub.func.value.id in mods and (sub.func.value.id != "os" or sub.func.attr in (
+                        "system", "popen", "execv", "execvp", "execve", "spawnv", "spawnvp", "posix_spawn")):
+                sites.append(f"{os.path.basename(fn)}:{owner(sub)}")
+    allowed = {"state.py:run_git", "state.py:run_gh", "lifecycle.py:_ps_probe", "evidence_policy.py:_release_verify"}
+    check("REQ-IMH-22 engine subprocesses start only from the allow-listed helpers (exact match)",
+          set(sites) == allowed, sorted(set(sites) ^ allowed))
+
+
 if __name__ == "__main__":
-    for fn in [suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle, suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
+    for fn in [suite_pilot58, suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle, suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
                suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]:
         fn()
     print(f"\n{results['pass']} passed, {results['fail']} failed")

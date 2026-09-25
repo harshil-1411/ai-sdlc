@@ -74,8 +74,35 @@ def _audit(ctx, entry):
         base.update(_summ(ctx))
         base.update(entry)
         st.audit_append(ctx.root, ctx.session, base)
-    except Exception:  # the audit log must never break a session
+        return True
+    except Exception:  # the audit log must never break a session; callers that need the entry check the result
         traceback.print_exc(file=sys.stderr)
+        return False
+
+
+def _audit_unwritable(ctx):
+    """A call's own post entry could not be written: record it where push and the next call look (REQ-IMH-06)."""
+    try:
+        try:
+            key, state = ctx.change()
+        except Exception:
+            key, state = None, None
+        st.record_violations(ctx.root, key, state, ctx.branch, [{"path": f".evidence/audit/{ctx.session}.jsonl",
+                                                                 "rule": "audit-unwritable", "action": "recorded"}],
+                             ctx.session)
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+
+
+def _open_audit_unwritable(ctx):
+    try:
+        key, _ = ctx.change()
+    except Exception:
+        key = None
+    try:
+        return any(v.get("rule") == "audit-unwritable" for v in st.open_violations(ctx.root, key, ctx.branch))
+    except Exception:
+        return True  # unreadable violations: fail closed
 
 
 def run_lifecycle(argv, cwd):
@@ -147,6 +174,33 @@ def run_pre(payload):
         return pre_response(ep.deny("audit-unwritable",
                                     f"This session's audit log cannot be written ({e}), so nothing it does could be "
                                     "recorded. A human restores write access to .evidence/audit/."))
+    import integrity
+    big = integrity.oversize_audit_logs(ctx.root)
+    if big:
+        decision = ep.deny("audit-oversize",
+                           f"Audit log {', '.join(big[:3])} is larger than the {integrity.AUDIT_LOG_CAP >> 20} MiB the gates "
+                           "can check in time, so nothing could be checked. A human inspects .evidence/audit/.")
+        _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
+        return pre_response(decision)
+    refused = st.check_git_config(ctx.root, ctx.policy)
+    if refused:
+        # The engine runs git here holding the signing key; with this config, git would run a command (ADR-0003 §2).
+        decision = ep.deny("git-config-refused", refused + ".")
+        _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
+        return pre_response(decision)
+    if st.git_marker_above(ctx.cwd) and st.run_git(["rev-parse", "--git-dir"], ctx.cwd) is None:
+        # a repository git cannot read is not "no repository": nothing could be checked (REQ-IMH-23)
+        decision = ep.deny("git-unavailable", "This directory is inside a git repository that git cannot read, so the "
+                                              "gates cannot check anything here. A human repairs the repository.")
+        _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
+        return pre_response(decision)
+    if _open_audit_unwritable(ctx):
+        decision = ep.deny("audit-unwritable",
+                           "An earlier call's audit entry could not be written, so this session's record has a gap. "
+                           "A human checks .evidence/audit/ and clears the record with `evidence change clear-violations` "
+                           "in their own terminal.")
+        _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
+        return pre_response(decision)
     decision = ep.decide_pre(ctx)
     if decision.allow and ctx.tool == "Bash":
         decision = lifecycle_decision(ctx) or decision
@@ -168,8 +222,9 @@ def run_post(payload):
     if ctx.tool in ("Agent", "Task"):
         resp = payload.get("tool_response")
         failed = isinstance(resp, dict) and (resp.get("is_error") or resp.get("error"))
-        _audit(ctx, {"event": "agent-failed" if failed else "agent-completed",
-                     "subagent_type": ctx.tool_input.get("subagent_type") or "general-purpose"})
+        if not _audit(ctx, {"event": "agent-failed" if failed else "agent-completed",
+                            "subagent_type": ctx.tool_input.get("subagent_type") or "general-purpose"}):
+            _audit_unwritable(ctx)
         return None
     out = None
     if ctx.tool in ("Edit", "Write", "MultiEdit"):
@@ -182,7 +237,8 @@ def run_post(payload):
         p = ctx.tool_input.get("file_path") or ctx.tool_input.get("notebook_path")
         rel = st.normalize(p, ctx.cwd, ctx.root)[0] if p else None
         gated = bool(rel and not st.glob_match(rel, ctx.policy.get("ungated", []))) or bool(bash_changed)
-        _audit(ctx, {"event": "tool", "gated": gated})
+        if not _audit(ctx, {"event": "tool", "gated": gated}):
+            _audit_unwritable(ctx)
         # First source edit inside an approved change moves it to "implementing".
         key, state = ctx.change()
         if key and state and state.get("stage") == "approved" and ctx.tool != "Bash":
@@ -214,9 +270,18 @@ def run_integrity(ctx):
 
     try:
         notes, violations, changed = integrity.check(ctx, judge)
+    except HookTimeout:  # the watchdog: record it in the time left, never lose it (the hook limit is 30 s)
+        notes = [f"the integrity check for that command did not finish within {HOOK_BUDGET_SECONDS} s, so its "
+                 "effects were not checked."]
+        violations, changed = [{"path": "(integrity check)", "rule": "integrity-timeout", "action": "recorded"}], []
     except Exception as e:  # a check the agent can make fail must not become a silent pass
         notes = [f"the integrity check for that command failed ({e}), so its effects were not checked."[:300]]
         violations, changed = [{"path": "(integrity check)", "rule": "integrity-check-error", "action": "recorded"}], []
+    # A permission the human granted at Claude Code's prompt lands in settings.local.json while the call is
+    # in flight (the hook runs before the prompt). It is kept and logged, not treated as tampering.
+    for g in [v for v in violations if v.get("rule") == "permission-grant"]:
+        _audit(ctx, {"event": "permission-grant", "violation_path": g["path"], "added": g.get("added", [])[:20]})
+    violations = [v for v in violations if v.get("rule") != "permission-grant"]
     if not violations:
         return None, changed
     try:
@@ -295,6 +360,26 @@ def run_prompt(payload):
     return None
 
 
+HOOK_BUDGET_SECONDS = 25  # hooks.json allows 30: answer (fail closed) before Claude Code gives up on the hook
+
+
+class HookTimeout(BaseException):
+    """Not an Exception (nor an OSError), so no `except OSError/Exception` in the engine swallows it."""
+
+
+def _watchdog(seconds):
+    """Raise HookTimeout in this process after `seconds`, so a check the agent made slow ends in
+    the fail-closed error path instead of a killed hook whose decision never arrives."""
+    import signal
+    if not hasattr(signal, "SIGALRM"):
+        return
+
+    def fire(signum, frame):
+        raise HookTimeout(f"the gate engine did not finish within {seconds} s")
+    signal.signal(signal.SIGALRM, fire)
+    signal.alarm(seconds)
+
+
 def main():
     event = sys.argv[1] if len(sys.argv) > 1 else "pre"
     raw = sys.stdin.read()
@@ -307,6 +392,8 @@ def main():
             emit(pre_response(ep.deny("malformed", f"Gate engine could not read the hook input ({e}); failing closed.")))
         return 0
     try:
+        if event in ("pre", "post"):
+            _watchdog(HOOK_BUDGET_SECONDS)
         if event == "pre":
             emit(run_pre(payload))
         elif event == "post":
@@ -323,7 +410,7 @@ def main():
             out = run_prompt(payload)
             if out:
                 emit(out)
-    except Exception as e:  # fail closed on PreToolUse only
+    except (Exception, HookTimeout) as e:  # fail closed on PreToolUse only
         traceback.print_exc(file=sys.stderr)
         if event == "pre":
             emit(pre_response(ep.deny("engine-error",

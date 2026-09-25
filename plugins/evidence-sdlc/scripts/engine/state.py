@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-ENGINE_VERSION = "2.0.1"
+ENGINE_VERSION = "2.1.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_POLICY = os.path.join(HERE, "..", "..", "policy", "default-policy.json")
 ORG_POLICY_PATHS = [
@@ -38,14 +38,147 @@ def sha256_file(path):
     return h.hexdigest()
 
 
-def git(args, cwd, timeout=10):
+# ------------------------------------------------------------------ child processes (ADR-0003)
+# Hooks hold the signing key and run git in a repository the agent shapes. Every engine
+# git or gh process starts here: command-executing config neutralised, and neither GIT_*
+# nor the key in its environment.
+
+GIT_NEUTRAL = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
+               "-c", "core.attributesFile=/dev/null", "-c", "diff.external=", "-c", "protocol.ext.allow=never",
+               "-c", "submodule.recurse=false"]
+_NO_SUBMODULES = {"status", "diff"}
+_NO_DRIVERS = {"diff", "log", "show"}
+_NO_CONFIG_CHECK = {"rev-parse", "config", "version"}  # these run no configured commands
+_EMPTY_TREE = {"sha1": "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+               "sha256": "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321"}
+
+
+def _child_env():
+    """The environment for any process the engine starts: no GIT_* (config, index, object
+    and directory overrides) and no signing key."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "EVIDENCE_SIGNING_KEY"}
+
+
+def _git_argv(args):
+    sub = args[:1]
+    extra = []
+    if sub and sub[0] in _NO_SUBMODULES:
+        extra.append("--ignore-submodules=all")
+    if sub and sub[0] in _NO_DRIVERS:
+        extra += ["--no-ext-diff", "--no-textconv"]
+    return ["git"] + GIT_NEUTRAL + sub + extra + list(args[1:])
+
+
+_ATTR_SOURCE = {}
+
+
+def _attr_source(cwd):
+    """The empty tree, so attributes (diff drivers, filters) come from nowhere the agent can write."""
+    key = os.path.realpath(cwd)
+    if key not in _ATTR_SOURCE:
+        fmt = (run_git(["rev-parse", "--show-object-format"], cwd, _attrs=False) or "").strip()
+        _ATTR_SOURCE[key] = _EMPTY_TREE.get(fmt)
+    return _ATTR_SOURCE[key]
+
+
+def run_git(args, cwd, timeout=10, text=True, raise_timeout=False, _attrs=True):
+    """Run git with ADR-0003's neutralisation. Returns stdout, or None when git fails, times
+    out (unless raise_timeout) or the repository's config is refused (check_git_config).
+    None never means "nothing to check": callers on a security path fail closed on it."""
+    if args[:1] and args[0] not in _NO_CONFIG_CHECK and check_git_config(cwd):
+        return None
+    env = _child_env()
+    tree = _attr_source(cwd) if _attrs else None
+    if tree:
+        env["GIT_ATTR_SOURCE"] = tree
     try:
-        out = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired):
+        out = subprocess.run(_git_argv(args), cwd=cwd, env=env, capture_output=True, text=text, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if raise_timeout:
+            raise
+        return None
+    except OSError:
         return None
     if out.returncode != 0:
         return None
     return out.stdout
+
+
+def git(args, cwd, timeout=10):
+    return run_git(args, cwd, timeout=timeout)
+
+
+_CONFIG_REFUSAL = {}
+
+
+def check_git_config(cwd, policy=None):
+    """ADR-0003 §2. None if the configuration git would apply here is acceptable, otherwise
+    the reason it is refused. A key in the deny set is refused at every scope except
+    `command` (the engine's own -c), except `credential.*` at global or system scope; an
+    exact key=value from the org's git_allowed_config passes when it has no newline or CR.
+    Checked once per process; the race with a concurrent change is ADR-0003 §4."""
+    key = os.path.realpath(cwd)
+    if key in _CONFIG_REFUSAL:
+        return _CONFIG_REFUSAL[key]
+    if policy is None:
+        policy = load_policy(repo_root(cwd))
+    deny = [g.lower() for g in policy.get("deny_git_config_keys", [])]
+    allowed = {(e.partition("=")[0].lower(), e.partition("=")[2]) for e in policy.get("git_allowed_config", [])}
+    reason = None
+    out = run_git(["config", "--list", "-z", "--show-scope", "--show-origin", "--includes"], cwd, text=False)
+    if out is None:
+        reason = "git could not read its configuration here (run `git config --list` to see why)"
+    else:
+        fields = out.decode("utf-8", "replace").split("\0")
+        for i in range(0, len(fields) - 2, 3):
+            scope, origin, kv = fields[i], fields[i + 1], fields[i + 2]
+            k, _, v = kv.partition("\n")
+            kl = k.lower()
+            if scope == "command" or not any(fnmatch.fnmatch(kl, g) for g in deny):
+                continue
+            if kl.startswith("credential.") and scope in ("global", "system"):
+                continue
+            if (kl, v) in allowed and "\n" not in v and "\r" not in v:
+                continue
+            reason = (f"git config {k} ({scope}, {origin}) can make git run a command, and the gate engine runs git "
+                      f"with the signing key. A human removes it, or the organisation allow-lists the exact value in "
+                      f"the org policy's git_allowed_config")
+            break
+    _CONFIG_REFUSAL[key] = reason
+    return reason
+
+
+def run_gh(args, cwd, repo, timeout=60):
+    """Run gh against the pinned repository only (never whatever `gh repo view` resolves),
+    without GIT_* or the key. Raises RuntimeError on refusal or failure."""
+    if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+        raise RuntimeError("no pinned GitHub repository (policy approval.github_repo, or $GITHUB_REPOSITORY in CI); "
+                           "refusing to let gh pick one")
+    if args[:1] == ["api"]:
+        # gh api takes no --repo: the endpoint itself must name the pinned repository
+        path = next((a for a in args[1:] if not a.startswith("-")), "")
+        if not path.lstrip("/").startswith(f"repos/{repo}/"):
+            raise RuntimeError(f"gh api {path} is outside the pinned repository {repo}")
+        argv = list(args)
+    else:
+        argv = list(args) + ["--repo", repo]
+    exe = os.environ.get("EVIDENCE_GH", "gh")
+    r = subprocess.run([exe] + argv, cwd=cwd, env=_child_env(), capture_output=True, text=True, timeout=timeout)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or f"gh {' '.join(argv)} failed")
+    return r.stdout
+
+
+def git_marker_above(path):
+    """True if a .git entry exists at or above path: a repository, whether or not git can read it."""
+    d = os.path.realpath(path or ".")
+    while True:
+        if os.path.lexists(os.path.join(d, ".git")):
+            return True
+        parent = os.path.dirname(d)
+        if parent == d:
+            return False
+        d = parent
 
 
 def repo_root(cwd):
@@ -269,7 +402,7 @@ def _rel_parts(rel):
     return parts
 
 
-def _dir_fd(root, dirs):
+def _dir_fd(root, dirs, create=True):
     """A handle on root/dirs..., creating missing directories; refuses any symlinked component."""
     fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -277,6 +410,8 @@ def _dir_fd(root, dirs):
             try:
                 nfd = os.open(d, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             except FileNotFoundError:
+                if not create:
+                    raise
                 try:
                     os.mkdir(d, 0o755, dir_fd=fd)
                 except FileExistsError:
@@ -307,6 +442,39 @@ def write_file(root, rel, data):
         os.replace(tmp, parts[-1], src_dir_fd=dfd, dst_dir_fd=dfd)
     finally:
         os.close(dfd)
+
+
+def remove_file(root, rel):
+    """Unlink root/rel through directory handles: a symlinked component raises, and a symlink
+    at rel itself is removed, never what it points to. A directory is refused (OSError)."""
+    parts = _rel_parts(rel)
+    dfd = _dir_fd(root, parts[:-1], create=False)
+    try:
+        os.unlink(parts[-1], dir_fd=dfd)
+    finally:
+        os.close(dfd)
+
+
+def read_file_nofollow(root, rel, cap):
+    """Bytes of root/rel, read without following a link anywhere on the path. Raises OSError
+    for a link, a non-regular file or more than `cap` bytes."""
+    import stat
+    parts = _rel_parts(rel)
+    dfd = _dir_fd(root, parts[:-1], create=False)
+    try:
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0), dir_fd=dfd)
+    finally:
+        os.close(dfd)
+    with os.fdopen(fd, "rb") as f:
+        s = os.fstat(f.fileno())
+        if not stat.S_ISREG(s.st_mode):
+            raise OSError(f"{rel} is not a regular file")
+        if s.st_size > cap:
+            raise OSError(f"{rel} is larger than {cap} bytes")
+        data = f.read(cap + 1)
+    if len(data) > cap:
+        raise OSError(f"{rel} is larger than {cap} bytes")
+    return data
 
 
 def open_append(root, rel):
@@ -476,10 +644,20 @@ def record_violations(root, key, state, branch, violations, session):
 
 def _read_violations(p):
     import signing
-    if not os.path.isfile(p):
+    import stat
+    try:
+        mode = os.lstat(p).st_mode
+    except FileNotFoundError:
         return []
+    except OSError as e:
+        return [{"path": p, "rule": f"violations record unreadable ({e.strerror})", "open": True}]
+    if not stat.S_ISREG(mode):
+        # a directory, link or other non-file here must not read as "no violations" (REQ-IMH-02)
+        return [{"path": p, "rule": "violations record is not a regular file", "open": True}]
     try:
         raw = json.load(open(p))
+    except OSError as e:
+        return [{"path": p, "rule": f"violations record unreadable ({e.strerror})", "open": True}]
     except ValueError:
         return [{"path": p, "rule": "unreadable violations file", "open": True}]
     if isinstance(raw, list):  # pre-v2.0 format: trusted only when no key is deployed
@@ -608,35 +786,54 @@ def audit_verify(path, warnings=None):
     A fork -- an entry whose prev is its predecessor's prev, i.e. two entries appended from the
     same last hash by concurrent calls before appends were locked -- is not a break: both are
     hash-correct (and signed), and nothing is missing. It is reported in `warnings`. A deleted,
-    altered or reordered entry still fails, because some prev then matches neither neighbour."""
+    altered or reordered entry still fails, because some prev then matches neither neighbour.
+
+    An entry hash seen earlier in the log is a replay, and in a session log (<session>.jsonl) every
+    entry must belong to that session; the approval and clear-violations logs are shared by name
+    (REQ-IMH-11)."""
+    with open(path, encoding="utf-8") as f:
+        return audit_verify_lines(os.path.basename(path), f, warnings)
+
+
+def audit_verify_lines(name, lines, warnings=None):
+    """audit_verify over the lines of a log called `name` (a file, or a blob read from git)."""
     import signing
     problems, prev, prev_of_prev, prev_session, first_session = [], "", None, None, None
-    with open(path, encoding="utf-8") as f:
-        for n, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except ValueError:
-                problems.append(f"line {n}: not JSON")
-                prev, prev_of_prev = "", None
-                continue
-            first_session = first_session if n > 1 else e.get("session")
-            if e.get("prev", "") != prev:
-                # a fork is two different entries of this log's own session appended from one
-                # predecessor -- not a duplicate of its sibling, not another session's chain spliced in
-                if (prev_of_prev is not None and e.get("prev", "") == prev_of_prev and e.get("hash") != prev
-                        and e.get("session") == prev_session == first_session):
-                    if warnings is not None:
-                        warnings.append(f"line {n}: fork (appended concurrently with line {n - 1} from the same entry)")
-                else:
-                    problems.append(f"line {n}: chain broken (prev does not match line {n - 1})")
-            if entry_hash(e, e.get("prev", "")) != e.get("hash"):
-                problems.append(f"line {n}: content altered (hash mismatch)")
-            if signing.verify(e) is False:
-                problems.append(f"line {n}: signature missing or invalid (entry not written by the gate engine)")
-            prev, prev_of_prev, prev_session = e.get("hash", ""), e.get("prev", ""), e.get("session")
+    seen = set()
+    shared = not name.endswith(".jsonl") or name.startswith("approval-") or name == "clear-violations.jsonl"
+    stem = name[:-len(".jsonl")]
+    for n, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            problems.append(f"line {n}: not JSON")
+            prev, prev_of_prev = "", None
+            continue
+        first_session = first_session if n > 1 else e.get("session")
+        if e.get("prev", "") != prev:
+            # a fork is two different entries of this log's own session appended from one
+            # predecessor -- not a duplicate of its sibling, not another session's chain spliced in
+            if (prev_of_prev is not None and e.get("prev", "") == prev_of_prev and e.get("hash") != prev
+                    and e.get("session") == prev_session == first_session):
+                if warnings is not None:
+                    warnings.append(f"line {n}: fork (appended concurrently with line {n - 1} from the same entry)")
+            else:
+                problems.append(f"line {n}: chain broken (prev does not match line {n - 1})")
+        if entry_hash(e, e.get("prev", "")) != e.get("hash"):
+            problems.append(f"line {n}: content altered (hash mismatch)")
+        if signing.verify(e) is False:
+            problems.append(f"line {n}: signature missing or invalid (entry not written by the gate engine)")
+        if e.get("hash") in seen:
+            problems.append(f"line {n}: replayed (an earlier line has the same entry hash)")
+        seen.add(e.get("hash"))
+        if not shared:
+            own = re.sub(r"[^A-Za-z0-9_-]", "_", str(e.get("session") or "unknown"))[:80] or "unknown"
+            if own != stem:
+                problems.append(f"line {n}: entry of session {e.get('session')!r} in the log of {stem!r}")
+        prev, prev_of_prev, prev_session = e.get("hash", ""), e.get("prev", ""), e.get("session")
     return not problems, problems
 
 
@@ -709,6 +906,8 @@ def is_test_path(rel, policy):
 
 
 def file_in_commit(root, commit, rel):
+    """True if rel exists in commit. Callers deny on True, so a git failure answers True (REQ-IMH-23)."""
     if not commit:
         return False
-    return git(["cat-file", "-e", f"{commit}:{rel}"], root) is not None
+    out = git(["ls-tree", "--name-only", commit, "--", rel], root)
+    return out is None or bool(out.strip())

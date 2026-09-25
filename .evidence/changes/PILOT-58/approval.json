@@ -1,0 +1,13 @@
+{
+  "approved_at": "2026-09-24T18:05:49Z",
+  "approver": "harshil-1411",
+  "head": "3430a1ebfa07ba72b972c61103853e454332e6e4",
+  "host": "MSBINEM-PC001",
+  "key": "PILOT-58",
+  "method": "github",
+  "plan_path": "intent/2026-09-24-integrity-monitor-hardening/plan.md",
+  "plan_sha256": "5faee61a177d27b05c645960c3b39de920ea3e53b852ca1c826ac36ece4c7601",
+  "pr": "https://github.com/harshil-1411/ai-sdlc/pull/5",
+  "pr_number": 5,
+  "sig": "0fe367088dfb28dbc66379c692544e67acff21c0b41cd31840ddd098dd49a4e9"
+}

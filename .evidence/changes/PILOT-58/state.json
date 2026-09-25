@@ -1,0 +1,43 @@
+{
+  "created_at": "2026-09-24T16:18:14Z",
+  "created_by": "suparn.bector@msbdocs.com",
+  "history": [
+    {
+      "at": "2026-09-24T16:18:14Z",
+      "by": "suparn.bector@msbdocs.com",
+      "session": "1e01f04e-c965-4eb7-abf0-c379188964c9",
+      "stage": "intent",
+      "via": "hook"
+    },
+    {
+      "at": "2026-09-24T16:19:20Z",
+      "by": "suparn.bector@msbdocs.com",
+      "session": "1e01f04e-c965-4eb7-abf0-c379188964c9",
+      "stage": "spec",
+      "via": "hook"
+    },
+    {
+      "at": "2026-09-24T16:28:41Z",
+      "by": "suparn.bector@msbdocs.com",
+      "session": "1e01f04e-c965-4eb7-abf0-c379188964c9",
+      "stage": "plan",
+      "via": "hook"
+    },
+    {
+      "at": "2026-09-24T17:50:15Z",
+      "by": "suparnbector",
+      "stage": "approved",
+      "via": "github"
+    },
+    {
+      "at": "2026-09-24T18:13:20Z",
+      "by": "engine",
+      "stage": "implementing"
+    }
+  ],
+  "key": "PILOT-58",
+  "kind": "fix",
+  "sig": "b51a37ffe0b42a00c080f4784313900fccd4d640f79fa61565cb0b4ebb62e6b1",
+  "stage": "implementing",
+  "tier": 3
+}

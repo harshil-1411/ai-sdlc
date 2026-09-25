@@ -166,7 +166,16 @@ is a key the hooks can read and the agent's commands cannot:
    that defect, and a key was read through the Read tool on 2026-09-24. `sandbox.filesystem`
    paths are real absolute paths and keep one slash.
 4. Give CI the same key as a protected secret so it can sign test results
-   (`evidence results sign`) and verify approvals.
+   (`evidence results sign`), verify approvals, and run `verify-range`.
+
+**What the key does and doesn't protect (2.1.0).** The local hooks are **advisory**: the key
+lives in the hook process, which runs git in a repository the agent shapes, and ADR-0003 §4
+states the residual risk that an agent could read it. With the key, local records could be
+forged. So the merge decision doesn't rest on them. The authoritative gate is the
+`verify-range` `pull_request_target` job (ADR-0004, [gates-reference.md](gates-reference.md#where-the-authority-is-210-adr-0004)):
+it runs the base branch's workflow, reads the PR's commits with git plumbing, and requires a
+code-owner review on the PR's head commit, which no local key can forge. The existing
+`sign-and-gate` job is unchanged.
 
 With the key in place, approvals, audit entries, integrity snapshots and CI results
 are HMAC-signed, and anything unsigned or altered is rejected: a forged
@@ -240,6 +249,18 @@ recorded with a name and a date.
       force pushes. Put `.evidence/policy.json`, `.claude/`, `.github/workflows/` and
       `managed-settings.json` under CODEOWNERS. The engine stops the agent; only the
       server stops everyone else.
+- [ ] **Make `verify-range` a required status check** on `main` (2.1.0). Add
+      `.github/workflows/verify-range.yml` from the reference, give the repository the
+      `EVIDENCE_SIGNING_KEY` secret, and keep "Require review from Code Owners" on. Without
+      the required check the authoritative gate enforces nothing. Know its limits:
+      `pull_request_target` doesn't fire on reviews, so **re-run** the PR's `verify-range` job
+      after approving ("Re-run jobs"; a `workflow_dispatch` run isn't attached to the PR's head);
+      **fork PRs** and Dependabot get no secrets and fail by design; the check is matched by
+      name, so keep `.github/**` under code-owner review (and pin the workflow with a ruleset
+      where you can); admins with `enforce_admins=false` can still push directly, which the
+      `push` report records but doesn't prevent.
+- [ ] **Pin the GitHub repository** for approvals: `approval.github_repo` in policy. Since
+      2.1.0 an empty value refuses `evidence approve --github-pr` instead of asking `gh`.
 - [ ] **Pin the model.** Set `model` (and `availableModels`, if you restrict choice)
       in managed settings to the model your tool risk assessment validated. Changing it
       then becomes a change under

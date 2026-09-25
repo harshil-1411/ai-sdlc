@@ -11,7 +11,7 @@ import sys
 HERE = os.path.dirname(os.path.realpath(__file__))
 ENGINE = os.path.join(HERE, "..", "scripts", "engine")
 TRACE = os.path.join(HERE, "..", "scripts", "cli", "evidence_trace.py")
-LIFECYCLE = {"change", "approve", "audit", "metrics"}
+LIFECYCLE = {"change", "approve", "audit", "metrics", "verify-range"}
 
 sys.path.insert(0, ENGINE)
 

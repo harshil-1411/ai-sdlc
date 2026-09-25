@@ -62,6 +62,22 @@ platform remains the authoritative merge control**, configured by us, not by the
 plugin. Automated test and lint gates run in repository CI once the provided workflow
 (`.github/workflows/ci.yml`) is enabled on the host.
 
+Since 2.1.0, **change control rests on the `verify-range` check**, not on the local gates. It is
+a `pull_request_target` job that runs the base branch's copy of the workflow, so a pull request
+can't alter the check that judges it. It reads every commit with git plumbing and fails the PR
+unless:
+- each commit carries the change key and an agent-session or human-commit trailer;
+- every changed path is within the approved plan;
+- no secret or oversize file is added;
+- audit logs only grow, and change records are not rolled back;
+- a code owner approved the PR's head commit on GitHub.
+
+We make it a required status check. **Residual risk (ADR-0003 §4), stated rather than hidden:**
+the signing key is present in the local hook process, which runs git in a repository the agent
+can shape, so a determined agent could expose it and forge local records. The merge decision
+does not depend on that key: it requires the GitHub code-owner review. Key isolation is
+scheduled (PILOT-61). Admin direct pushes are reported after the fact, not prevented.
+
 **Q. How is traceability maintained?**
 Requirement IDs originate in the specification and flow to test cases and to the
 traceability matrix. Sample export available on request.

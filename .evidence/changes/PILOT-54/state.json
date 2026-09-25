@@ -19,11 +19,18 @@
       "at": "2026-09-24T14:43:59Z",
       "by": "engine",
       "stage": "implementing"
+    },
+    {
+      "at": "2026-09-24T16:01:48Z",
+      "by": "suparn.bector@msbdocs.com",
+      "stage": "released",
+      "tier": 1,
+      "via": "tty"
     }
   ],
   "key": "PILOT-54",
   "kind": "chore",
-  "sig": "fe6d5549d2f6407245a732584a18754dba61ff9071b01a3a846802e1dbe4076c",
-  "stage": "implementing",
+  "sig": "2f7a4fbc77c82b69e7f56aadd8b41adf3dee670b3bee95467b7fc7f78ef16fd8",
+  "stage": "released",
   "tier": 1
 }

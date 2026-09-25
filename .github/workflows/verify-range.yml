@@ -1,0 +1,64 @@
+# The authoritative merge gate (ADR-0004, PILOT-58). Make the `verify-range` job a required
+# status check on main. pull_request_target runs THIS FILE AS IT IS ON THE BASE BRANCH, so a PR
+# cannot change the check that judges it. It must never check out or run the PR's code: the PR's
+# objects are fetched and read with git plumbing only (evidence verify-range).
+name: verify-range
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]  # edited: a PR retargeted to another base is re-checked
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to re-check (run after approving: reviews don't trigger pull_request_target)"
+        required: true
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  verify-range:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the base only (the trusted CLI)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch the PR's commits as objects (never checked out)
+        if: github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          case "$PR" in ''|*[!0-9]*) echo "PR number is missing or not a number"; exit 1;; esac
+          HEAD_SHA="${EVENT_HEAD:-$(gh api "repos/$REPO/pulls/$PR" --jq .head.sha)}"
+          # the auth header goes through git's environment config, not the command line
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          git fetch --no-tags origin "+refs/pull/${PR}/head:refs/pull/${PR}/head"
+          unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+          test "$(git rev-parse "refs/pull/${PR}/head")" = "$HEAD_SHA"
+
+      - name: evidence verify-range
+        if: github.event_name != 'push'
+        env:
+          EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 plugins/evidence-sdlc/bin/evidence verify-range
+
+      - name: evidence verify-range --push-report (reports, never blocks)
+        if: github.event_name == 'push'
+        env:
+          EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 plugins/evidence-sdlc/bin/evidence verify-range --push-report

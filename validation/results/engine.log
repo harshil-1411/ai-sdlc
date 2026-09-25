@@ -1,2 +1,20 @@
+FAIL REQ-IMH-07 deleting an unclaimed untracked file is judged like any delete: 
+FAIL REQ-SLF-03 a new file inside an untracked directory is still judged: 
+FAIL REQ-V2A-01 round5: Tier 3 plan approved by the person who started the change is denied: expected deny (second person), got allow:  
+FAIL REQ-V2G-03 round5: .gitignore is gated (it controls what the monitor can see): expected deny, got allow:  
+FAIL REQ-V2G-02 round4: denied: busybox sh -c 'rm src/other.py': expected deny, got allow:  
+FAIL REQ-V2G-02 round4: denied: sqlite3 src/other.db 'create table t(x)': expected deny, got allow:  
+FAIL REQ-V2G-12 round4: a commit staging an unclaimed file is denied: expected deny (outside the approved plan), got allow:  
+FAIL REQ-V2G-03 re-audit: CLAUDE.md is gated despite being markdown: expected deny, got allow:  
+FAIL REQ-V2G-03 re-audit: docs/CLAUDE.md is gated despite being markdown: expected deny, got allow:  
+FAIL REQ-V2G-03 re-audit: plugins/x/templates/REVIEW.md is gated despite being markdown: expected deny, got allow:  
+FAIL REQ-V2G-02 self-review: bulk/indirect write denied: cd src && echo x > other.py: expected deny, got allow:  
+FAIL REQ-V2G-02 self-review: shell-syntax evasion denied: f(){ rm -f src/other.py; }; f: expected deny, got allow:  
+FAIL REQ-V2G-02 self-review: shell-syntax evasion denied: alias w='tee src/other.py'; echo x | w: expected deny, got allow:  
+FAIL REQ-V2G-02 self-review: shell-syntax evasion denied: vim -es -c 'wq' src/other.py: expected deny, got allow:  
+FAIL REQ-V2G-02 self-review: shell-syntax evasion denied: env -S 'rm src/other.py': expected deny, got allow:  
+FAIL REQ-V2G-02 self-review: shell-syntax evasion denied: if true; then rm src/other.py; fi: expected deny, got allow:  
+FAIL REQ-V2G-12 edit outside claims denied: expected deny (Files claimed), got allow:  
+FAIL REQ-V2X-01 repo policy cannot widen ungated or disable claims: expected deny (Files claimed), got allow:  
 
-403 passed, 0 failed
+450 passed, 18 failed
