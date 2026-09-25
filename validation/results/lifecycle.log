@@ -19,6 +19,7 @@ PASS REQ-V2A-02 audit verify detects tampering
 PASS REQ-V2C-07 metrics reports changes and stage-skip rate
 PASS REQ-V2D-09 overlapping claims reported
 PASS REQ-V2G-10 advance failing-test records fix_base
+PASS REQ-IMH-24 GitHub approval without a pinned github_repo is refused, never resolved by gh
 PASS REQ-V2A-01 GitHub approval recorded from an approving review (agent may record it)
 PASS REQ-V2A-01 GitHub approval refused when the approver is the PR author
 PASS REQ-V2A-01 github approval mode refuses the prompt channel
@@ -31,5 +32,57 @@ PASS REQ-SLF-05 `evidence change release` without the key in a signed repo refus
 PASS REQ-SLF-05 `evidence approve ABC-7` without the key in a signed repo refuses and names the key
 PASS REQ-SLF-05 a signed .evidence/changes/… violations file alone marks the repository as signed
 PASS REQ-SLF-05 a signed .evidence/violations/… violations file alone marks the repository as signed
+PASS REQ-IMH-19 passes: a clean branch
+PASS REQ-IMH-19 rule 0 fails: empty base SHA
+PASS REQ-IMH-19 rule 0 fails: non-hex head SHA
+PASS REQ-IMH-19 rule 0 fails: no signing key (verify would return None)
+PASS REQ-IMH-19 rule 0 fails: a signing key under 32 characters
+PASS REQ-IMH-19 rule 0 fails: no GitHub token
+PASS REQ-IMH-19 rule 0 fails: fetched PR head differs from the event head
+PASS REQ-IMH-19 rule 1 fails: head branch without a key
+PASS REQ-IMH-19 rule 1 fails: head branch with two keys
+PASS REQ-IMH-19 rule 1 fails: a replayed key whose change is released at the base
+PASS REQ-IMH-19 rule 1 fails: the change is released at the head
+PASS REQ-IMH-19 rule 1 fails: a commit without the change key
+PASS REQ-IMH-19 rule 1 fails: a commit with neither trailer
+PASS REQ-IMH-19 rule 1 fails: an approving review on a stale SHA
+PASS REQ-IMH-19 rule 1 fails: approval only by the PR author
+PASS REQ-IMH-19 rule 1 fails: approval by a non-owner of a changed path
+PASS REQ-IMH-19 rule 1 fails: a team code owner
+PASS REQ-IMH-19 rule 1 fails: the plan hash differs from approval.json
+PASS REQ-IMH-19 rule 2 fails: an evil merge adding an unclaimed path
+PASS REQ-IMH-19 rule 2 fails: an unclaimed A path
+PASS REQ-IMH-19 rule 2 fails: an unclaimed M path
+PASS REQ-IMH-19 rule 2 fails: an unclaimed D path
+PASS REQ-IMH-19 rule 2 fails: an unclaimed T path
+PASS REQ-IMH-19 rule 2 fails: an unclaimed R path
+PASS REQ-IMH-19 rule 3 fails: a secret added then removed
+PASS REQ-IMH-19 rule 3 fails: an oversize blob not on the allow-list
+PASS REQ-IMH-19 rule 4 fails: an audit log truncated in a later commit
+PASS REQ-IMH-19 rule 4 fails: a named session's log is omitted
+PASS REQ-IMH-19 rule 4 fails: an audit log that exists at the base is deleted
+PASS REQ-IMH-19 rule 4 fails: an audit log that exists at the base is type-changed
+PASS REQ-IMH-19 rule 5 fails: an open violation rolled back
+PASS REQ-IMH-19 rule 5 fails: a violation closed without a signed clear
+PASS REQ-IMH-19 rule 5 fails: the state stage moves backwards
+PASS REQ-IMH-19 rule 5 fails: a state record at the head with an invalid signature
+PASS REQ-IMH-19 rule 5 fails: another change's record edited other than by release or clear
+PASS REQ-IMH-19 rule 5 fails: another change's approval added in this PR
+PASS REQ-IMH-19 passes: another change's signed release and cleared violations
+PASS REQ-IMH-19 passes: a clean branch after main moved
+PASS REQ-IMH-19 passes: a clean "Update branch" merge of main
+PASS REQ-IMH-19 passes: a human commit with a Human-Commit: trailer and the key
+PASS REQ-IMH-19 passes: a workflow_dispatch re-run with the PR number
+PASS REQ-IMH-19 passes: a branch not updated after main gained another change's records and logs
+PASS REQ-IMH-19 passes: an "Update branch" merge that brings in another change's records
+PASS REQ-IMH-19 passes: a merge of a shared log both sides appended to
+PASS REQ-IMH-19 rule 4 fails: an audit log renamed away and added back truncated
+PASS REQ-IMH-19 rule 5 fails: another change's violations renamed away and added back without the open one
+PASS REQ-IMH-19 rule 5 fails: a crafted merge of an old base commit that rolls back another change's release
+PASS REQ-IMH-19 rule 2 fails: an unclaimed change to .evidence/policy.json
+PASS REQ-IMH-19 rule 0 fails: a PR that targets another branch than the default
+PASS REQ-IMH-19 rule 1 fails: an approval record copied from another change
+PASS REQ-IMH-19 push mode reports a failure and never blocks
+PASS REQ-IMH-19 push mode skips an all-zero `before` with a note
 
-33 passed, 0 failed
+86 passed, 0 failed

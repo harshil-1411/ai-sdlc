@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence lifecycle CLI" tests="33" failures="0">
+<testsuite name="evidence lifecycle CLI" tests="86" failures="0">
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 change start creates state"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 change start rejects a non-key"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2S-01 status reports missing plan"></testcase>
@@ -21,6 +21,7 @@
   <testcase classname="evidence lifecycle CLI" name="REQ-V2C-07 metrics reports changes and stage-skip rate"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2D-09 overlapping claims reported"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2G-10 advance failing-test records fix_base"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-24 GitHub approval without a pinned github_repo is refused, never resolved by gh"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 GitHub approval recorded from an approving review (agent may record it)"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 GitHub approval refused when the approver is the PR author"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-V2A-01 github approval mode refuses the prompt channel"></testcase>
@@ -33,4 +34,56 @@
   <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 `evidence approve ABC-7` without the key in a signed repo refuses and names the key"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 a signed .evidence/changes/… violations file alone marks the repository as signed"></testcase>
   <testcase classname="evidence lifecycle CLI" name="REQ-SLF-05 a signed .evidence/violations/… violations file alone marks the repository as signed"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 passes: a clean branch"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 0 fails: empty base SHA"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 0 fails: non-hex head SHA"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 0 fails: no signing key (verify would return None)"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 0 fails: a signing key under 32 characters"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 0 fails: no GitHub token"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 0 fails: fetched PR head differs from the event head"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: head branch without a key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: head branch with two keys"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: a replayed key whose change is released at the base"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: the change is released at the head"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: a commit without the change key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: a commit with neither trailer"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: an approving review on a stale SHA"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: approval only by the PR author"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: approval by a non-owner of a changed path"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: a team code owner"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: the plan hash differs from approval.json"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 2 fails: an evil merge adding an unclaimed path"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 2 fails: an unclaimed A path"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 2 fails: an unclaimed M path"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 2 fails: an unclaimed D path"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 2 fails: an unclaimed T path"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 2 fails: an unclaimed R path"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 3 fails: a secret added then removed"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 3 fails: an oversize blob not on the allow-list"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 4 fails: an audit log truncated in a later commit"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 4 fails: a named session's log is omitted"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 4 fails: an audit log that exists at the base is deleted"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 4 fails: an audit log that exists at the base is type-changed"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 5 fails: an open violation rolled back"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 5 fails: a violation closed without a signed clear"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 5 fails: the state stage moves backwards"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 5 fails: a state record at the head with an invalid signature"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 5 fails: another change's record edited other than by release or clear"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 5 fails: another change's approval added in this PR"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 passes: another change's signed release and cleared violations"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 passes: a clean branch after main moved"></testcase>
+  <testcase classname="evidence lifecycle CLI" name='REQ-IMH-19 passes: a clean "Update branch" merge of main'></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 passes: a human commit with a Human-Commit: trailer and the key"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 passes: a workflow_dispatch re-run with the PR number"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 passes: a branch not updated after main gained another change's records and logs"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 passes: an &quot;Update branch&quot; merge that brings in another change's records"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 passes: a merge of a shared log both sides appended to"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 4 fails: an audit log renamed away and added back truncated"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 5 fails: another change's violations renamed away and added back without the open one"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 5 fails: a crafted merge of an old base commit that rolls back another change's release"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 2 fails: an unclaimed change to .evidence/policy.json"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 0 fails: a PR that targets another branch than the default"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 rule 1 fails: an approval record copied from another change"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 push mode reports a failure and never blocks"></testcase>
+  <testcase classname="evidence lifecycle CLI" name="REQ-IMH-19 push mode skips an all-zero `before` with a note"></testcase>
 </testsuite>

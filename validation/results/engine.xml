@@ -1,5 +1,70 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="evidence-sdlc gate engine" tests="402" failures="0">
+<testsuite name="evidence-sdlc gate engine" tests="467" failures="18">
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-01 a symlinked control-plane directory is reported, and nothing outside the repository is removed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-01 a symlinked change directory is reported, and its target outside the repository is untouched"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-01 a symlinked audit log is reported, and its target outside the repository is untouched"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-02 a directory at a violations-record path keeps push closed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-05 a chmod of .evidence/audit during a call is a violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-05 a swapped .evidence/audit directory is a violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-06 an unwritable post-call audit entry is recorded as an audit-unwritable violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-06 the next call after an unwritable audit entry is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-07 deleting an unclaimed untracked file is judged like any delete"><failure message=""></failure></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-08 a snapshot replaced by a symlink is a violation and post completes"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 core.fsmonitor: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 diff driver command + .gitattributes: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 textconv: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 info/attributes filter: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 core.attributesFile: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 filter.lfs.clean with an embedded newline: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 config via include.path: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 config via includeIf: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 config.worktree: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 a .git file pointing at a git dir with command config: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 a submodule's filter and fsmonitor: the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 an inherited GIT_CONFIG_PARAMETERS: the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 an inherited GIT_EXTERNAL_DIFF: the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 run_git starts git with core.fsmonitor=false and core.hooksPath=/dev/null, and without the key"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 engine child processes never inherit EVIDENCE_SIGNING_KEY or GIT_* variables"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 a global credential.helper is accepted"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 a local credential.helper is refused"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-23 git failing mid-call is a violation, the control plane is still restored, and the next call is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-24 gh gets --repo, and neither the key nor GIT_* reaches it; an empty repo is refused"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 control: a plain commit of the staged index is allowed"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit -m 'ABC-1: x' -m 'Agent-Session: s1' -- src/app.p"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit --only -m 'ABC-1: x' -m 'Agent-Session: s1'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit -i -m 'ABC-1: x' -m 'Agent-Session: s1'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit -p -m 'ABC-1: x' -m 'Agent-Session: s1'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit --pathspec-from-file=list.txt -m 'ABC-1: x' -m 'A"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git add src/app.py &amp;&amp; git commit -m 'ABC-1: x' -m 'Agent-Ses"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: GIT_INDEX_FILE=/tmp/idx git commit -m 'ABC-1: x' -m 'Agent-S"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit --patc -m 'ABC-1: x' -m 'Agent-Session: s1'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit --inter -m 'ABC-1: x' -m 'Agent-Session: s1'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit --pathspec-from-f=list.txt -m 'ABC-1: x' -m 'Agen"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-10 commit bypass denied: git commit --onl -m 'ABC-1: x' -m 'Agent-Session: s1'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-11 a replayed audit entry breaks verification"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-11 an entry from another session breaks verification"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-20 a same-length rewrite of an earlier audit entry is a violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-20 an audit log replaced by another session's log is a violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-20 an audit log created during the call must verify"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 lfs.extension clean command: refused and the marker never runs"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-09 the exact allow-listed git-lfs filter values pass"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-20 an oversize audit log denies the call without reading it"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-23 a removed snapshot with git broken is recorded as integrity-snapshot-missing"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-01 a pre-existing symlinked control-plane directory is reported"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-01 a permission grant added to settings.local.json during a call is kept and logged, not a violation"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-01 any other change to settings.local.json (a deny rule removed) is still restored and recorded"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-01 an allow-only change re-encoded with a BOM is not taken as a permission grant"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-23 file_in_commit: present, absent, and git failure treated as present"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-21 workflow dispatch from another ref denied: gh workflow run verify-range.yml --ref feature/ABC"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-21 workflow dispatch from another ref denied: gh workflow run ci.yml -r feature/x"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-21 workflow dispatch from another ref denied: gh workflow run verify-range.yml -rfeature/x -f pr"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-21 workflow dispatch from another ref denied: gh workflow run ci.yml -r=feature/x"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-21 workflow dispatch from another ref denied: gh api -X POST repos/o/r/actions/workflows/verify-"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-21 control: a dispatch of the default branch's workflow is not denied by that rule"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-09 an integrity check that raises is recorded as integrity-check-error"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-22 release verify runs (valid approval allowed)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-22 the release-verify command's environment has no signing key and no GIT_*"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-IMH-22 engine subprocesses start only from the allow-listed helpers (exact match)"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-07 20 concurrent audit appends on a fresh repository keep one unbroken chain: every entry, no fork, no false tamper recovery"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 a concurrent sibling fork verifies, reported as a named warning"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-08 a deleted entry still fails verification"></testcase>
@@ -54,16 +119,16 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: the hook will not start or sign a change in another repository"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-04 security: advance refuses to re-sign unsigned (agent-written) state"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-03 unstaging a file (staged -&gt; untracked directory) is not reported as a write"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-03 a new file inside an untracked directory is still judged"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-03 a new file inside an untracked directory is still judged"><failure message=""></failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 commit allowed when the audit log only gained the `git add` call's entry since staging"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 commit denied when the staged audit log is not a prefix (altered)"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 commit denied when the audit log is more than two entries ahead of the index"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 state.json changed after staging still denies"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-SLF-02 commit denied when the audit log was never staged"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: by default an unsigned session cannot work on a Tier 2 change"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: Tier 3 plan approved by the person who started the change is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: Tier 3 plan approved by the person who started the change is denied"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 round5: Tier 3 plan approved by a second person is allowed"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 round5: .gitignore is gated (it controls what the monitor can see)"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 round5: .gitignore is gated (it controls what the monitor can see)"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round5: integrity monitor records an index flag hiding edits"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round5: integrity monitor records a new git hook"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round5: integrity monitor records git exclude rules"></testcase>
@@ -86,8 +151,8 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: export JUNIT_OUT=validation/results/x.xml; pytes"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: pytest --junitxml=validation/results/x.xml"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: ditto /tmp/evil src/other"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: busybox sh -c 'rm src/other.py'"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: sqlite3 src/other.db 'create table t(x)'"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: busybox sh -c 'rm src/other.py'"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: sqlite3 src/other.db 'create table t(x)'"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: osascript -e 'do shell script &quot;id&quot;'"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: make -f /tmp/Makefile"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: denied: git remote set-url origin https://github.com/evi"></testcase>
@@ -107,7 +172,7 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-01 round4: ordinary Read allowed"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-02 round4: plan tier line missing is denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-02 round4: plan tier line twice is denied"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 round4: a commit staging an unclaimed file is denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 round4: a commit staging an unclaimed file is denied"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-02 round4: a later commit with the audit log modified but unstaged is denied"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 round4: a replayed integrity snapshot is recorded as a violation"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 round4: the plugin's own CLI is recognised wherever the plugin is installed; an agent's `--quick` is refused with guidance (PILOT-57: the hook writes only state.json)"></testcase>
@@ -132,9 +197,9 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: reading crontab allowed"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2K-03 re-audit: read-only agent has no network"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 re-audit: macOS sed -i '' on a claimed file allowed"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: CLAUDE.md is gated despite being markdown"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: docs/CLAUDE.md is gated despite being markdown"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: plugins/x/templates/REVIEW.md is gated despite being markdown"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: CLAUDE.md is gated despite being markdown"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: docs/CLAUDE.md is gated despite being markdown"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-03 re-audit: plugins/x/templates/REVIEW.md is gated despite being markdown"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 re-audit: .claude/commands/deploy.md is control plane"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-09 re-audit: .claude/skills/x/SKILL.md is control plane"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2S-01 re-audit: a released change no longer unlocks edits"></testcase>
@@ -166,7 +231,7 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm tests/*.py"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm tests/test_{app,other}.py"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: cd tests &amp;&amp; rm test_app.py"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: cd src &amp;&amp; echo x &gt; other.py"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: cd src &amp;&amp; echo x &gt; other.py"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm -rf .evidence/audit"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm -rf .evidence"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: bulk/indirect write denied: rm -rf ."></testcase>
@@ -195,16 +260,16 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: gh api graphql -f query='mutation { mergePull"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: curl -X PUT -H 'Authorization: token x' https"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 REQ-V2G-05 self-review: agent approval/merge via API denied: curl --json '{}' https://gitlab.example.com/a"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: f(){ rm -f src/other.py; }; f"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: alias w='tee src/other.py'; echo x | w"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: f(){ rm -f src/other.py; }; f"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: alias w='tee src/other.py'; echo x | w"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: awk 'BEGIN{system(&quot;touch x&quot;)}'"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: awk '{print &gt; &quot;src/other.py&quot;}' src/app.py"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: git config --file .git/config alias.x '!id'"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: ln -s ../.evidence/changes/ABC-1/approval.jso"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: IFS=,; cmd=rm,src/other.py; $cmd"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: vim -es -c 'wq' src/other.py"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: env -S 'rm src/other.py'"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: if true; then rm src/other.py; fi"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: vim -es -c 'wq' src/other.py"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: env -S 'rm src/other.py'"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-02 self-review: shell-syntax evasion denied: if true; then rm src/other.py; fi"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name='REQ-V2G-02 self-review: shell-syntax evasion denied: while read f; do rm "$f"; done &lt; list.txt'></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 self-review: nested Claude Code session denied: claude -p '/evidence-sdlc:approve ABC-1 abcde"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 self-review: nested Claude Code session denied: npx @anthropic-ai/claude-code -p 'evidence ap"></testcase>
@@ -291,7 +356,7 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-04 key but no change state denies"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 unapproved plan denies"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-04 approved plan allows claimed path"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 edit outside claims denied"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 edit outside claims denied"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-12 claimed glob allows new test file"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2A-01 plan edited after approval voids approval"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-04 stub plan denied even if approval hash matches"></testcase>
@@ -392,7 +457,7 @@
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 non-deploy allowed: echo 'deploy to prod on friday'"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 malformed release approval rejected"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2G-06 valid release approval allows"></testcase>
-  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy cannot widen ungated or disable claims"></testcase>
+  <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy cannot widen ungated or disable claims"><failure message="expected deny, got allow: ">expected deny, got allow: </failure></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy can add protected refs"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy cannot turn off the agent trailer"></testcase>
   <testcase classname="evidence-sdlc gate engine" name="REQ-V2X-01 repo policy cannot loosen the release approval pattern"></testcase>
