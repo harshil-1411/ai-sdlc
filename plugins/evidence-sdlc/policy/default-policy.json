@@ -262,7 +262,10 @@
     "interactive.diffFilter",
     "pager.*",
     "url.*.insteadOf",
-    "submodule.*.update"
+    "submodule.*.update",
+    "lfs.extension.*",
+    "lfs.customtransfer.*",
+    "lfs.standalonetransferagent"
   ],
   "git_allowed_config": [
     "filter.lfs.clean=git-lfs clean -- %f",

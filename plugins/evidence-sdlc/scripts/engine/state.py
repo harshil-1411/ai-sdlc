@@ -169,6 +169,18 @@ def run_gh(args, cwd, repo, timeout=60):
     return r.stdout
 
 
+def git_marker_above(path):
+    """True if a .git entry exists at or above path: a repository, whether or not git can read it."""
+    d = os.path.realpath(path or ".")
+    while True:
+        if os.path.lexists(os.path.join(d, ".git")):
+            return True
+        parent = os.path.dirname(d)
+        if parent == d:
+            return False
+        d = parent
+
+
 def repo_root(cwd):
     out = git(["rev-parse", "--show-toplevel"], cwd)
     if out:
@@ -875,6 +887,8 @@ def is_test_path(rel, policy):
 
 
 def file_in_commit(root, commit, rel):
+    """True if rel exists in commit. Callers deny on True, so a git failure answers True (REQ-IMH-23)."""
     if not commit:
         return False
-    return git(["cat-file", "-e", f"{commit}:{rel}"], root) is not None
+    out = git(["ls-tree", "--name-only", commit, "--", rel], root)
+    return out is None or bool(out.strip())

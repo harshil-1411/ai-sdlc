@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "path": ".claude/settings.local.json",
+      "rule": "control-plane",
+      "action": "restored",
+      "at": "2026-09-25T02:09:25Z",
+      "session": "7ef91d89-f94a-4070-9b35-c3aae1b4f254",
+      "open": false,
+      "cleared_by": "suparn.bector@msbdocs.com",
+      "cleared_at": "2026-09-25T02:27:55Z"
+    }
+  ],
+  "sig": "795aa34896361ad0a94e3cb4239b7c365654149feec0cc0aacf6981f880137be"
+}

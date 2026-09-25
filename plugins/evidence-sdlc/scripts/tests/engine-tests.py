@@ -1755,6 +1755,67 @@ def suite_pilot58():
     check("REQ-IMH-20 an audit log created during the call must verify", "s9.jsonl" in note, note)
     shutil.rmtree(r)
 
+    # Checkpoint security review (step 5) fixes
+    # A3: git-lfs extension commands are refused; the exact allow-listed lfs filter alone passes
+    git_cfg_case("lfs.extension clean command", lambda r, s: cfg(r, ("lfs.extension.x.clean", s)))
+    r = committed_repo()
+    for k, v in (("filter.lfs.clean", "git-lfs clean -- %f"), ("filter.lfs.smudge", "git-lfs smudge -- %f"),
+                 ("filter.lfs.process", "git-lfs filter-process"), ("filter.lfs.required", "true")):
+        sh(f"git config {k} '{v}'", r)
+    got, reason = decision(run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "ls"},
+                                        "tool_use_id": "p58-lfs", "permission_mode": "default"})[0])
+    check("REQ-IMH-09 the exact allow-listed git-lfs filter values pass", got == "allow", reason)
+    shutil.rmtree(r)
+
+    # A1: an audit log too large to hash in time is refused by lstat alone, quickly
+    r = committed_repo()
+    import time
+    os.makedirs(os.path.join(r, ".evidence", "audit"), exist_ok=True)
+    with open(os.path.join(r, ".evidence", "audit", "z.jsonl"), "wb") as f:
+        f.truncate(1 << 36)  # sparse: instant to make, 64 GiB to read
+    t0 = time.time()
+    got, reason = decision(run_hook(r, {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "ls"},
+                                        "tool_use_id": "p58-big", "permission_mode": "default"})[0])
+    check("REQ-IMH-20 an oversize audit log denies the call without reading it",
+          got == "deny" and "larger than" in reason and time.time() - t0 < 15, (got, reason[:200], time.time() - t0))
+    shutil.rmtree(r)
+
+    # A2: a deleted snapshot plus broken git is still a violation, not "no repository"
+    r = committed_repo()
+    tid = "p58-a2-" + uuid.uuid4().hex[:6]
+    p = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"}, "tool_use_id": tid,
+         "permission_mode": "default"}
+    run_hook(r, p, env_extra=KEY)
+    cfgp = os.path.join(r, ".git", "config")
+    good_cfg = open(cfgp).read()
+    open(cfgp, "a").write("[\n")
+    if os.path.lexists(integrity._snap_path("s1", tid)):
+        os.remove(integrity._snap_path("s1", tid))
+    obj, _ = run_hook(r, dict(p, hook_event_name="PostToolUse"), event="post", env_extra=KEY)
+    note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+    check("REQ-IMH-23 a removed snapshot with git broken is recorded as integrity-snapshot-missing",
+          "snapshot" in note and "missing" in note, note)
+    open(cfgp, "w").write(good_cfg)
+    shutil.rmtree(r)
+
+    # A5: a control-plane directory that was already a symlink is reported, not silently skipped
+    r = committed_repo()
+    os.makedirs(os.path.join(r, "skills-src"))
+    os.makedirs(os.path.join(r, ".claude"), exist_ok=True)
+    os.symlink(os.path.join(r, "skills-src"), os.path.join(r, ".claude", "skills"))
+    _, note = around(r, lambda: open(os.path.join(r, "skills-src", "x.md"), "w").write("x\n"), env=KEY)
+    check("REQ-IMH-01 a pre-existing symlinked control-plane directory is reported", ".claude/skills" in note, note)
+    shutil.rmtree(r)
+
+    # nit 1: file_in_commit answers "present" (callers deny) when git cannot answer
+    r = committed_repo()
+    nogit = os.path.realpath(tempfile.mkdtemp(prefix="evidence-nogit-"))
+    check("REQ-IMH-23 file_in_commit: present, absent, and git failure treated as present",
+          st.file_in_commit(r, "HEAD", "src/app.py") and not st.file_in_commit(r, "HEAD", "src/nope.py")
+          and st.file_in_commit(nogit, "HEAD", "src/app.py"))
+    shutil.rmtree(nogit)
+    shutil.rmtree(r)
+
     # REQ-IMH-22: every engine subprocess call site is on the allow-list
     import ast
     eng = os.path.join(HERE, "..", "engine")

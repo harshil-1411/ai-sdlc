@@ -166,17 +166,6 @@ def lifecycle_decision(ctx):
     return ep.deny("lifecycle-refused", f"The gate engine ran `{shown}` and it refused:\n{text}")
 
 
-def _git_marker_above(path):
-    d = os.path.realpath(path or ".")
-    while True:
-        if os.path.lexists(os.path.join(d, ".git")):
-            return True
-        parent = os.path.dirname(d)
-        if parent == d:
-            return False
-        d = parent
-
-
 def run_pre(payload):
     ctx = ep.Ctx(payload)
     try:
@@ -185,13 +174,21 @@ def run_pre(payload):
         return pre_response(ep.deny("audit-unwritable",
                                     f"This session's audit log cannot be written ({e}), so nothing it does could be "
                                     "recorded. A human restores write access to .evidence/audit/."))
+    import integrity
+    big = integrity.oversize_audit_logs(ctx.root)
+    if big:
+        decision = ep.deny("audit-oversize",
+                           f"Audit log {', '.join(big[:3])} is larger than the {integrity.AUDIT_LOG_CAP >> 20} MiB the gates "
+                           "can check in time, so nothing could be checked. A human inspects .evidence/audit/.")
+        _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
+        return pre_response(decision)
     refused = st.check_git_config(ctx.root, ctx.policy)
     if refused:
         # The engine runs git here holding the signing key; with this config, git would run a command (ADR-0003 §2).
         decision = ep.deny("git-config-refused", refused + ".")
         _audit(ctx, {"event": "deny", "rule": decision.rule, "reason": decision.reason[:500]})
         return pre_response(decision)
-    if _git_marker_above(ctx.cwd) and st.run_git(["rev-parse", "--git-dir"], ctx.cwd) is None:
+    if st.git_marker_above(ctx.cwd) and st.run_git(["rev-parse", "--git-dir"], ctx.cwd) is None:
         # a repository git cannot read is not "no repository": nothing could be checked (REQ-IMH-23)
         decision = ep.deny("git-unavailable", "This directory is inside a git repository that git cannot read, so the "
                                               "gates cannot check anything here. A human repairs the repository.")
@@ -354,6 +351,26 @@ def run_prompt(payload):
     return None
 
 
+HOOK_BUDGET_SECONDS = 25  # hooks.json allows 30: answer (fail closed) before Claude Code gives up on the hook
+
+
+class HookTimeout(BaseException):
+    """Not an Exception (nor an OSError), so no `except OSError/Exception` in the engine swallows it."""
+
+
+def _watchdog(seconds):
+    """Raise HookTimeout in this process after `seconds`, so a check the agent made slow ends in
+    the fail-closed error path instead of a killed hook whose decision never arrives."""
+    import signal
+    if not hasattr(signal, "SIGALRM"):
+        return
+
+    def fire(signum, frame):
+        raise HookTimeout(f"the gate engine did not finish within {seconds} s")
+    signal.signal(signal.SIGALRM, fire)
+    signal.alarm(seconds)
+
+
 def main():
     event = sys.argv[1] if len(sys.argv) > 1 else "pre"
     raw = sys.stdin.read()
@@ -366,6 +383,8 @@ def main():
             emit(pre_response(ep.deny("malformed", f"Gate engine could not read the hook input ({e}); failing closed.")))
         return 0
     try:
+        if event in ("pre", "post"):
+            _watchdog(HOOK_BUDGET_SECONDS)
         if event == "pre":
             emit(run_pre(payload))
         elif event == "post":
@@ -382,7 +401,7 @@ def main():
             out = run_prompt(payload)
             if out:
                 emit(out)
-    except Exception as e:  # fail closed on PreToolUse only
+    except (Exception, HookTimeout) as e:  # fail closed on PreToolUse only
         traceback.print_exc(file=sys.stderr)
         if event == "pre":
             emit(pre_response(ep.deny("engine-error",

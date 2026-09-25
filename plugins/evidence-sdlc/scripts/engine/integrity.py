@@ -28,6 +28,26 @@ import state as st
 
 MAX_HASH_BYTES = 8 * 1024 * 1024
 MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024
+# Audit logs are hashed on every Bash call. Past this size a log is not read at all: the
+# monitor could not finish inside the hook's time limit, so the log is refused instead.
+AUDIT_LOG_CAP = 64 * 1024 * 1024
+
+
+def oversize_audit_logs(root):
+    """Audit log names over AUDIT_LOG_CAP, by lstat only (a sparse file costs nothing to make)."""
+    d = st.audit_dir(root)
+    out = []
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return out
+    for n in sorted(names):
+        try:
+            if os.lstat(os.path.join(d, n)).st_size > AUDIT_LOG_CAP:
+                out.append(n)
+        except OSError:
+            pass
+    return out
 
 
 def _snap_rel(session, tool_use_id):
@@ -316,6 +336,8 @@ def _prefix_hash(root, rel, size):
             want = s.st_size if size is None else size
             if s.st_size < want:
                 return None
+            if want > AUDIT_LOG_CAP:
+                return ["oversize", want]
             h, left = hashlib.sha256(), want
             while left > 0:
                 chunk = f.read(min(1 << 20, left))
@@ -336,7 +358,7 @@ def check(ctx, judge):
     tmp, srel = tempfile.gettempdir(), _snap_rel(ctx.session, ctx.payload.get("tool_use_id"))
     git_ok = _is_git(root)
     if not os.path.lexists(os.path.join(tmp, srel)):
-        if not git_ok:
+        if not git_ok and not st.git_marker_above(root):
             return [], [], []  # no repository before the call (pre snapshots every call in one), none now
         # pre always snapshots an allowed Bash call in a git repo; a missing snapshot means
         # something removed it, so what the command did cannot be checked.
@@ -385,8 +407,19 @@ def check(ctx, judge):
     signed = signing.enabled()
     files_now, odd_now = _control_plane_entries(root, pol)
     # 1a. links and non-files at control-plane paths: reported; a new link is removed itself,
-    # never anything it points to
-    for rel in sorted(set(odd_now) - set(snap.get("odd") or [])):
+    # never anything it points to. One that was already there (a symlinked .claude/skills, say)
+    # is not walked, so it is reported too, unless it is already an open violation.
+    odd_before = set(snap.get("odd") or [])
+    try:
+        open_paths = {v.get("path") for v in st.open_violations(root, ctx.change()[0], ctx.branch)}
+    except Exception:
+        open_paths = set()
+    for rel in sorted(odd_before & set(odd_now) - open_paths):
+        notes.append(f"{rel} (control plane) is a symlink or not a regular file, so the monitor cannot check what is "
+                     "behind it. A human replaces it with a real file or directory.")
+        violations.append({"path": rel, "rule": "control-plane-symlink" if os.path.islink(os.path.join(root, rel))
+                           else "control-plane-not-a-file", "action": "recorded"})
+    for rel in sorted(set(odd_now) - odd_before):
         full = os.path.join(root, rel)
         is_link = os.path.islink(full)
         removed = False
@@ -451,6 +484,8 @@ def check(ctx, judge):
         rel = f".evidence/audit/{name}"
         if isinstance(was, int):  # a snapshot from before 2.1.0: size only
             ok = _prefix_hash(root, rel, was) is not None
+        elif was[0] == "oversize":
+            ok = False  # never read, so never checked: refused rather than trusted
         else:
             ok = _prefix_hash(root, rel, was[0]) == was
         if not ok:
@@ -463,11 +498,12 @@ def check(ctx, judge):
         created = []
     for name in created:
         rel = f".evidence/audit/{name}"
-        if not name.endswith(".jsonl") or _prefix_hash(root, rel, None) is None:
+        whole = _prefix_hash(root, rel, None)
+        if not name.endswith(".jsonl") or whole is None:
             continue  # links and non-files are reported with the control plane above
         try:
-            good = st.audit_verify(os.path.join(root, rel), [])[0]
-        except (OSError, ValueError) as e:
+            good = whole[0] != "oversize" and st.audit_verify(os.path.join(root, rel), [])[0]
+        except (OSError, ValueError):
             good = False
         if not good:
             notes.append(f"audit log {name} was created by that command and does not verify.")
