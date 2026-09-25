@@ -308,10 +308,15 @@ are not the agent's doing or that it has already undone.
   "Any source", another app, a missing check, `gh` failing or timing out, non-JSON output or an
   empty `github_repo` all mean not confirmed, and the denial names which. The gate also requires:
   the repository's `origin` remote is `approval.github_repo` on github.com (https or ssh, `.git`
-  and case ignored); `gh` is the org policy's `ci_gate_gh_path` or the first `gh` on PATH that the
+  and case ignored), read from the repository's own config only: exactly one local
+  `remote.origin.url`, `remote.origin.pushurl` absent or equal to it, no `remote.origin.url` or
+  `pushurl` at global or system scope, and no `url.*.insteadOf` / `pushInsteadOf` rewrite (setting
+  any of these keys with `git config` or `git -c`, at any scope, is denied as `remote-change`); `gh` is the org policy's `ci_gate_gh_path` or the first `gh` on PATH that the
   session's user could not have written (neither it nor its directory writable by the user), and
-  runs with `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*` overrides; the gh configuration
-  sets no `http_unix_socket` and `hosts.yml` names no host but github.com. With
+  runs with `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*` overrides; `config.yml` and
+  `hosts.yml` do not mention `http_unix_socket` anywhere (any spelling, even in a comment),
+  `hosts.yml` names no host but github.com, both are readable, and the gh configuration directory
+  is not a symlink leading outside `$HOME`. With
   `ci_gate_require_enforce_admins`, a check required only by a ruleset does not confirm, because
   the rules endpoint does not show a ruleset's bypass actors. The result is cached in
   a signed file in the temp directory (900 s for a confirmation, 60 s for a failure); an

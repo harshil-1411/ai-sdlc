@@ -276,10 +276,9 @@ def _ci_gate_cache_rel(root):
     return "evidence-chain-ci-gate/" + hashlib.sha256(root.encode()).hexdigest()[:16] + ".json"
 
 
-def _origin_repo(root):
-    """owner/name (lower case) of the repository's `origin` remote when it is on github.com, over
-    https, ssh or scp-style ssh, with or without `.git`; None for no remote or anything else (H1)."""
-    url = (st.run_git(["remote", "get-url", "origin"], root) or "").strip()
+def _github_slug(url):
+    """owner/name (lower case) for a github.com URL over https, ssh or scp-style ssh, with or
+    without `.git`; None for anything else."""
     m = (re.fullmatch(r"(?i)https://(?:[^@/\s]+@)?github\.com(?::443)?/([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url)
          or re.fullmatch(r"(?i)ssh://(?:git@)?github\.com(?::22)?/([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url)
          or re.fullmatch(r"(?i)(?:git@)?github\.com:([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url))
@@ -288,27 +287,57 @@ def _origin_repo(root):
     return f"{m.group(1)}/{m.group(2)}".lower()
 
 
+def _scoped(root, key):
+    """[(scope, value)] for every setting of `key`, with its scope; [] when there is none."""
+    out = st.run_git(["config", "--show-scope", "--get-all", key], root) or ""
+    return [tuple(l.split("\t", 1)) for l in out.splitlines() if "\t" in l]
+
+
+def _origin_repo(root):
+    """owner/name of the repository's `origin` remote, read from the repository's own config only
+    (H1, re-review H-A): exactly one local remote.origin.url on github.com; remote.origin.pushurl
+    absent or equal to it; no remote.origin.url/pushurl at another scope (global, system,
+    worktree, command) and no url.*.insteadOf / pushInsteadOf rewrite anywhere. None otherwise."""
+    urls, pushes = _scoped(root, "remote.origin.url"), _scoped(root, "remote.origin.pushurl")
+    if any(sc != "local" for sc, _ in urls + pushes) or len(urls) != 1:
+        return None
+    if any(v != urls[0][1] for _, v in pushes):
+        return None
+    rewrites = st.run_git(["config", "--get-regexp", r"^url\..*\.(insteadof|pushinsteadof)$"], root)
+    if rewrites:
+        return None
+    return _github_slug(urls[0][1].strip())
+
+
 def _gh_config_problem():
-    """Why the gh configuration cannot be trusted for gate detection, or None (H2): an
-    http_unix_socket redirects every API call, and a host other than github.com in hosts.yml means
-    gh may authenticate somewhere else."""
-    base = os.environ.get("GH_CONFIG_DIR") or os.path.join(
-        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "gh")
+    """Why the gh configuration cannot be trusted for gate detection, or None (H2, re-review H-B).
+    Deliberately crude, so that no YAML spelling gets past it: any mention of http_unix_socket in
+    config.yml or hosts.yml (quoted, flow style, even a comment) refuses, as does any host-like
+    name in hosts.yml other than github.com, any read error, and a config directory (or
+    GH_CONFIG_DIR / XDG_CONFIG_HOME) that is a symlink leading outside $HOME."""
+    home = os.path.realpath(os.path.expanduser("~"))
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = os.environ.get("GH_CONFIG_DIR") or os.path.join(xdg or os.path.expanduser("~/.config"), "gh")
+    for d in filter(None, (os.environ.get("GH_CONFIG_DIR"), xdg, base)):
+        if os.path.islink(d) or os.path.realpath(d) != os.path.abspath(d):
+            real = os.path.realpath(d)
+            if real != home and not real.startswith(home + os.sep):
+                return f"the gh configuration directory {d} is a symlink leading outside the home directory"
     for name in ("config.yml", "hosts.yml"):
         p = os.path.join(base, name)
         try:
-            text = open(p, encoding="utf-8", errors="replace").read(1 << 20)
+            text = open(p, "rb").read(1 << 20).decode("utf-8", "replace")
         except FileNotFoundError:
             continue
         except OSError as e:
             return f"the gh configuration {p} could not be read ({e.strerror})"
-        if re.search(r"(?m)^\s*http_unix_socket\s*:\s*\S", text):
-            return f"the gh configuration {p} sets http_unix_socket, which could redirect the GitHub API"
+        if "http_unix_socket" in text.lower():
+            return f"the gh configuration {p} mentions http_unix_socket, which could redirect the GitHub API"
         if name == "hosts.yml":
-            hosts = re.findall(r"(?m)^([^\s#][^:]*):", text)
-            other = [h for h in hosts if h.strip().strip("'\"").lower() != "github.com"]
+            names = {h.lower() for h in re.findall(r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}", text)}
+            other = sorted(h for h in names if h != "github.com")
             if other:
-                return f"the gh configuration {p} lists a host other than github.com ({other[0][:60]})"
+                return f"the gh configuration {p} names a host other than github.com ({other[0][:60]})"
     return None
 
 
@@ -549,10 +578,16 @@ def _review_gate(ctx, action):
     return None
 
 
+_REMOTE_CONFIG_KEYS = ("remote.*.url", "remote.*.pushurl", "url.*.insteadof", "url.*.pushinsteadof")
+
+
 def _check_git(ctx, s, bodies=()):
     pol = ctx.policy
     gopts, sub, sargs = cmdparse.git_split(s.argv)
     for opt, val in gopts:
+        if opt == "-c" and val and any(fnmatch.fnmatch(val.split("=", 1)[0].lower(), g) for g in _REMOTE_CONFIG_KEYS):
+            return deny("remote-change", "`git -c` on a remote URL or URL rewrite repoints where git talks to; "
+                                         "a human changes remotes.")
         if opt == "-c" and val:
             k = val.split("=", 1)[0]
             if any(fnmatch.fnmatch(k.lower(), g.lower()) for g in pol.get("deny_git_config_keys", [])):
@@ -583,6 +618,13 @@ def _check_git(ctx, s, bodies=()):
             if not a.startswith("-"):
                 setting.append(a)
         readonly = any(a in sargs for a in ("--get", "--get-all", "--list", "-l", "--get-regexp", "--show-origin"))
+        named = setting[1:] if setting[:1] in (["set"], ["unset"], ["get"]) and len(setting) > 1 else setting
+        if named and not readonly and setting[:1] != ["get"] and any(
+                fnmatch.fnmatch(named[0].lower(), g) for g in _REMOTE_CONFIG_KEYS):
+            # re-review H-A: where origin points decides which server gate governs this repository
+            return deny("remote-change",
+                        f"Setting git config '{named[0]}' repoints a remote (or rewrites where git pushes), at any scope; "
+                        "the server gate the engine reads depends on it. A human changes remotes.")
         if setting and not readonly and len(setting) >= 2:
             k = setting[0]
             if any(fnmatch.fnmatch(k.lower(), g.lower()) for g in pol.get("deny_git_config_keys", [])):
@@ -787,10 +829,30 @@ _DISPATCH_DENIED = ("Dispatching a workflow from another ref is a human action: 
                     "re-check a pull request, a human re-runs its `verify-range` job from the PR's checks.")
 
 
+_GH_VALUE_FLAGS = {"-R", "--repo", "-H", "--header", "-F", "-f", "--field", "--raw-field", "--input", "-X", "--method",
+                   "--jq", "-q", "-t", "--template"}
+
+
+def _gh_words(args):
+    """gh's positional words: flags dropped, and the value of a value-taking flag dropped with it
+    (so `gh run -R o/r rerun 42` reads as run rerun 42)."""
+    words, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a in _GH_VALUE_FLAGS:
+            skip = True
+            continue
+        if not a.startswith("-"):
+            words.append(a)
+    return words
+
+
 def _check_gh(ctx, s):
     pol = ctx.policy
     args = s.argv[1:]
-    words = [a for a in args if not a.startswith("-")]
+    words = _gh_words(args)
     if words[:2] == ["pr", "merge"]:
         if pol.get("deny_agent_merge", True) or "--admin" in args:
             return deny("agent-merge",
@@ -831,8 +893,8 @@ def _check_gh(ctx, s):
                         "Creating or updating a commit status or check run (or re-running a workflow) from an agent "
                         "session is not allowed: a required check matched by name could be satisfied that way. CI posts "
                         "checks; reading them is fine.")
-        if "graphql" in words and any(a == "--input" or a.startswith("--input=") or re.search(r"(?:^|=)query=@", a)
-                                      or (a.startswith("query=@")) for a in args):
+        if "graphql" in words and any(a == "--input" or a.startswith("--input=")
+                                      or re.search(r"^(?:-[Ff]|--field=|--raw-field=)?query=@", a) for a in args):
             return deny("check-forgery", "`gh api graphql` with the query read from a file or --input hides what it does "
                                          "(it could create a check run); pass the query inline.")
         if method in ("PUT", "POST", "PATCH", "DELETE") and re.search(r"/merge\b|/protection\b|/rulesets\b|/branches/[^/]+/rename|/git/refs", endpoint):

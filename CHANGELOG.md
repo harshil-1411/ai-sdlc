@@ -70,6 +70,20 @@ edit in `auto` mode is allowed without it (MAN-LLA-01).
   agent's branch or a `pull_request` workflow also produces such a check run); the real control is
   code-owner review plus the `verify-range.yml` hardening proposed in `HANDOFF.md`.
 
+### Re-review fixes
+- `origin` for the gate comes from the repository's local config only; a global or system
+  `remote.origin.url`/`pushurl`, a differing `pushurl` or any `url.*.insteadOf`/`pushInsteadOf`
+  rewrite refuses the gate, and setting those keys (`git config` at any scope, `git -c`) is denied.
+  `url.*.pushInsteadOf` joins `deny_git_config_keys`. `remote.*.url` is not added to that list:
+  it refuses every call wherever it is set, so it would refuse every repository with a remote.
+- The gh configuration check refuses any mention of `http_unix_socket` (quoted, flow style,
+  comments), any non-github.com host name in `hosts.yml`, any read error, and a configuration
+  directory symlinked outside `$HOME`.
+- `check-forgery` and the dispatch rule read gh's words with value-taking flags (`-R`, `-H`, `-F`,
+  `-X`, `--jq`, …) and their values removed, so `gh run -R o/r rerun` and `gh workflow -R o/r run
+  --ref x` are caught; `-Fquery=@file` is caught.
+- Not done: the not-user-writable check on `ci_gate_gh_path` (see HANDOFF).
+
 ### Known issues and verification
 - **[NEEDS VERIFICATION]** The gate-detection fixtures (`plugins/evidence-sdlc/scripts/tests/fixtures/pilot62/`)
   were **built from GitHub's documented response shapes, not captured**: `gh api` failed in the

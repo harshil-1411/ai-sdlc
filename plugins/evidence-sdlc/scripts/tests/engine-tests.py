@@ -2567,6 +2567,81 @@ def suite_pilot62():
               res[0] is False and gh_calls(os.path.join(root, "ghd")) == [], (res, gh_calls(os.path.join(root, "ghd"))))
         shutil.rmtree(root)
 
+    # re-review H-A: origin is read from the repository's own config; global spoofs and push rewrites refuse
+    home_a = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-home-a-"))
+    open(os.path.join(home_a, ".gitconfig"), "w").write('[remote "origin"]\n\turl = https://github.com/o/r.git\n')
+    for label, origin, extra_cfg, env in (
+            ("a global remote.origin.url spoof (no local remote)", None, None, {"HOME": home_a}),
+            ("a global remote.origin.url alongside a matching local one", "https://github.com/o/r.git", None,
+             {"HOME": home_a}),
+            ("a remote.origin.pushurl that differs from the url", "https://github.com/o/r.git",
+             "remote.origin.pushurl https://github.com/evil/x.git", None),
+            ("a url.*.pushInsteadOf rewrite", "https://github.com/o/r.git",
+             "url.https://github.com/evil/.pushInsteadOf https://github.com/o/", None)):
+        root = gate_root(origin)
+        if extra_cfg:
+            sh(f"git config {extra_cfg}", root)
+        gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+        res = gate(root, gh, env=env)
+        check(f"REQ-LLA-09 {label} does not confirm the gate", res[0] is False and "origin" in res[1], res)
+        shutil.rmtree(root)
+    root = gate_root()
+    sh("git config remote.origin.pushurl https://github.com/o/r.git", root)
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    res = gate(root, gh)
+    check("REQ-LLA-09 control: a local pushurl equal to the url still confirms", res[0] is True, res)
+    shutil.rmtree(root)
+    shutil.rmtree(home_a)
+    rg = make_repo()
+    for c in ("git config --global remote.origin.url https://github.com/o/r", "git config remote.origin.pushurl https://x/y",
+              "git config --system remote.upstream.url https://github.com/o/r", "git config set remote.origin.url https://x/y",
+              "git config --unset remote.origin.pushurl",
+              "git config --global url.https://github.com/o/.insteadOf https://github.com/evil/",
+              "git config --global url.https://evil/.pushInsteadOf https://github.com/",
+              "git -c url.https://evil/.insteadOf=https://github.com/ fetch"):
+        t, i = bash(c)
+        case(f"REQ-LLA-09 changing where a remote points is denied at PreToolUse: {c[:60]}", rg, t, i, "deny",
+             rule_hint="remote")
+    t, i = bash("git config --get remote.origin.url")
+    case("REQ-LLA-09 control: reading remote.origin.url is allowed", rg, t, i, "allow")
+    shutil.rmtree(rg)
+    # re-review H-B: any mention of http_unix_socket refuses; a config directory linked out of HOME refuses
+    for label, text in (("a double-quoted key", '"http_unix_socket": /tmp/evil.sock\n'),
+                        ("a single-quoted key with a spaced colon", "'http_unix_socket' : /tmp/evil.sock\n"),
+                        ("flow style", "{http_unix_socket: /tmp/evil.sock}\n"),
+                        ("a mention inside a comment", "# http_unix_socket: /tmp/evil.sock\ngit_protocol: https\n"),
+                        ("upper case", "HTTP_UNIX_SOCKET: /tmp/evil.sock\n")):
+        root = gate_root()
+        gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+        cfg = os.path.join(root, "ghcfg")
+        os.makedirs(cfg)
+        open(os.path.join(cfg, "config.yml"), "w").write(text)
+        res = gate(root, gh, env={"GH_CONFIG_DIR": cfg})
+        check(f"REQ-LLA-09 http_unix_socket written as {label} does not confirm, and gh is never run",
+              res[0] is False and "http_unix_socket" in res[1] and gh_calls(os.path.join(root, "ghd")) == [],
+              (res, gh_calls(os.path.join(root, "ghd"))))
+        shutil.rmtree(root)
+    root = gate_root()
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    cfg = os.path.join(root, "ghcfg")
+    os.makedirs(cfg)
+    open(os.path.join(cfg, "hosts.yml"), "w").write('{"github.com": {user: a}, "ghe.evil.example": {user: b}}\n')
+    res = gate(root, gh, env={"GH_CONFIG_DIR": cfg})
+    check("REQ-LLA-09 a non-github.com host in flow-style hosts.yml does not confirm", res[0] is False, res)
+    shutil.rmtree(root)
+    root = gate_root()  # a fresh root: the failure above is cached for 60 s for the first one
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    cfg = os.path.join(root, "ghcfg")
+    os.makedirs(cfg)
+    open(os.path.join(cfg, "hosts.yml"), "w").write("github.com:\n    user: a\n")
+    home_b = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-home-b-"))
+    os.symlink(cfg, os.path.join(home_b, "ghlink"))
+    res = gate(root, gh, env={"HOME": home_b, "GH_CONFIG_DIR": os.path.join(home_b, "ghlink")})
+    check("REQ-LLA-09 a GH_CONFIG_DIR that is a symlink leading outside HOME does not confirm",
+          res[0] is False and "symlink" in res[1], res)
+    shutil.rmtree(home_b)
+    shutil.rmtree(root)
+
     # ---------------- REQ-LLA-08: Tier 3 auto modes follow the confirmed gate
     ghdir = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gh-"))
     gh_ok = fake_gh(os.path.join(ghdir, "ok"), branch=classic)
@@ -2637,9 +2712,15 @@ def suite_pilot62():
               "gh api -X POST repos/o/r/%73tatuses/abc -f state=success",
               "gh api -X POST repos/o/r/check%2Druns -f name=verify-range",
               "gh api graphql -F query=@mutation.graphql",
-              "gh api graphql --input q.json"):
+              "gh api graphql --input q.json",
+              "gh api graphql -Fquery=@m.graphql",
+              "gh run -R o/r rerun 42",
+              "gh run --repo o/r rerun 42"):
         t, i = bash(c)
         case(f"REQ-LLA-10 check-forgery denied: {c[:70]}", r, t, i, "deny", rule_hint="check")
+    t, i = bash("gh workflow -R o/r run ci.yml --ref x")
+    case("REQ-LLA-10 a workflow dispatch from another ref is denied with -R before the subcommand", r, t, i, "deny",
+         rule_hint="another ref")
     for c in ("gh api repos/o/r/commits/abc/check-runs", "gh api repos/o/r/commits/abc/statuses",
               "gh api repos/o/r/commits/abc/status", "gh api repos/o/r/actions/runs/42",
               "gh api graphql -f query='{ viewer { login } }'"):
