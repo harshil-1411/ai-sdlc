@@ -1,0 +1,8 @@
+{
+  "_note": "PILOT-62 fixture BUILT FROM GitHub's documented 'Get a repository' response shape, trimmed. NOT a captured response: gh failed with a TLS error in the agent sandbox on 2026-09-25. [NEEDS VERIFICATION] against `gh api repos/harshil-1411/ai-sdlc`.",
+  "id": 1,
+  "name": "ai-sdlc",
+  "full_name": "harshil-1411/ai-sdlc",
+  "private": false,
+  "default_branch": "main"
+}

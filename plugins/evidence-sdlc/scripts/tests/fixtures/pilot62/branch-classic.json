@@ -1,0 +1,16 @@
+{
+  "_note": "PILOT-62 fixture BUILT FROM GitHub's documented 'Get a branch' response shape (protection.required_status_checks.checks[].app_id), trimmed. NOT a captured response (gh TLS error in the agent sandbox, 2026-09-25). 15368 is the GitHub Actions app id [NEEDS VERIFICATION] against `gh api repos/harshil-1411/ai-sdlc/branches/main`.",
+  "name": "main",
+  "protected": true,
+  "protection": {
+    "enabled": true,
+    "required_status_checks": {
+      "enforcement_level": "non_admins",
+      "contexts": ["verify-range"],
+      "checks": [
+        {"context": "verify-range", "app_id": 15368}
+      ]
+    }
+  },
+  "protection_url": "https://api.github.com/repos/harshil-1411/ai-sdlc/branches/main/protection"
+}

@@ -1,0 +1,21 @@
+[
+  {
+    "type": "required_status_checks",
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "harshil-1411/ai-sdlc",
+    "ruleset_id": 1,
+    "parameters": {
+      "strict_required_status_checks_policy": false,
+      "required_status_checks": [
+        {"context": "verify-range", "integration_id": 15368}
+      ]
+    }
+  },
+  {
+    "type": "pull_request",
+    "ruleset_source_type": "Repository",
+    "ruleset_source": "harshil-1411/ai-sdlc",
+    "ruleset_id": 1,
+    "parameters": {"required_approving_review_count": 1, "require_code_owner_review": true}
+  }
+]

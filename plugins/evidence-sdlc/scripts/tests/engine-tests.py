@@ -1913,8 +1913,605 @@ def suite_pilot58():
           set(sites) == allowed, sorted(set(sites) ^ allowed))
 
 
+def suite_pilot62():
+    """PILOT-62: the local layer is advisory behind the server gate (spec REQ-LLA-01..10)."""
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import types
+    import uuid
+    import state as st
+    KEYV = "k" * 40
+    KEY = {"EVIDENCE_SIGNING_KEY": KEYV}
+    FIX = os.path.join(HERE, "fixtures", "pilot62")
+    PUSH = "git push -u origin feature/ABC-1-login"
+
+    class keyenv:
+        """The fixture key (and any extra variables) in this process's environment, restored after."""
+
+        def __init__(self, extra=None, key=True):
+            self.vars = dict(extra or {})
+            if key:
+                self.vars["EVIDENCE_SIGNING_KEY"] = KEYV
+
+        def __enter__(self):
+            self.saved = {k: os.environ.get(k) for k in self.vars}
+            os.environ.update(self.vars)
+            return self
+
+        def __exit__(self, *a):
+            for k, v in self.saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def around(r, mutate, env=None, cmd="./vendor/tool", session="s1"):
+        tid = "p62-" + uuid.uuid4().hex[:8]
+        p = {"session_id": session, "cwd": r, "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": tid,
+             "permission_mode": "default"}
+        pre = decision(run_hook(r, p, env_extra=env)[0])
+        if pre[0] == "deny":
+            return pre, ""
+        mutate()
+        obj, _ = run_hook(r, dict(p, hook_event_name="PostToolUse", tool_response={"stdout": ""}), event="post", env_extra=env)
+        return pre, obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+
+    def entries(r):
+        out = []
+        for f in glob.glob(os.path.join(r, ".evidence", "**", "violations*"), recursive=True):
+            if os.path.isfile(f):
+                try:
+                    d = json.load(open(f))
+                except ValueError:
+                    continue
+                out += d.get("entries", []) if isinstance(d, dict) else d
+        return out
+
+    def events(r, session="s1"):
+        p = os.path.join(r, ".evidence", "audit", f"{session}.jsonl")
+        return [json.loads(l) for l in open(p)] if os.path.isfile(p) else []
+
+    def sign_change(r, key="ABC-1"):
+        cdir = os.path.join(r, ".evidence", "changes", key)
+        with keyenv():
+            st.save_state(r, key, json.load(open(os.path.join(cdir, "state.json"))))
+            import signing
+            ap = signing.sign(json.load(open(os.path.join(cdir, "approval.json"))))
+            st.write_file(r, f".evidence/changes/{key}/approval.json", json.dumps(ap))
+
+    def signed_repo(tier=1, claims=("src/app.py",), extra=None):
+        r = make_repo()
+        start_change(r, tier=tier, claims=claims)
+        sign_change(r)
+        if extra:
+            extra(r)
+        with keyenv():
+            st.audit_append(r, "s0", {"event": "fixture"})  # a signed log to start from
+        sh("git add -A && git commit -q -m 'ABC-1: c'", r)
+        return r
+
+    def push(r, env=KEY):
+        obj, _ = run_hook(r, {"session_id": "s1", "cwd": r, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                              "tool_input": {"command": PUSH}, "permission_mode": "default"}, env_extra=env)
+        return decision(obj)
+
+    def edit_src(r, env=KEY, perm="default", path="src/app.py"):
+        t, i = edit(path)
+        obj, _ = run_hook(r, {"session_id": "s1", "cwd": r, "hook_event_name": "PreToolUse", "tool_name": t,
+                              "tool_input": i, "permission_mode": perm}, env_extra=env)
+        return decision(obj)
+
+    appr_rel = ".evidence/changes/ABC-1/approval.json"
+
+    # ---------------- REQ-LLA-01: a verified undo is closed at birth and blocks nothing
+    r = signed_repo()
+    appr = os.path.join(r, appr_rel)
+    original = open(appr).read()
+    _, note = around(r, lambda: open(appr, "w").write('{"forged": true}'), env=KEY)
+    e = [v for v in entries(r) if v.get("path") == appr_rel]
+    check("REQ-LLA-01 a restored approval.json is recorded closed at birth (resolved=restored, resolved_at)",
+          open(appr).read() == original and len(e) == 1 and e[0].get("open") is False and e[0].get("resolved") == "restored"
+          and e[0].get("resolved_at") and e[0].get("action") == "restored", (e, note))
+    ev = [x for x in events(r) if x.get("event") == "integrity-violation"]
+    check("REQ-LLA-01 the restore is logged as an integrity-violation audit event marked resolved",
+          any(x.get("resolved") == "restored" and x.get("violation_path") == appr_rel for x in ev), ev)
+    check("REQ-LLA-01 the post-call note says the change was undone and there is nothing to clear",
+          "restored" in note and "nothing to clear" in note and "clear-violations" not in note, note)
+    got, reason = push(r)
+    check("REQ-LLA-01 after a verified restore, push is not denied for integrity-violation",
+          "integrity monitor" not in reason, reason)
+    got, reason = edit_src(r)
+    check("REQ-LLA-01 after a verified restore, a claimed source edit is allowed", got == "allow", reason)
+    shutil.rmtree(r)
+
+    r = signed_repo()
+    pol = os.path.join(r, ".evidence", "policy.json")
+    _, note = around(r, lambda: open(pol, "w").write("{}"), env=KEY)
+    e = [v for v in entries(r) if v.get("path") == ".evidence/policy.json"]
+    check("REQ-LLA-01 a created control-plane file that is removed is closed at birth",
+          not os.path.exists(pol) and len(e) == 1 and e[0].get("action") == "removed" and e[0].get("open") is False
+          and e[0].get("resolved") == "restored", (e, note))
+    check("REQ-LLA-01 after a verified removal, push is not denied for integrity-violation and a source edit is allowed",
+          "integrity monitor" not in push(r)[1] and edit_src(r)[0] == "allow", (push(r), edit_src(r)))
+    shutil.rmtree(r)
+
+    r = signed_repo()
+    link = os.path.join(r, ".evidence", "secrets-allowlist.json")
+    _, note = around(r, lambda: os.symlink("/etc/hosts", link), env=KEY)
+    e = [v for v in entries(r) if v.get("path") == ".evidence/secrets-allowlist.json"]
+    check("REQ-LLA-01 a planted control-plane symlink that is removed is closed at birth",
+          not os.path.lexists(link) and len(e) == 1 and e[0].get("rule") == "control-plane-symlink"
+          and e[0].get("open") is False and e[0].get("resolved") == "restored", (e, note))
+    check("REQ-LLA-01 after a removed symlink, push is not denied for integrity-violation and a source edit is allowed",
+          "integrity monitor" not in push(r)[1] and edit_src(r)[0] == "allow", (push(r), edit_src(r)))
+    shutil.rmtree(r)
+
+    # ---------------- REQ-LLA-02: everything not verifiably undone stays open and blocks
+    r = make_repo()
+    start_change(r)
+    sh("git add -A && git commit -q -m 'ABC-1: c'", r)
+    appr = os.path.join(r, appr_rel)
+    _, note = around(r, lambda: open(appr, "w").write('{"forged": true}'))
+    e = [v for v in entries(r) if v.get("path") == appr_rel]
+    got, reason = push(r, env=None)
+    check("REQ-LLA-02 unsigned mode: a control-plane change is recorded open, and push is denied",
+          e and e[0].get("open") is True and "resolved" not in e[0] and got == "deny" and "integrity monitor" in reason,
+          (e, reason))
+    check("REQ-LLA-02 unsigned mode: a source edit stays denied", edit_src(r, env=None)[0] == "deny", edit_src(r, env=None))
+    shutil.rmtree(r)
+
+    def settings_file(r):
+        os.makedirs(os.path.join(r, ".claude"), exist_ok=True)
+        open(os.path.join(r, ".claude", "settings.json"), "w").write('{"a": 1}\n')
+    r = signed_repo(extra=settings_file)
+    cdir = os.path.join(r, ".claude")
+
+    def forge_and_lock():
+        open(os.path.join(cdir, "settings.json"), "w").write('{"a": 2}\n')
+        os.chmod(cdir, 0o555)
+    try:
+        _, note = around(r, forge_and_lock, env=KEY)
+    finally:
+        os.chmod(cdir, 0o755)
+    e = [v for v in entries(r) if v.get("path") == ".claude/settings.json"]
+    got, reason = push(r)
+    check("REQ-LLA-02 a restore whose write fails (read-only parent) stays open, and push and source edits are denied",
+          e and e[0].get("open") is True and "resolved" not in e[0] and got == "deny" and "integrity monitor" in reason
+          and edit_src(r)[0] == "deny", (e, note, reason))
+    shutil.rmtree(r)
+
+    # a re-read that differs from the snapshot (the file changed again after the restore): in-process test hook
+    r = signed_repo()
+    appr = os.path.join(r, appr_rel)
+    note, e = "", []
+    import evidence_policy as ep
+    import hook
+    import integrity
+    with keyenv():
+        tid = "p62-race-" + uuid.uuid4().hex[:6]
+        payload = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"},
+                   "tool_use_id": tid, "permission_mode": "default", "hook_event_name": "PostToolUse"}
+        ctx = ep.Ctx(payload)
+        integrity.snapshot(ctx)
+        open(appr, "w").write('{"forged": true}')
+        real_write = st.write_file
+
+        def racing_write(root, rel, data):
+            real_write(root, rel, data)
+            if rel == appr_rel:
+                with open(os.path.join(root, rel), "w") as f:
+                    f.write('{"raced": true}')
+        integrity.st.write_file = racing_write
+        try:
+            out = hook.run_integrity(ep.Ctx(payload))[0]
+        finally:
+            integrity.st.write_file = real_write
+        note = ((out or {}).get("hookSpecificOutput") or {}).get("additionalContext", "")
+    e = [v for v in entries(r) if v.get("path") == appr_rel]
+    got, reason = push(r)
+    check("REQ-LLA-02 a restore whose re-read differs from the snapshot stays open, says so, and push is denied",
+          e and e[0].get("open") is True and "resolved" not in e[0] and "could not be verified" in note
+          and got == "deny" and "integrity monitor" in reason, (e, note[:300], reason[:200]))
+    shutil.rmtree(r)
+
+    r = signed_repo()
+    _, note = around(r, lambda: open(os.path.join(r, "src", "sneaky.py"), "w").write("x = 1\n"), env=KEY)
+    e = [v for v in entries(r) if v.get("path") == "src/sneaky.py"]
+    got, reason = push(r)
+    check("REQ-LLA-02 an unclaimed source file written by an unparsed program stays open and push is denied",
+          e and e[0].get("open") is True and "resolved" not in e[0] and got == "deny" and "integrity monitor" in reason,
+          (e, reason))
+    shutil.rmtree(r)
+
+    r = signed_repo()
+    with keyenv():
+        for n in range(3):
+            st.audit_append(r, "s1", {"event": "fixture", "n": n})
+    log = os.path.join(r, ".evidence", "audit", "s1.jsonl")
+
+    def truncate():
+        lines = open(log).read().splitlines(True)
+        open(log, "w").write("".join(lines[:1]))
+    _, note = around(r, truncate, env=KEY)
+    e = [v for v in entries(r) if v.get("rule") == "audit-tamper"]
+    got, reason = push(r)
+    check("REQ-LLA-02 an audit truncation stays open, and push and source edits are denied",
+          e and e[0].get("open") is True and "resolved" not in e[0] and got == "deny" and edit_src(r)[0] == "deny",
+          (e, note, reason))
+    shutil.rmtree(r)
+
+    # ---------------- REQ-LLA-03: the per-session cap
+    r = signed_repo()
+    appr = os.path.join(r, appr_rel)
+    notes = []
+    for n in range(4):
+        notes.append(around(r, lambda: open(appr, "w").write('{"forged": %d}' % n), env=KEY)[1])
+    e = [v for v in entries(r) if v.get("path") == appr_rel]
+    got, reason = push(r)
+    check("REQ-LLA-03 three restored changes in a session are closed; the fourth is open and push is denied",
+          len(e) == 4 and [v.get("open") for v in e] == [False, False, False, True] and "resolved" not in e[3]
+          and "auto_resolve_max_per_session" in notes[3] and got == "deny" and "integrity monitor" in reason,
+          ([(v.get("open"), v.get("resolved")) for v in e], notes[3][:300], reason[:200]))
+    _, note = around(r, lambda: open(appr, "w").write('{"forged": "other"}'), env=KEY, session="s9")
+    e = [v for v in entries(r) if v.get("path") == appr_rel and v.get("session") == "s9"]
+    check("REQ-LLA-03 the cap counts per session: another session's first restore is closed",
+          e and e[0].get("open") is False, e)
+    shutil.rmtree(r)
+
+    zero = os.path.join(tempfile.gettempdir(), "evidence-test-org-p62-zero.json")
+    json.dump({"unsigned_max_tier": 3, "auto_resolve_max_per_session": 0}, open(zero, "w"))
+    r = signed_repo()
+    appr = os.path.join(r, appr_rel)
+    _, note = around(r, lambda: open(appr, "w").write('{"forged": true}'), env=dict(KEY, EVIDENCE_ORG_POLICY=zero))
+    e = [v for v in entries(r) if v.get("path") == appr_rel]
+    check("REQ-LLA-03 auto_resolve_max_per_session 0 disables auto-resolution: the first restore is open",
+          e and e[0].get("open") is True and "integrity monitor" in push(r, env=dict(KEY, EVIDENCE_ORG_POLICY=zero))[1],
+          (e, note))
+    shutil.rmtree(r)
+    os.remove(zero)
+
+    merged_up = st._merge({"auto_resolve_max_per_session": 3}, {"auto_resolve_max_per_session": 10}, True)
+    merged_down = st._merge({"auto_resolve_max_per_session": 3}, {"auto_resolve_max_per_session": 1}, True)
+    merged_bad = st._merge({"auto_resolve_max_per_session": 3}, {"auto_resolve_max_per_session": "x"}, True)
+    check("REQ-LLA-03 a repository policy may only lower auto_resolve_max_per_session (raise ignored, lower applied)",
+          merged_up.get("auto_resolve_max_per_session") == 3 and merged_down.get("auto_resolve_max_per_session") == 1
+          and merged_bad.get("auto_resolve_max_per_session") == 3, (merged_up, merged_down, merged_bad))
+    r = signed_repo(extra=lambda r: open(os.path.join(r, ".evidence", "policy.json"), "w").write(
+        json.dumps({"auto_resolve_max_per_session": 1})))
+    appr = os.path.join(r, appr_rel)
+    for n in range(2):
+        around(r, lambda: open(appr, "w").write('{"forged": %d}' % n), env=KEY)
+    e = [v for v in entries(r) if v.get("path") == appr_rel]
+    check("REQ-LLA-03 a repository policy lowering the cap to 1 applies: the second restore is open",
+          [v.get("open") for v in e] == [False, True], [(v.get("open"), v.get("resolved")) for v in e])
+    shutil.rmtree(r)
+    r = signed_repo(extra=lambda r: open(os.path.join(r, ".evidence", "policy.json"), "w").write(
+        json.dumps({"auto_resolve_max_per_session": 50})))
+    appr = os.path.join(r, appr_rel)
+    for n in range(4):
+        around(r, lambda: open(appr, "w").write('{"forged": %d}' % n), env=KEY)
+    e = [v for v in entries(r) if v.get("path") == appr_rel]
+    check("REQ-LLA-03 a repository policy raising the cap is ignored: the fourth restore is open",
+          [v.get("open") for v in e] == [False, False, False, True], [(v.get("open"), v.get("resolved")) for v in e])
+    shutil.rmtree(r)
+
+    # ---------------- REQ-LLA-05: settings.local.json judged by effect
+    base_sl = {"permissions": {"allow": ["Bash(ls)", "Bash(git status)"], "deny": ["Bash(rm:*)"],
+                               "additionalDirectories": ["/tmp/a"]}, "model": "opus"}
+
+    def sl_case(n, new, expect_kept, label, raw=None):
+        r = signed_repo()
+        os.makedirs(os.path.join(r, ".claude"), exist_ok=True)
+        sl = os.path.join(r, ".claude", "settings.local.json")
+        open(sl, "w").write(json.dumps(base_sl))
+        sess = f"sl{n}"
+
+        def mutate():
+            if raw is not None:
+                open(sl, "wb").write(raw)
+            else:
+                open(sl, "w").write(json.dumps(new))
+        _, note = around(r, mutate, env=KEY, session=sess)
+        now = open(sl, "rb").read()
+        e = [v for v in entries(r) if v.get("path") == ".claude/settings.local.json"]
+        evs = [x.get("event") for x in events(r, sess)]
+        if expect_kept:
+            ok = json.loads(now) == new and not e and not note and "config-change" in evs
+        else:
+            ok = json.loads(now) == base_sl and len(e) == 1 and e[0].get("open") is False and "settings.local.json" in note
+        check(f"REQ-LLA-05 {label}", ok, (note[:200], e, evs, now[:200]))
+        shutil.rmtree(r)
+
+    p = base_sl["permissions"]
+    sl_case(1, {"permissions": dict(p, allow=["Bash(ls)"]), "model": "opus"}, True,
+            "an allow rule removed is kept and logged as config-change, not a violation")
+    sl_case(2, {"permissions": dict(p, additionalDirectories=["/tmp/a", "/tmp/b"]), "model": "opus"}, True,
+            "an additional directory added is kept")
+    sl_case(3, {"permissions": dict(p, deny=["Bash(rm:*)", "Bash(curl:*)"], ask=["Bash(git push:*)"]), "model": "opus"}, True,
+            "deny and ask rules added (tightening) are kept")
+    sl_case(4, {"permissions": p, "model": "sonnet", "outputStyle": "Explanatory"}, True,
+            "the kept display keys (model, outputStyle) changed are kept")
+    sl_case(5, dict(base_sl, hooks={"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "true"}]}]}),
+            False, "hooks added is restored (closed, resolved)")
+    sl_case(6, dict(base_sl, disableAllHooks=True), False, "disableAllHooks: true is restored")
+    sl_case(7, dict(base_sl, env={"EVIDENCE_ORG_POLICY": "/tmp/x"}), False, "env added is restored")
+    sl_case(8, dict(base_sl, enabledPlugins={"x@y": True}), False, "enabledPlugins added is restored")
+    sl_case(9, {"permissions": dict(p, deny=[]), "model": "opus"}, False, "a deny rule removed is restored")
+    sl_case(10, {"permissions": dict(p, defaultMode="bypassPermissions"), "model": "opus"}, False,
+            "permissions.defaultMode changed is restored")
+    sl_case(11, dict(base_sl, statusLine={"type": "command", "command": "id"}), False, "statusLine added is restored")
+    sl_case(12, None, False, "an allow-only change with a BOM is restored",
+            raw=b"\xef\xbb\xbf" + json.dumps({"permissions": dict(p, allow=p["allow"] + ["Bash(make)"]), "model": "opus"}).encode())
+    sl_case(13, None, False, "invalid JSON is restored", raw=b'{"permissions": ')
+
+    # ---------------- REQ-LLA-06: system-managed config the user cannot write
+    nuw = getattr(integrity, "_not_user_writable", None)
+    scratch = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-sys-"))
+    sysf = os.path.join(scratch, "managed-settings.json")
+    open(sysf, "w").write('{"a": 1}\n')
+    check("REQ-LLA-06 _not_user_writable: true for a root-owned system file (/etc/hosts), false for a scratch file",
+          nuw is not None and nuw("/etc/hosts") is True and nuw(sysf) is False,
+          None if nuw is None else (nuw("/etc/hosts"), nuw(sysf)))
+    org6 = os.path.join(scratch, "org.json")
+    json.dump({"unsigned_max_tier": 3, "user_control_plane": [sysf], "user_config_not_charged": [sysf]}, open(org6, "w"))
+    r = signed_repo()
+    _, note = around(r, lambda: open(sysf, "w").write('{"a": 2}\n'), env=dict(KEY, EVIDENCE_ORG_POLICY=org6))
+    e = [v for v in entries(r) if v.get("path") == sysf]
+    check("REQ-LLA-06 a listed file the session's user could write is still hidden-change (negative)",
+          e and e[0].get("rule") == "hidden-change" and e[0].get("open") is True, (e, note))
+    shutil.rmtree(r)
+    r = signed_repo()
+    out, e, evs = "not run", [], []
+    if nuw is not None:
+        with keyenv({"EVIDENCE_ORG_POLICY": org6}):
+            integrity._not_user_writable = lambda p: True
+            try:
+                tid = "p62-sys-" + uuid.uuid4().hex[:6]
+                payload = {"session_id": "s1", "cwd": r, "tool_name": "Bash", "tool_input": {"command": "./vendor/tool"},
+                           "tool_use_id": tid, "permission_mode": "default", "hook_event_name": "PostToolUse"}
+                integrity.snapshot(ep.Ctx(payload))
+                open(sysf, "w").write('{"a": 3}\n')
+                out = hook.run_integrity(ep.Ctx(payload))[0]
+            finally:
+                integrity._not_user_writable = nuw
+        e = [v for v in entries(r) if v.get("path") == sysf]
+        evs = [x for x in events(r) if x.get("event") == "user-config-changed"]
+    check("REQ-LLA-06 a system file the user cannot write (ownership stubbed) is logged as user-config-changed, not a violation",
+          out is None and not e and evs and evs[0].get("config_path") == sysf and evs[0].get("old_hash")
+          and evs[0].get("new_hash") and evs[0].get("old_hash") != evs[0].get("new_hash"), (out, e, evs))
+    shutil.rmtree(r)
+    shutil.rmtree(scratch)
+
+    # ---------------- REQ-LLA-07: ~/.claude.json judged by its security projection
+    home = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-home-"))
+    cj = os.path.join(home, ".claude.json")
+    r = signed_repo()
+    HENV = dict(KEY, HOME=home)
+    doc = {"numStartups": 1, "tipsHistory": {"a": 1}, "projects": {r: {"allowedTools": ["Bash(ls)"], "lastCost": 1}}}
+    json.dump(doc, open(cj, "w"))
+
+    def rewrite(d):
+        return lambda: json.dump(d, open(cj, "w"))
+    _, note = around(r, rewrite(dict(doc, numStartups=2, projects={r: {"allowedTools": ["Bash(ls)"], "lastCost": 2},
+                                                                      "/other": {"lastCost": 0}})), env=HENV)
+    check("REQ-LLA-07 a bookkeeping rewrite of ~/.claude.json is not a violation",
+          note == "" and not [v for v in entries(r) if v.get("path") == cj], (note, entries(r)))
+    cur = json.load(open(cj))
+    cur2 = json.loads(json.dumps(cur))
+    cur2["projects"][r]["mcpServers"] = {"evil": {"command": "sh"}}
+    _, note = around(r, rewrite(cur2), env=HENV)
+    check("REQ-LLA-07 a projects.<repo>.mcpServers entry added to ~/.claude.json is hidden-change",
+          any(v.get("path") == cj and v.get("rule") == "hidden-change" for v in entries(r)), (note, entries(r)))
+    shutil.rmtree(r)
+    r = signed_repo()
+    json.dump(doc, open(cj, "w"))
+    _, note = around(r, rewrite(dict(doc, mcpServers={"evil": {"command": "sh"}})), env=HENV)
+    check("REQ-LLA-07 a top-level mcpServers added to ~/.claude.json is hidden-change",
+          any(v.get("path") == cj and v.get("rule") == "hidden-change" for v in entries(r)), (note, entries(r)))
+    shutil.rmtree(r)
+    r = signed_repo()
+    json.dump(doc, open(cj, "w"))
+    _, note = around(r, lambda: open(cj, "w").write('{"numStartups": '), env=HENV)
+    check("REQ-LLA-07 ~/.claude.json truncated to invalid JSON is hidden-change",
+          any(v.get("path") == cj and v.get("rule") == "hidden-change" for v in entries(r)), (note, entries(r)))
+    shutil.rmtree(r)
+    r = signed_repo()
+    json.dump(doc, open(cj, "w"))
+    _, note = around(r, lambda: os.remove(cj), env=HENV)
+    check("REQ-LLA-07 ~/.claude.json deleted is hidden-change",
+          any(v.get("path") == cj and v.get("rule") == "hidden-change" for v in entries(r)), (note, entries(r)))
+    shutil.rmtree(r)
+    shutil.rmtree(home)
+
+    # ---------------- REQ-LLA-09: gate detection reads GitHub through the pinned gh
+    classic = json.load(open(os.path.join(FIX, "branch-classic.json")))
+    rules = json.load(open(os.path.join(FIX, "rules-branch.json")))
+    repo_json = json.load(open(os.path.join(FIX, "repo.json")))
+    unprotected = {"name": "main", "protected": False, "protection": {"enabled": False,
+                                                                      "required_status_checks": {"enforcement_level": "off",
+                                                                                                 "contexts": [], "checks": []}}}
+
+    def with_check(ctx_name="verify-range", app=15368, level="non_admins"):
+        b = json.loads(json.dumps(classic))
+        b["protection"]["required_status_checks"]["enforcement_level"] = level
+        b["protection"]["required_status_checks"]["checks"] = [{"context": ctx_name, "app_id": app}]
+        return b
+
+    def fake_gh(d, branch, rules_body=None, fail=False, raw_branch=None):
+        os.makedirs(d, exist_ok=True)
+        json.dump(repo_json, open(os.path.join(d, "repo.json"), "w"))
+        if raw_branch is not None:
+            open(os.path.join(d, "branch.json"), "w").write(raw_branch)
+        else:
+            json.dump(branch, open(os.path.join(d, "branch.json"), "w"))
+        json.dump(rules_body if rules_body is not None else [], open(os.path.join(d, "rules.json"), "w"))
+        gh = os.path.join(d, "gh")
+        open(gh, "w").write("#!/bin/sh\n"
+                            f"echo \"$@\" >> {d}/gh.log\n"
+                            + ("echo 'HTTP 502' >&2; exit 1\n" if fail else "")
+                            + "case \"$*\" in\n"
+                            f"  *rules/branches/*) cat {d}/rules.json;;\n"
+                            f"  *branches/*) cat {d}/branch.json;;\n"
+                            f"  *repos/o/r*) cat {d}/repo.json;;\n"
+                            "  *) exit 1;;\n"
+                            "esac\n")
+        os.chmod(gh, 0o755)
+        return gh
+
+    def gh_calls(d):
+        p = os.path.join(d, "gh.log")
+        return open(p).read().splitlines() if os.path.isfile(p) else []
+
+    def clear_calls(d):
+        if os.path.isfile(os.path.join(d, "gh.log")):
+            os.remove(os.path.join(d, "gh.log"))
+
+    ci_gate = getattr(ep, "_ci_gate", None)
+    pol0 = st.load_policy(os.path.realpath(tempfile.gettempdir()))
+
+    def gate(root, gh, **polx):
+        if ci_gate is None:
+            return (None, "no _ci_gate", {})
+        pol = json.loads(json.dumps({k: v for k, v in pol0.items() if not k.startswith("_")}))
+        pol["approval"] = dict(pol.get("approval") or {}, github_repo=polx.pop("repo", "o/r"))
+        pol.update(polx)
+        ctx = types.SimpleNamespace(root=root, policy=pol, session="s1")
+        with keyenv({"EVIDENCE_GH": gh}):
+            return ci_gate(ctx)
+
+    def scenario(label, expect, **kw):
+        root = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gate-"))
+        polx = kw.pop("polx", {})
+        gh = fake_gh(os.path.join(root, "ghd"), **kw)
+        res = gate(root, gh, **polx)
+        check(f"REQ-LLA-09 {label}", res[0] is expect, (res, gh_calls(os.path.join(root, "ghd"))))
+        return root, gh
+
+    root, gh = scenario("classic protection with verify-range pinned to GitHub Actions confirms the gate", True,
+                        branch=classic)
+    # cache: served without a gh call; altered, expired and linked caches are ignored
+    clear_calls(os.path.join(root, "ghd"))
+    res = gate(root, gh)
+    check("REQ-LLA-09 a confirmation is served from the signed cache without a gh call",
+          res[0] is True and gh_calls(os.path.join(root, "ghd")) == [], (res, gh_calls(os.path.join(root, "ghd"))))
+    cache_rel = getattr(ep, "_ci_gate_cache_rel", lambda r: "missing")(root)
+    cache = os.path.join(tempfile.gettempdir(), cache_rel)
+    cobj = json.load(open(cache)) if os.path.isfile(cache) else {}
+    fake_gh(os.path.join(root, "ghd"), branch=unprotected)  # GitHub now says: not required
+    altered = dict(cobj, at=cobj.get("at", 0) + 1)
+    open(cache, "w").write(json.dumps(altered))
+    res = gate(root, gh)
+    check("REQ-LLA-09 an altered cache is ignored: gh is called again (and now says not confirmed)",
+          res[0] is False and gh_calls(os.path.join(root, "ghd")) != [], (res, gh_calls(os.path.join(root, "ghd"))))
+    fake_gh(os.path.join(root, "ghd"), branch=classic)
+    clear_calls(os.path.join(root, "ghd"))
+    with keyenv():
+        import signing
+        expired = signing.sign(dict({k: v for k, v in cobj.items() if k != "sig"}, at=cobj.get("at", 0) - 100000))
+    open(cache, "w").write(json.dumps(expired))
+    res = gate(root, gh)
+    check("REQ-LLA-09 an expired cache is ignored: gh is called again",
+          res[0] is True and gh_calls(os.path.join(root, "ghd")) != [] and cobj, (res, gh_calls(os.path.join(root, "ghd"))))
+    clear_calls(os.path.join(root, "ghd"))
+    good = open(cache).read()
+    os.remove(cache)
+    elsewhere = os.path.join(root, "planted.json")
+    open(elsewhere, "w").write(good)
+    os.symlink(elsewhere, cache)
+    res = gate(root, gh)
+    check("REQ-LLA-09 a cache replaced by a symlink is ignored: gh is called again",
+          res[0] is True and gh_calls(os.path.join(root, "ghd")) != [], (res, gh_calls(os.path.join(root, "ghd"))))
+    if os.path.lexists(cache):
+        os.remove(cache)
+    shutil.rmtree(root)
+    for label, expect, kw in (
+            ("rulesets with verify-range pinned (integration_id) confirm the gate", True,
+             dict(branch=unprotected, rules_body=rules)),
+            ("a check with app_id null (any source) does not confirm", False,
+             dict(branch=with_check(app=None),
+                  rules_body=[{"type": "required_status_checks",
+                               "parameters": {"required_status_checks": [{"context": "verify-range"}]}}])),
+            ("a check pinned to another app does not confirm", False, dict(branch=with_check(app=99))),
+            ("the check missing does not confirm", False, dict(branch=with_check(ctx_name="build"))),
+            ("gh exiting 1 does not confirm", False, dict(branch=classic, fail=True)),
+            ("non-JSON output does not confirm", False, dict(branch=None, raw_branch="<html>not json</html>")),
+            ("enforcement 'off' does not confirm", False, dict(branch=with_check(level="off"))),
+            ("with ci_gate_require_enforce_admins, non_admins enforcement does not confirm", False,
+             dict(branch=classic, polx={"ci_gate_require_enforce_admins": True})),
+            ("with ci_gate_require_enforce_admins, 'everyone' enforcement confirms", True,
+             dict(branch=with_check(level="everyone"), polx={"ci_gate_require_enforce_admins": True}))):
+        root, _ = scenario(label, expect, **kw)
+        shutil.rmtree(root)
+    root = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gate-"))
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    res = gate(root, gh, repo="")
+    check("REQ-LLA-09 an empty approval.github_repo does not confirm, and gh is never called",
+          res[0] is False and gh_calls(os.path.join(root, "ghd")) == [] and "github_repo" in str(res[1]),
+          (res, gh_calls(os.path.join(root, "ghd"))))
+    shutil.rmtree(root)
+
+    # ---------------- REQ-LLA-08: Tier 3 auto modes follow the confirmed gate
+    ghdir = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gh-"))
+    gh_ok = fake_gh(os.path.join(ghdir, "ok"), branch=classic)
+    gh_bad = fake_gh(os.path.join(ghdir, "bad"), branch=unprotected)
+    org8 = os.path.join(ghdir, "org.json")
+    json.dump({"unsigned_max_tier": 3, "approval": {"github_repo": "o/r"}}, open(org8, "w"))
+    org8off = os.path.join(ghdir, "org-off.json")
+    json.dump({"unsigned_max_tier": 3, "approval": {"github_repo": "o/r"}, "tier3_auto_modes_with_required_gate": False},
+              open(org8off, "w"))
+    E8 = dict(KEY, EVIDENCE_ORG_POLICY=org8, EVIDENCE_GH=gh_ok)
+    r = signed_repo(tier=3, claims=("src/**",))
+    for mode in ("auto", "acceptEdits"):
+        got, reason = edit_src(r, env=E8, perm=mode, path="src/auth/login.py")
+        check(f"REQ-LLA-08 a Tier 3 edit in {mode} mode is allowed when the gate is confirmed", got == "allow", reason)
+    check("REQ-LLA-08 a tier3-auto-mode-allowed audit event records the gate evidence",
+          any(x.get("event") == "tier3-auto-mode-allowed" and x.get("gate") for x in events(r)), [x.get("event") for x in events(r)])
+    for mode in ("bypassPermissions", "dontAsk"):
+        got, reason = edit_src(r, env=E8, perm=mode, path="src/auth/login.py")
+        check(f"REQ-LLA-08 a Tier 3 edit in {mode} mode stays denied with the gate confirmed", got == "deny", reason)
+    got, reason = edit_src(r, env=dict(E8, EVIDENCE_SIGNING_KEY=None), perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 an unsigned session's Tier 3 auto-mode edit is denied, naming the missing key",
+          got == "deny" and "sign" in reason.lower(), reason)
+    got, reason = edit_src(r, env=dict(E8, EVIDENCE_ORG_POLICY=org8off), perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 the flag false in the org policy denies the Tier 3 auto-mode edit",
+          got == "deny" and "tier3_auto_modes_with_required_gate" in reason, reason)
+    shutil.rmtree(r)
+    r = signed_repo(tier=3, claims=("src/**",), extra=lambda r: open(os.path.join(r, ".evidence", "policy.json"), "w").write(
+        json.dumps({"tier3_auto_modes_with_required_gate": True})))
+    got, reason = edit_src(r, env=dict(E8, EVIDENCE_ORG_POLICY=org8off), perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 a repository policy setting the flag true when the org sets it false is ignored (denied)",
+          got == "deny" and "tier3_auto_modes_with_required_gate" in reason, reason)
+    shutil.rmtree(r)
+    r = signed_repo(tier=3, claims=("src/**",))
+    got, reason = edit_src(r, env=dict(E8, EVIDENCE_GH=gh_bad), perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 when the gate is not confirmed the denial names the cause and the owner action",
+          got == "deny" and "verify-range" in reason and "not required" in reason, reason)
+    shutil.rmtree(r)
+    r = signed_repo(tier=3, claims=("src/**",))
+    got, reason = edit_src(r, env=dict(KEY, EVIDENCE_GH=gh_ok), perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 with no approval.github_repo the Tier 3 auto-mode edit is denied, naming it",
+          got == "deny" and "github_repo" in reason, reason)
+    shutil.rmtree(r)
+    shutil.rmtree(ghdir)
+
+    # ---------------- REQ-LLA-10: creating a commit status or check run is check-forgery
+    r = make_repo()
+    for c in ("gh api -X POST repos/o/r/statuses/abc -f state=success -f context=verify-range",
+              "gh api repos/o/r/statuses/abc -f state=success",
+              "gh api repos/o/r/check-runs -X POST -f name=verify-range -f head_sha=abc",
+              "gh api --method=PATCH repos/o/r/check-runs/1 -f conclusion=success",
+              "gh api -XPOST repos/o/r/check-suites -f head_sha=abc",
+              "gh api repos/o/r/check-runs --input run.json"):
+        t, i = bash(c)
+        case(f"REQ-LLA-10 check-forgery denied: {c[:60]}", r, t, i, "deny", rule_hint="commit status or check run")
+    for c in ("gh api repos/o/r/commits/abc/check-runs", "gh api repos/o/r/commits/abc/statuses",
+              "gh api repos/o/r/commits/abc/status"):
+        t, i = bash(c)
+        case(f"REQ-LLA-10 reading checks or statuses is allowed: {c[:60]}", r, t, i, "allow")
+    shutil.rmtree(r)
+
+
 if __name__ == "__main__":
-    for fn in [suite_pilot58, suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle, suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
+    for fn in [suite_pilot62, suite_pilot58,suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle, suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
                suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]:
         fn()
     print(f"\n{results['pass']} passed, {results['fail']} failed")

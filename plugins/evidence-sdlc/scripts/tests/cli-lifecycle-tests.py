@@ -555,6 +555,40 @@ def verify_range_tests():
             s.st.write_file(d, ".evidence/changes/ABC-7/approval.json", json.dumps(rec, indent=2, sort_keys=True) + "\n")
         return vr_commit(d, "ABC-7: approval copied from another change")
     case("an approval record copied from another change", 1, copied_approval)
+
+    # PILOT-62 REQ-LLA-04: rule 5 also judges violation entries that first appear in the range
+    def lla04(label, entries, expect_pass, note=None):
+        d, b, _ = vr_fixture()
+        violations(d, entries)
+        h = vr_commit(d, "ABC-7: record")
+        r = vr_run(d, b, h)
+        out = r.stdout + r.stderr
+        ok = r.returncode == 0 if expect_pass else (r.returncode != 0 and "rule 5" in out.lower())
+        if note:
+            ok = ok and note in out
+        check(f"REQ-LLA-04 {label}", ok and "traceback" not in out.lower(), (r.returncode, out[-600:]))
+        shutil.rmtree(d)
+
+    base_v = {"at": "2026-09-25T00:00:00Z", "session": "s1"}
+    lla04("verify-range: a closed-at-birth restored control-plane entry passes and is printed as a note",
+          [dict(base_v, path=".evidence/changes/ABC-7/approval.json", rule="control-plane", action="restored", open=False,
+                resolved="restored", resolved_at="2026-09-25T00:00:01Z")], True,
+          note="NOTE: .evidence/changes/ABC-7/violations.json: .evidence/changes/ABC-7/approval.json (control-plane) was undone")
+    lla04("verify-range: a closed-at-birth removed control-plane-symlink entry passes",
+          [dict(base_v, path=".claude/skills/x", rule="control-plane-symlink", action="removed", open=False,
+                resolved="restored", resolved_at="2026-09-25T00:00:01Z")], True, note="NOTE")
+    lla04("verify-range: a closed-at-birth hidden-change entry without cleared_by fails rule 5",
+          [dict(base_v, path="~/.claude.json", rule="hidden-change", action="recorded", open=False)], False)
+    lla04("verify-range: a closed-at-birth hidden-change entry claiming resolved=restored fails rule 5",
+          [dict(base_v, path="~/.claude.json", rule="hidden-change", action="recorded", open=False, resolved="restored")], False)
+    lla04("verify-range: a closed-at-birth control-plane entry that was only recorded (not undone) fails rule 5",
+          [dict(base_v, path=".evidence/policy.json", rule="control-plane", action="recorded", open=False,
+                resolved="restored")], False)
+    lla04("verify-range: a closed-at-birth entry with cleared_by passes (2.1.0 behaviour)",
+          [dict(base_v, path="src/x", rule="outside-claims", action="recorded", open=False, cleared_by="lead",
+                cleared_at="2026-09-25T00:00:02Z")], True)
+    lla04("verify-range: an open entry that first appears passes (it blocks locally, not here)",
+          [dict(base_v, path="src/x", rule="outside-claims", action="recorded", open=True)], True)
     # rule 7: push report mode
     d, base, head = vr_fixture()
     w(d, "docs/new.md", "x\n")
