@@ -213,4 +213,5 @@ shipped value.
 | `ci_gate_check` | `"verify-range"` | The required status check the engine looks for on the default branch. |
 | `ci_gate_app_id` | `15368` | The app the check must be pinned to: GitHub Actions. [NEEDS VERIFICATION against a captured `gh api` response.] |
 | `ci_gate_require_enforce_admins` | `false` | When true, classic branch protection must also enforce the check for administrators (`enforcement_level: everyone`). |
+| `ci_gate_gh_path` | not set | Org policy only (ignored from a repository policy). An absolute path to the `gh` gate detection runs. It must be root-owned: the engine trusts the org policy's choice. When unset, the first `gh` on PATH is used only if the session's user could not have written it (a Homebrew `gh` owned by the user is refused). |
 | `ci_gate_cache_seconds` | `900` | How long a confirmation is cached (signed, in the temp directory). A failure is cached for 60 seconds. |

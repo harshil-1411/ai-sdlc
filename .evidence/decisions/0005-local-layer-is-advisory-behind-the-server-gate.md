@@ -26,12 +26,15 @@ decision is a new ADR.
    - System-managed files are not charged when the session's user could not have written them (not owned, not writable).
    - `~/.claude.json` is charged only when its MCP or tool-permission projection changes.
 3. **Tier 3 auto modes follow a fact on GitHub.** `acceptEdits` and `auto` are allowed for Tier 3 when the engine reads, through the pinned `gh`, that `verify-range` is a required check on the default branch **pinned to the GitHub Actions app**. The result is cached in a signed temp file. `bypassPermissions` and `dontAsk` stay denied. The org policy can switch this off, and a repository policy can only switch it off.
-4. **Posting commit statuses or check runs** from an agent session is denied locally (`check-forgery`). A required check that is matched by name only can be satisfied that way, which is why decision 3 requires the app pin.
+4. **Posting commit statuses or check runs** from an agent session is denied locally (`check-forgery`). A required check that is matched by name only can be satisfied by a commit status anyone with the token can post, which is why decision 3 requires the app pin.
+   - **What the app pin does not prove** (revised after review, 2026-09-25): a check run from app 15368 only shows that *some* GitHub Actions workflow produced it. A `workflow_dispatch` of `verify-range.yml` with `--ref <agent branch>` runs that branch's copy of the workflow and CLI and attaches its result to the branch head, and a `pull_request` workflow on the agent's branch can name a job `verify-range`. Both produce an app-15368 check run under the required name.
+   - **The real control** is code-owner review of `.github/**` and of the PR's head commit, plus a workflow fix: `verify-range.yml` refuses `workflow_dispatch` from any ref other than `refs/heads/main` and always runs the base's CLI. That fix is a human change to a change-controlled file; the proposed diff is in `HANDOFF.md`. The engine also denies an agent dispatching a workflow from another ref and re-running workflow runs.
 
 ## Consequences
 - No human clear is needed for undone changes or for the owner's own configuration edits. Tier 3 works in `auto` mode wherever the server gate is in force.
 - The local layer gains no authority: everything it now tolerates is either undone or visible to `verify-range`, which is unchanged in rules 0–3 and tightened in rule 5.
 - A new dependency: GitHub's branch-protection API shape. It fails closed (deny) when unreachable or unexpected.
+- The gate is bound to the repository being edited: its `origin` remote must be `approval.github_repo` on github.com. Gate detection runs only a `gh` the session's user could not have replaced (the org policy's `ci_gate_gh_path`, or a root-owned `gh` first on PATH), with `GH_HOST` pinned and a gh configuration that neither redirects the API (`http_unix_socket`) nor names another host.
 - Owner actions:
   - pin `verify-range` to GitHub Actions in branch protection;
   - set `approval.github_repo`;

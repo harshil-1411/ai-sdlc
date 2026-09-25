@@ -185,7 +185,7 @@ rules to each simple command, and runs every write target through the table abov
 | `audit-oversize` | IMH-20 | Any call while an audit log is over 64 MiB (checked by size only) | "Audit log … is larger than the 64 MiB the gates can check in time…" |
 | `audit-unwritable` | IMH-06 | Any call while an earlier call's own audit entry could not be written (an open violation) | "An earlier call's audit entry could not be written…" |
 | `agent-merge` | V2G-05 | `gh pr merge` (always with `--admin`). `gh api -X PUT/POST/PATCH/DELETE` to `/merge`, `/protection`, `/rulesets`, branch rename or `/git/refs`. `gh api graphql` mutations that merge, auto-merge, add a review, or change protection or refs. `curl`/`wget`/`http`/`xh` with a mutating method or body against `api.github.com` or a GitLab API | "Merging is a human decision in this repository…" / "Mutating a code host's API directly … is not available to an agent session" |
-| `check-forgery` | LLA-10 | `gh api` calls that create or update a commit status or check run: POST/PATCH/PUT, or fields with no method (gh then posts), to `…/statuses/<sha>`, `…/check-runs` or `…/check-suites`; the GraphQL `createCheckRun`/`updateCheckRun`/`createCheckSuite` mutations. Reading them is allowed | "Creating or updating a commit status or check run from an agent session is not allowed: a required check matched by name could be satisfied that way." |
+| `check-forgery` | LLA-10 | `gh api` calls that create or update a commit status or check run, or re-run a workflow: POST/PATCH/PUT (also via an `X-HTTP-Method-Override` header), or fields with no method (gh then posts), to `…/statuses/<sha>`, `…/check-runs`, `…/check-suites` or `…/actions/runs|jobs/<id>/rerun*`, matched after percent-decoding and collapsing doubled slashes; `gh run rerun`; the GraphQL `createCheckRun`/`updateCheckRun`/`createCheckSuite` mutations, and any `gh api graphql` whose query is read from a file (`query=@…`) or `--input`. Reading them is allowed | "Creating or updating a commit status or check run from an agent session is not allowed: a required check matched by name could be satisfied that way." |
 | `release-approval` | V2G-06 | A deploy tool, recognised by command position, pointed at a production target (a `prod_words` match, case-insensitive), or at a computed target, without a valid `RELEASE_APPROVAL`. The tools: `kubectl`/`oc` mutating verbs, `helm install/upgrade/rollback`, `terraform`/`tofu apply/destroy`, `pulumi up`, `cdk`/`serverless`/`sam`/`firebase`/`wrangler deploy`, `aws`/`gcloud`/`az` deploy verbs, `gh workflow run deploy*`, make/npm/yarn deploy targets, and scripts named deploy/release/promote/rollout/ship. Plain text such as `grep production` never triggers it | "`kubectl apply` names a production target (prod-eu). Production changes need a release authorization… The agent cannot supply it." |
 
 ### Secrets
@@ -282,9 +282,11 @@ are not the agent's doing or that it has already undone.
 - **Config edits are judged by effect, not author** (the engine cannot tell the human from the agent):
   - `.claude/settings.local.json` is kept, with a `config-change` audit event, when every
     difference is an `allow` entry added or removed, a `deny` or `ask` entry added, an
-    `additionalDirectories` entry added or removed, or a top-level key in
-    `local_settings_kept_keys` (default `model`, `outputStyle`). A pure allow addition is still a
-    `permission-grant`. Everything else is restored: `hooks`, `disableAllHooks`, `env`,
+    `additionalDirectories` entry removed, or a top-level key in `local_settings_kept_keys`
+    (default `model`, `outputStyle`). A pure allow addition is still a `permission-grant`. A newly
+    created file is kept only when it holds nothing but `permissions.allow` entries; any other new
+    file is removed like any created control-plane file. Everything else is restored, including an
+    `additionalDirectories` entry added: `hooks`, `disableAllHooks`, `env`,
     `statusLine`, `apiKeyHelper`, `enabledPlugins`, MCP keys, `permissions.defaultMode`, a deny or
     ask rule removed, invalid JSON, a BOM.
   - A file in `user_config_not_charged` (the managed-settings files and `evidence-policy.json`
@@ -304,7 +306,14 @@ are not the agent's doing or that it has already undone.
   a required status check on the default branch **pinned to the GitHub Actions app**
   (`ci_gate_app_id`, `checks[].app_id` in branch protection or `integration_id` in a ruleset).
   "Any source", another app, a missing check, `gh` failing or timing out, non-JSON output or an
-  empty `github_repo` all mean not confirmed, and the denial names which. The result is cached in
+  empty `github_repo` all mean not confirmed, and the denial names which. The gate also requires:
+  the repository's `origin` remote is `approval.github_repo` on github.com (https or ssh, `.git`
+  and case ignored); `gh` is the org policy's `ci_gate_gh_path` or the first `gh` on PATH that the
+  session's user could not have written (neither it nor its directory writable by the user), and
+  runs with `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*` overrides; the gh configuration
+  sets no `http_unix_socket` and `hosts.yml` names no host but github.com. With
+  `ci_gate_require_enforce_admins`, a check required only by a ruleset does not confirm, because
+  the rules endpoint does not show a ruleset's bypass actors. The result is cached in
   a signed file in the temp directory (900 s for a confirmation, 60 s for a failure); an
   unsigned, altered, expired or linked cache is ignored. A `tier3-auto-mode-allowed` audit event
   records the evidence each time the cache is filled. `bypassPermissions` and `dontAsk` stay

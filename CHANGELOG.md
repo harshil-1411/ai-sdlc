@@ -53,6 +53,23 @@ edit in `auto` mode is allowed without it (MAN-LLA-01).
   `ci_gate_cache_seconds`. From a repository policy only the first two merge rules apply (minimum;
   may only become false); the rest are ignored.
 
+### Review fixes (before merge)
+- The gate binds to the repository being edited (`origin` must be `approval.github_repo`), and the
+  cache is bound to that identity.
+- `gh` for gate detection is pinned: `ci_gate_gh_path` (org only) or a root-owned `gh` first on
+  PATH; `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*` overrides for every engine `gh` call; a
+  gh configuration with `http_unix_socket` or a non-github.com host refuses the gate.
+- `settings.local.json`: an `additionalDirectories` addition is restored; a newly created file is
+  kept only when it holds only `permissions.allow` entries.
+- The auto-resolve cap counts the session across every violations record, so a branch switch does
+  not reset it.
+- With `ci_gate_require_enforce_admins`, a ruleset-only requirement does not confirm.
+- `check-forgery` also covers workflow re-runs, `X-HTTP-Method-Override`, encoded or doubled
+  slashes, and GraphQL queries read from a file or `--input`.
+- ADR-0005 and SECURITY state what the GitHub Actions pin does not prove (a dispatch from the
+  agent's branch or a `pull_request` workflow also produces such a check run); the real control is
+  code-owner review plus the `verify-range.yml` hardening proposed in `HANDOFF.md`.
+
 ### Known issues and verification
 - **[NEEDS VERIFICATION]** The gate-detection fixtures (`plugins/evidence-sdlc/scripts/tests/fixtures/pilot62/`)
   were **built from GitHub's documented response shapes, not captured**: `gh api` failed in the

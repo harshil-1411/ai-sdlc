@@ -106,9 +106,17 @@ State these to anyone relying on the gates:
   commands (`hooks`, `statusLine`, `apiKeyHelper`, `env`, MCP servers) are always undone, and a
   system config file is exempt only when the session's user could not have written it. Tier 3
   in `acceptEdits`/`auto` depends on GitHub reporting `verify-range` as required and pinned to
-  GitHub Actions; creating commit statuses or check runs from a session is denied
-  (`check-forgery`). The local layer gains no authority: `verify-range` and code-owner review
-  decide what merges.
+  GitHub Actions, for a repository whose `origin` is `approval.github_repo`, read with a `gh`
+  the session's user cannot replace; creating commit statuses or check runs and re-running
+  workflows from a session is denied (`check-forgery`). The local layer gains no authority:
+  `verify-range` and code-owner review decide what merges.
+- **What the GitHub Actions pin does not prove.** A check run from the GitHub Actions app only
+  shows that some workflow produced it. A `workflow_dispatch` of `verify-range.yml` from the
+  agent's branch (`--ref`), which runs that branch's workflow and CLI, or a `pull_request`
+  workflow on the agent's branch with a job named `verify-range`, also produces one under the
+  required name. The real control is code-owner review (of `.github/**` and of the PR's head
+  commit) plus hardening `verify-range.yml` to refuse dispatch from any ref but `main` and to
+  always run the base's CLI; that hardening is proposed in `HANDOFF.md` for a human to apply.
 - **Very large repositories.** Each Bash call snapshots `git status`. If that exceeds
   the time limit, the call is recorded as unchecked (an integrity violation), not
   silently passed.

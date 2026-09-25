@@ -84,6 +84,31 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
 ### Code, in priority order
 0. **After PILOT-58 (2.1.0):**
    - **PILOT-62, local layer advisory: implemented in 2.2.0 (ADR-0005), not yet merged.** A verified restore is closed at birth (capped per session, shown by `verify-range` rule 5); `settings.local.json`, root-owned system config and `~/.claude.json` edits are judged by effect; Tier 3 in `acceptEdits`/`auto` is allowed when `verify-range` is read from GitHub as required and pinned to GitHub Actions; `check-forgery` denies posting statuses or check runs. **Owner actions after merge:** pin `verify-range` to GitHub Actions in branch protection, set `approval.github_repo` in the org policy, keep the org policy root-owned, and remove the machine-local permission-mode loosening once MAN-LLA-01 passes. The gate-detection fixtures were built from GitHub's documented shapes, not captured [NEEDS VERIFICATION].
+   - **Proposed `verify-range.yml` hardening (PILOT-62 review H4, for a human to apply; the agent does not edit `.github/workflows/`).** A GitHub Actions check run named `verify-range` is not proof by itself: `gh workflow run verify-range.yml --ref <branch>` runs that branch's workflow and CLI and attaches the result to the branch head. Proposed diff:
+     ```diff
+     @@ jobs:
+        verify-range:
+          runs-on: ubuntu-latest
+          timeout-minutes: 15
+     +    # a dispatch runs the dispatched ref's copy of this file: only main's copy may judge a PR
+     +    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+          steps:
+     +      - name: Refuse a dispatch from any ref but main
+     +        if: github.event_name == 'workflow_dispatch'
+     +        env:
+     +          REF: ${{ github.ref }}
+     +        run: test "$REF" = "refs/heads/main" || { echo "verify-range may only be dispatched from main"; exit 1; }
+     +
+            - name: Check out the base only (the trusted CLI)
+              uses: actions/checkout@v4
+              with:
+     -          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+     +          # always the base's evidence CLI: the PR's base for pull_request_target, main otherwise
+     +          ref: ${{ github.event.pull_request.base.sha || 'refs/heads/main' }}
+                fetch-depth: 0
+                persist-credentials: false
+     ```
+     Keep `.github/**` under code-owner review: a PR that edits this file, or adds a `pull_request` workflow with a job named `verify-range`, can still produce a GitHub Actions check under that name, and only the code owner's review stops it.
    - **PILOT-63, release automation (deferred from PILOT-62):** `verify-range --push-report` records "merged" in a signed CI artifact that the release command reads. Writing a signed `released` state from CI needs a commit on protected `main` and a human-authored workflow, so it is its own change.
    - **PILOT-59, concurrency and monitor gaps:** attested writes, a signed lease, chained snapshots, a pre-call `tool-start` audit entry (review A4), FIFO/device hashing in `_dirty` (B1), snapshot root mismatch (B2), snapshot directory 0700 plus an owner check (B3), `file_in_commit`-style fail-open sweeps. Also `cmdparse` merges the line after a heredoc into the previous command's argv, and the GitHub approval route doesn't compare the approver with the change's creator.
    - **PILOT-60, usability:** CI owns test results (ADR-0002), YAML comments, DUPLICATE-ID, the temp-dir false positives, `engine-tests.py -k` crash, split `deny_git_config_keys` so harmless global keys (`alias.*`, `core.editor`) aren't refused.

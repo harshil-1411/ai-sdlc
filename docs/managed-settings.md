@@ -265,6 +265,10 @@ recorded with a name and a date.
       `main`, set the required check's source to "GitHub Actions" (not "any source"), or give
       it `integration_id` 15368 in a ruleset. Tier 3 edits in `acceptEdits` and `auto` are
       allowed only when the engine reads that pin from GitHub; without it they stay denied.
+- [ ] **Give gate detection a root-owned `gh`** (2.2.0). Install `gh` where the developer's user
+      cannot write it (for example `sudo install -o root -m 0755 …/gh /usr/local/libexec/evidence-gh`)
+      and set `ci_gate_gh_path` to it in the org policy. A user-owned `gh` (Homebrew's) first on PATH
+      is refused, so without this Tier 3 auto modes stay denied.
 - [ ] **Set `approval.github_repo` in the org policy** (2.2.0). Gate detection reads GitHub only
       through `gh` pinned to that repository; an empty value means the gate is not confirmed.
 - [ ] **Keep the org policy root-owned** (2.2.0). Create `evidence-policy.json` and
