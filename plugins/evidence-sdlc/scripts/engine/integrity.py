@@ -168,8 +168,10 @@ def _local_settings_change(old_b64, cur_b64, pol=None):
     """How a change to settings.local.json made during a call is judged, by effect (REQ-LLA-05):
     ("grant", added) when the only difference is new permissions.allow entries (the B4 case);
     ("kept", summary) when every difference is an allow entry added or removed, a deny or ask
-    entry added, an additionalDirectories entry added or removed, or a top-level key listed in
-    local_settings_kept_keys; None for anything else, which is restored. Strict UTF-8, no BOM."""
+    entry added, an additionalDirectories entry removed, or a top-level key listed in
+    local_settings_kept_keys; None for anything else, which is restored. Strict UTF-8, no BOM.
+    A newly created file (old_b64 None) is kept only when its whole content is permissions.allow
+    entries (the 2.1.0 B4 grant); any other new file is removed like any created control-plane file."""
     pol = pol or {}
     try:
         # strict UTF-8 with no BOM: json.loads also takes UTF-16/32, which Claude Code may not read
@@ -181,6 +183,13 @@ def _local_settings_change(old_b64, cur_b64, pol=None):
     except (ValueError, TypeError, UnicodeDecodeError):
         return None
     if not isinstance(old, dict) or not isinstance(new, dict):
+        return None
+    if old_b64 is None:
+        perms = new.get("permissions")
+        allow = perms.get("allow") if isinstance(perms, dict) else None
+        if (set(new) == {"permissions"} and set(perms) == {"allow"} and isinstance(allow, list) and allow
+                and all(isinstance(x, str) for x in allow)):
+            return ("grant", list(dict.fromkeys(allow)))
         return None
     kept_keys = pol.get("local_settings_kept_keys", LOCAL_SETTINGS_KEPT_KEYS)
     kept_keys = [k for k in kept_keys if isinstance(k, str) and k != "permissions"] if isinstance(kept_keys, list) else []
@@ -195,7 +204,8 @@ def _local_settings_change(old_b64, cur_b64, pol=None):
     if not isinstance(op, dict) or not isinstance(np_, dict):
         return None
     # sub-key -> (additions allowed, removals allowed)
-    rules = {"allow": (True, True), "deny": (True, False), "ask": (True, False), "additionalDirectories": (True, True)}
+    # additionalDirectories additions widen what the agent's tools may reach, so only removals are kept
+    rules = {"allow": (True, True), "deny": (True, False), "ask": (True, False), "additionalDirectories": (False, True)}
     for k in sorted(set(op) | set(np_)):
         a, b = op.get(k, _ABSENT), np_.get(k, _ABSENT)
         if a == b:

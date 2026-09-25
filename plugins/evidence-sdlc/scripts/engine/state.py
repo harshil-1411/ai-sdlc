@@ -59,6 +59,18 @@ def _child_env():
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_") and k != "EVIDENCE_SIGNING_KEY"}
 
 
+_GH_ENV_KEEP = {"GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR"}
+
+
+def _gh_env():
+    """The environment for gh: _child_env without GH_* / GITHUB_* other than the token and the
+    config directory, and with GH_HOST pinned to github.com (PILOT-62 H2)."""
+    env = {k: v for k, v in _child_env().items()
+           if not (k.startswith(("GH_", "GITHUB_")) and k not in _GH_ENV_KEEP)}
+    env["GH_HOST"] = "github.com"
+    return env
+
+
 def _git_argv(args):
     sub = args[:1]
     extra = []
@@ -148,7 +160,7 @@ def check_git_config(cwd, policy=None):
     return reason
 
 
-def run_gh(args, cwd, repo, timeout=60):
+def run_gh(args, cwd, repo, timeout=60, exe=None):
     """Run gh against the pinned repository only (never whatever `gh repo view` resolves),
     without GIT_* or the key. Raises RuntimeError on refusal or failure."""
     if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
@@ -163,8 +175,8 @@ def run_gh(args, cwd, repo, timeout=60):
         argv = list(args)
     else:
         argv = list(args) + ["--repo", repo]
-    exe = os.environ.get("EVIDENCE_GH", "gh")
-    r = subprocess.run([exe] + argv, cwd=cwd, env=_child_env(), capture_output=True, text=True, timeout=timeout)
+    exe = exe or os.environ.get("EVIDENCE_GH", "gh")
+    r = subprocess.run([exe] + argv, cwd=cwd, env=_gh_env(), capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip() or f"gh {' '.join(argv)} failed")
     return r.stdout
@@ -658,10 +670,15 @@ def record_violations(root, key, state, branch, violations, session):
 
 
 def auto_resolved_count(root, key, branch, session):
-    """How many entries this session has had closed at birth as restored, across the change's and
-    the branch's records (REQ-LLA-03). An unreadable record reads as an open entry, which counts 0."""
+    """How many entries this session has had closed at birth as restored, across every violations
+    record in the repository (REQ-LLA-03): every change's and every branch's, so switching branch
+    or change does not reset the cap. An unreadable record reads as an open entry, which counts 0."""
+    import glob as _glob
+    paths = {violations_path(root, key, branch), violations_path(root, None, branch)}
+    paths.update(_glob.glob(os.path.join(root, ".evidence", "changes", "*", "violations.json")))
+    paths.update(_glob.glob(os.path.join(root, ".evidence", "violations", "*.json")))
     n = 0
-    for p in {violations_path(root, key, branch), violations_path(root, None, branch)}:
+    for p in paths:
         n += sum(1 for v in _read_violations(p)
                  if isinstance(v, dict) and v.get("resolved") == "restored" and v.get("session") == session)
     return n

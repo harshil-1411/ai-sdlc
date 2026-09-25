@@ -276,9 +276,78 @@ def _ci_gate_cache_rel(root):
     return "evidence-chain-ci-gate/" + hashlib.sha256(root.encode()).hexdigest()[:16] + ".json"
 
 
+def _origin_repo(root):
+    """owner/name (lower case) of the repository's `origin` remote when it is on github.com, over
+    https, ssh or scp-style ssh, with or without `.git`; None for no remote or anything else (H1)."""
+    url = (st.run_git(["remote", "get-url", "origin"], root) or "").strip()
+    m = (re.fullmatch(r"(?i)https://(?:[^@/\s]+@)?github\.com(?::443)?/([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url)
+         or re.fullmatch(r"(?i)ssh://(?:git@)?github\.com(?::22)?/([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url)
+         or re.fullmatch(r"(?i)(?:git@)?github\.com:([^/\s]+)/([^/\s]+?)(?:\.git)?/?", url))
+    if not m or not all(re.fullmatch(r"[A-Za-z0-9_.-]+", g) for g in m.groups()):
+        return None
+    return f"{m.group(1)}/{m.group(2)}".lower()
+
+
+def _gh_config_problem():
+    """Why the gh configuration cannot be trusted for gate detection, or None (H2): an
+    http_unix_socket redirects every API call, and a host other than github.com in hosts.yml means
+    gh may authenticate somewhere else."""
+    base = os.environ.get("GH_CONFIG_DIR") or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "gh")
+    for name in ("config.yml", "hosts.yml"):
+        p = os.path.join(base, name)
+        try:
+            text = open(p, encoding="utf-8", errors="replace").read(1 << 20)
+        except FileNotFoundError:
+            continue
+        except OSError as e:
+            return f"the gh configuration {p} could not be read ({e.strerror})"
+        if re.search(r"(?m)^\s*http_unix_socket\s*:\s*\S", text):
+            return f"the gh configuration {p} sets http_unix_socket, which could redirect the GitHub API"
+        if name == "hosts.yml":
+            hosts = re.findall(r"(?m)^([^\s#][^:]*):", text)
+            other = [h for h in hosts if h.strip().strip("'\"").lower() != "github.com"]
+            if other:
+                return f"the gh configuration {p} lists a host other than github.com ({other[0][:60]})"
+    return None
+
+
+def _dir_not_user_writable(d):
+    try:
+        return os.stat(d).st_uid != os.getuid() and not os.access(d, os.W_OK)
+    except OSError:
+        return False
+
+
+def _gate_gh(pol):
+    """(path, None) for the gh the gate may run, or (None, why) (H2). The org policy's absolute
+    `ci_gate_gh_path` wins; otherwise the first gh on PATH, which must be a file the session's user
+    could not have written (neither it nor its directory writable by the user). EVIDENCE_GH is not
+    used here."""
+    import integrity
+    pinned = pol.get("ci_gate_gh_path")
+    if pinned:
+        if not isinstance(pinned, str) or not os.path.isabs(pinned) or not os.path.isfile(pinned) \
+                or not os.access(pinned, os.X_OK):
+            return None, f"ci_gate_gh_path ({str(pinned)[:120]}) is not an absolute path to an executable file"
+        return pinned, None
+    for d in (os.environ.get("PATH") or "").split(os.pathsep):
+        cand = os.path.join(d, "gh") if d and os.path.isabs(d) else None
+        if cand and os.path.isfile(cand) and os.access(cand, os.X_OK):
+            real = os.path.realpath(cand)
+            # the file gh resolves to, and (for a link) the directory holding the link, are both beyond the user
+            link_ok = not os.path.islink(cand) or _dir_not_user_writable(os.path.dirname(cand))
+            if integrity._not_user_writable(real) and link_ok:
+                return real, None
+            return None, (f"the first gh on PATH ({cand}) is writable by the session's user, so its answer cannot be "
+                          "trusted; the organisation sets ci_gate_gh_path to a root-owned gh")
+    return None, "no gh executable was found on PATH"
+
+
 def _ci_gate_bind(ctx):
     pol = ctx.policy
     return {"root": ctx.root, "repo": (pol.get("approval") or {}).get("github_repo") or "",
+            "origin": _origin_repo(ctx.root), "gh_path": pol.get("ci_gate_gh_path") or "",
             "check": pol.get("ci_gate_check", "verify-range"), "app_id": pol.get("ci_gate_app_id", CI_GATE_APP_ID),
             "enforce_admins": bool(pol.get("ci_gate_require_enforce_admins", False)),
             "ttl": int(pol.get("ci_gate_cache_seconds", 900))}
@@ -322,13 +391,19 @@ def _ci_gate_fetch(ctx, bind):
     import time
     import urllib.parse
     repo, check, app = bind["repo"], bind["check"], bind["app_id"]
+    gh, why_gh = _gate_gh(ctx.policy)
+    if gh is None:
+        return False, why_gh, {}
+    why_cfg = _gh_config_problem()
+    if why_cfg:
+        return False, why_cfg, {}
     deadline = time.monotonic() + CI_GATE_BUDGET_SECONDS
 
     def api(path):
         left = deadline - time.monotonic()
         if left <= 1:
             raise RuntimeError("the time allowed for reading GitHub ran out")
-        return json.loads(st.run_gh(["api", path], ctx.root, repo, timeout=min(10, left)))
+        return json.loads(st.run_gh(["api", path], ctx.root, repo, timeout=min(10, left), exe=gh))
 
     def pinned(v):
         return isinstance(v, int) and not isinstance(v, bool) and v == app
@@ -365,6 +440,11 @@ def _ci_gate_fetch(ctx, bind):
                         found.append(c.get("integration_id"))
         ev["rulesets"] = {"integration_ids": found}
         if any(pinned(i) for i in found):
+            if bind["enforce_admins"]:
+                # the rules endpoint does not return a ruleset's bypass actors, so "no one bypasses" is unprovable
+                why.append(f"`{check}` is required on {branch} only by a ruleset, and ci_gate_require_enforce_admins is "
+                           "set: the engine cannot read a ruleset's bypass actors, so it cannot show admins are held to it")
+                return False, "; ".join(why), ev
             return True, f"`{check}` is required on {branch} by a ruleset, pinned to GitHub Actions", ev
         if found:
             why.append(f"`{check}` is required on {branch} by a ruleset but not pinned to GitHub Actions (app {app})")
@@ -407,6 +487,10 @@ def _ci_gate(ctx):
     bind = _ci_gate_bind(ctx)
     if not bind["repo"]:
         return False, "approval.github_repo is not set in the org policy, so the server gate cannot be read", {}
+    if bind["origin"] != bind["repo"].lower():
+        # the gate confirmed is the one on approval.github_repo; it governs only a repository pushing there (H1)
+        return False, (f"this repository's origin remote ({bind['origin'] or 'none on github.com'}) is not "
+                       f"approval.github_repo ({bind['repo']}), so that repository's server gate does not govern it"), {}
     cached = _ci_gate_cache_read(ctx, bind)
     if cached is not None:
         return cached
@@ -721,17 +805,36 @@ def _check_gh(ctx, s):
                 method = a.split("=", 1)[1].upper()
             elif a.startswith("-X") and len(a) > 2:
                 method = a[2:].lstrip("=").upper()
+        override = None
+        for i, a in enumerate(args):
+            hv = args[i + 1] if a in ("-H", "--header") and i + 1 < len(args) else (
+                a.split("=", 1)[1] if a.startswith("--header=") else (a[2:] if a.startswith("-H") and len(a) > 2 else None))
+            if hv and re.match(r"(?i)\s*x-http-method-override\s*:", hv):
+                override = hv.split(":", 1)[1].strip().upper() or "POST"
         endpoint = next((w for w in words[1:] if "/" in w), "")
         # REQ-LLA-10: a required check matched by name can be satisfied by a commit status or a check run
         # anyone with the token can post; the authority is the app pin (ADR-0005), this is early feedback.
         fields = any(a in ("-f", "-F", "--field", "--raw-field", "--input") or a.startswith(("-f", "-F", "--field=",
                                                                                                "--raw-field=", "--input="))
                      for a in args)
-        if any(re.search(r"/statuses/[^/\s]|/check-runs\b|/check-suites\b", w) for w in words[1:]) and (
-                method in ("POST", "PATCH", "PUT") or (method is None and fields)):
+
+        def _norm(w):  # percent-encoding and doubled slashes are resolved before matching (L1)
+            import urllib.parse
+            for _ in range(3):
+                w = urllib.parse.unquote(w)
+            return re.sub(r"/{2,}", "/", w)
+        targets = [_norm(w) for w in words[1:]]
+        writes = method in ("POST", "PATCH", "PUT") or override is not None or (method is None and fields)
+        if writes and any(re.search(r"/statuses/[^/\s]|/check-runs\b|/check-suites\b|/actions/(?:runs|jobs)/[^/\s]+/rerun", w)
+                          for w in targets):
             return deny("check-forgery",
-                        "Creating or updating a commit status or check run from an agent session is not allowed: a "
-                        "required check matched by name could be satisfied that way. CI posts checks; reading them is fine.")
+                        "Creating or updating a commit status or check run (or re-running a workflow) from an agent "
+                        "session is not allowed: a required check matched by name could be satisfied that way. CI posts "
+                        "checks; reading them is fine.")
+        if "graphql" in words and any(a == "--input" or a.startswith("--input=") or re.search(r"(?:^|=)query=@", a)
+                                      or (a.startswith("query=@")) for a in args):
+            return deny("check-forgery", "`gh api graphql` with the query read from a file or --input hides what it does "
+                                         "(it could create a check run); pass the query inline.")
         if method in ("PUT", "POST", "PATCH", "DELETE") and re.search(r"/merge\b|/protection\b|/rulesets\b|/branches/[^/]+/rename|/git/refs", endpoint):
             return deny("agent-merge",
                         f"`gh api -X {method} {endpoint}` changes merges, branch protection or refs. That is a human action.")
@@ -739,6 +842,9 @@ def _check_gh(ctx, s):
             return deny("agent-merge", "`gh api` with fields against a /merge endpoint is a merge; that is a human action.")
         if re.search(r"/dispatches\b", endpoint) and (method in ("POST", None)):
             return deny("workflow-dispatch", _DISPATCH_DENIED)
+    if words[:2] == ["run", "rerun"]:
+        return deny("check-forgery", "Re-running a workflow run from an agent session is not allowed: it can produce a "
+                                     "check run under a required check's name. A human re-runs checks.")
     if words[:2] == ["workflow", "run"] and any(a.startswith(("-r", "--ref")) for a in args):  # -rX, -r=X, --ref=X
         # dispatched from another ref (a PR branch), a workflow runs that branch's own YAML with the
         # repository's secrets, and can post a check under the merge gate's name (review, ADR-0004).

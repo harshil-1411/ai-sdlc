@@ -1920,7 +1920,22 @@ def suite_pilot62():
     import uuid
     import state as st
     KEYV = "k" * 40
-    KEY = {"EVIDENCE_SIGNING_KEY": KEYV}
+    # Every PILOT-62 case runs under an org policy that pins the shipped defaults it depends on, so a
+    # local edit of default-policy.json (enforce_claims, user_control_plane) cannot change the outcome.
+    ORG_BASE = {"unsigned_max_tier": 3, "enforce_claims": True, "tier3_distinct_approver": True,
+                "user_control_plane": ["~/.claude/settings.json", "~/.claude/settings.local.json", "~/.claude/plugins/**",
+                                       "~/.claude.json", "/Library/Application Support/ClaudeCode/**",
+                                       "/etc/claude-code/**"]}
+    ORG_DIR = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-org-"))
+    GHCFG = os.path.join(ORG_DIR, "ghcfg")
+    os.makedirs(GHCFG)
+
+    def org(name, **kw):
+        path = os.path.join(ORG_DIR, name + ".json")
+        json.dump(dict(ORG_BASE, **kw), open(path, "w"))
+        return path
+    ORG62 = org("base")
+    KEY = {"EVIDENCE_SIGNING_KEY": KEYV, "EVIDENCE_ORG_POLICY": ORG62, "GH_CONFIG_DIR": GHCFG}
     FIX = os.path.join(HERE, "fixtures", "pilot62")
     PUSH = "git push -u origin feature/ABC-1-login"
 
@@ -1985,8 +2000,10 @@ def suite_pilot62():
             ap = signing.sign(json.load(open(os.path.join(cdir, "approval.json"))))
             st.write_file(r, f".evidence/changes/{key}/approval.json", json.dumps(ap))
 
-    def signed_repo(tier=1, claims=("src/app.py",), extra=None):
+    def signed_repo(tier=1, claims=("src/app.py",), extra=None, origin=None):
         r = make_repo()
+        if origin:
+            sh(f"git remote add origin {origin}", r)
         start_change(r, tier=tier, claims=claims)
         sign_change(r)
         if extra:
@@ -2057,13 +2074,14 @@ def suite_pilot62():
     start_change(r)
     sh("git add -A && git commit -q -m 'ABC-1: c'", r)
     appr = os.path.join(r, appr_rel)
-    _, note = around(r, lambda: open(appr, "w").write('{"forged": true}'))
+    _, note = around(r, lambda: open(appr, "w").write('{"forged": true}'), env={"EVIDENCE_ORG_POLICY": ORG62})
     e = [v for v in entries(r) if v.get("path") == appr_rel]
-    got, reason = push(r, env=None)
+    UNSIGNED = {"EVIDENCE_ORG_POLICY": ORG62}
+    got, reason = push(r, env=UNSIGNED)
     check("REQ-LLA-02 unsigned mode: a control-plane change is recorded open, and push is denied",
           e and e[0].get("open") is True and "resolved" not in e[0] and got == "deny" and "integrity monitor" in reason,
           (e, reason))
-    check("REQ-LLA-02 unsigned mode: a source edit stays denied", edit_src(r, env=None)[0] == "deny", edit_src(r, env=None))
+    check("REQ-LLA-02 unsigned mode: a source edit stays denied", edit_src(r, env=UNSIGNED)[0] == "deny", edit_src(r, env=UNSIGNED))
     shutil.rmtree(r)
 
     def settings_file(r):
@@ -2163,9 +2181,20 @@ def suite_pilot62():
     check("REQ-LLA-03 the cap counts per session: another session's first restore is closed",
           e and e[0].get("open") is False, e)
     shutil.rmtree(r)
+    r = signed_repo()
+    appr = os.path.join(r, appr_rel)
+    for n in range(3):
+        around(r, lambda: open(appr, "w").write('{"forged": %d}' % n), env=KEY)
+    sh("git checkout -q -b feature/ABC-2-other", r)
+    _, note = around(r, lambda: open(appr, "w").write('{"forged": "after switch"}'), env=KEY)
+    e = [v for v in entries(r) if v.get("path") == appr_rel]
+    check("REQ-LLA-03 switching branch does not reset the cap: the fourth restore of the session, on another branch, is open",
+          len(e) == 4 and sorted(v.get("open") for v in e) == [False, False, False, True]
+          and "auto_resolve_max_per_session" in note, ([(v.get("open"), v.get("resolved")) for v in e], note[:200]))
+    shutil.rmtree(r)
 
     zero = os.path.join(tempfile.gettempdir(), "evidence-test-org-p62-zero.json")
-    json.dump({"unsigned_max_tier": 3, "auto_resolve_max_per_session": 0}, open(zero, "w"))
+    json.dump(dict(ORG_BASE, auto_resolve_max_per_session=0), open(zero, "w"))
     r = signed_repo()
     appr = os.path.join(r, appr_rel)
     _, note = around(r, lambda: open(appr, "w").write('{"forged": true}'), env=dict(KEY, EVIDENCE_ORG_POLICY=zero))
@@ -2231,8 +2260,36 @@ def suite_pilot62():
     p = base_sl["permissions"]
     sl_case(1, {"permissions": dict(p, allow=["Bash(ls)"]), "model": "opus"}, True,
             "an allow rule removed is kept and logged as config-change, not a violation")
-    sl_case(2, {"permissions": dict(p, additionalDirectories=["/tmp/a", "/tmp/b"]), "model": "opus"}, True,
-            "an additional directory added is kept")
+    sl_case(2, {"permissions": dict(p, additionalDirectories=["/tmp/a", "/tmp/b"]), "model": "opus"}, False,
+            "an additional directory added is restored (it widens what tools may reach)")
+    sl_case(14, {"permissions": dict(p, additionalDirectories=[]), "model": "opus"}, True,
+            "an additional directory removed is kept")
+
+    def sl_create(n, new, expect_kept, label):
+        r = signed_repo()
+        sl = os.path.join(r, ".claude", "settings.local.json")
+        sess = f"slc{n}"
+
+        def mutate():
+            os.makedirs(os.path.join(r, ".claude"), exist_ok=True)
+            open(sl, "w").write(json.dumps(new))
+        _, note = around(r, mutate, env=KEY, session=sess)
+        e = [v for v in entries(r) if v.get("path") == ".claude/settings.local.json"]
+        evs = [x.get("event") for x in events(r, sess)]
+        if expect_kept:
+            ok = os.path.isfile(sl) and json.load(open(sl)) == new and not e and "permission-grant" in evs
+        else:
+            ok = not os.path.exists(sl) and len(e) == 1 and e[0].get("action") == "removed" and "created" in note
+        check(f"REQ-LLA-05 {label}", ok, (note[:200], e, evs))
+        shutil.rmtree(r)
+    sl_create(1, {"permissions": {"allow": ["Bash(ls)"]}}, True,
+              "a new settings.local.json holding only permissions.allow entries is kept and logged (B4 grant)")
+    sl_create(2, {"permissions": {"allow": ["Bash(ls)"]}, "hooks": {"Stop": []}}, False,
+              "a new settings.local.json with anything besides allow entries (hooks) is removed like any created file")
+    sl_create(3, {"permissions": {"allow": ["Bash(ls)"], "additionalDirectories": ["/"]}}, False,
+              "a new settings.local.json adding a directory is removed")
+    sl_create(4, {"model": "opus"}, False,
+              "a new settings.local.json with only a kept display key is still removed (not diffed against {})")
     sl_case(3, {"permissions": dict(p, deny=["Bash(rm:*)", "Bash(curl:*)"], ask=["Bash(git push:*)"]), "model": "opus"}, True,
             "deny and ask rules added (tightening) are kept")
     sl_case(4, {"permissions": p, "model": "sonnet", "outputStyle": "Explanatory"}, True,
@@ -2259,7 +2316,7 @@ def suite_pilot62():
           nuw is not None and nuw("/etc/hosts") is True and nuw(sysf) is False,
           None if nuw is None else (nuw("/etc/hosts"), nuw(sysf)))
     org6 = os.path.join(scratch, "org.json")
-    json.dump({"unsigned_max_tier": 3, "user_control_plane": [sysf], "user_config_not_charged": [sysf]}, open(org6, "w"))
+    json.dump(dict(ORG_BASE, user_control_plane=[sysf], user_config_not_charged=[sysf]), open(org6, "w"))
     r = signed_repo()
     _, note = around(r, lambda: open(sysf, "w").write('{"a": 2}\n'), env=dict(KEY, EVIDENCE_ORG_POLICY=org6))
     e = [v for v in entries(r) if v.get("path") == sysf]
@@ -2354,6 +2411,7 @@ def suite_pilot62():
         gh = os.path.join(d, "gh")
         open(gh, "w").write("#!/bin/sh\n"
                             f"echo \"$@\" >> {d}/gh.log\n"
+                            f"env > {d}/gh.env\n"
                             + ("echo 'HTTP 502' >&2; exit 1\n" if fail else "")
                             + "case \"$*\" in\n"
                             f"  *rules/branches/*) cat {d}/rules.json;;\n"
@@ -2375,18 +2433,28 @@ def suite_pilot62():
     ci_gate = getattr(ep, "_ci_gate", None)
     pol0 = st.load_policy(os.path.realpath(tempfile.gettempdir()))
 
-    def gate(root, gh, **polx):
+    def gate_root(origin="https://github.com/o/r.git"):
+        root = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gate-"))
+        sh("git init -q", root)
+        if origin:
+            sh(f"git remote add origin {origin}", root)
+        return root
+
+    def gate(root, gh, env=None, **polx):
         if ci_gate is None:
             return (None, "no _ci_gate", {})
         pol = json.loads(json.dumps({k: v for k, v in pol0.items() if not k.startswith("_")}))
         pol["approval"] = dict(pol.get("approval") or {}, github_repo=polx.pop("repo", "o/r"))
+        if gh is not None:
+            pol["ci_gate_gh_path"] = gh
         pol.update(polx)
         ctx = types.SimpleNamespace(root=root, policy=pol, session="s1")
-        with keyenv({"EVIDENCE_GH": gh}):
+        with keyenv(dict({"GH_CONFIG_DIR": GHCFG, "GITHUB_API_URL": "https://evil.example", "GH_ENTERPRISE_TOKEN": "x"},
+                         **(env or {}))):
             return ci_gate(ctx)
 
     def scenario(label, expect, **kw):
-        root = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gate-"))
+        root = gate_root(kw.pop("origin", "https://github.com/o/r.git"))
         polx = kw.pop("polx", {})
         gh = fake_gh(os.path.join(root, "ghd"), **kw)
         res = gate(root, gh, **polx)
@@ -2448,7 +2516,7 @@ def suite_pilot62():
              dict(branch=with_check(level="everyone"), polx={"ci_gate_require_enforce_admins": True}))):
         root, _ = scenario(label, expect, **kw)
         shutil.rmtree(root)
-    root = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gate-"))
+    root = gate_root()
     gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
     res = gate(root, gh, repo="")
     check("REQ-LLA-09 an empty approval.github_repo does not confirm, and gh is never called",
@@ -2456,17 +2524,61 @@ def suite_pilot62():
           (res, gh_calls(os.path.join(root, "ghd"))))
     shutil.rmtree(root)
 
+    # H1: the gate governs only a repository whose origin is approval.github_repo
+    for label, origin in (("no origin remote", None), ("a different origin (o/x)", "https://github.com/o/x.git"),
+                          ("a lookalike origin (o/r-evil)", "git@github.com:o/r-evil.git"),
+                          ("a lookalike origin (evil/o/r)", "https://github.com/evil/o/r"),
+                          ("an origin on another host", "https://github.com.evil.example/o/r.git")):
+        root, _ = scenario(f"{label} does not confirm, even with the gate pinned on GitHub", False, branch=classic,
+                           origin=origin)
+        shutil.rmtree(root)
+    for label, origin in (("ssh", "git@github.com:O/R.git"), ("ssh url", "ssh://git@github.com/o/r"),
+                          ("https without .git", "https://github.com/o/r")):
+        root, _ = scenario(f"an origin matching approval.github_repo over {label} (case-insensitive) confirms", True,
+                           branch=classic, origin=origin)
+        shutil.rmtree(root)
+    # M2: with ci_gate_require_enforce_admins, a ruleset alone cannot show admins are held to the check
+    root, _ = scenario("with ci_gate_require_enforce_admins, a check required only by a ruleset does not confirm", False,
+                       branch=unprotected, rules_body=rules, polx={"ci_gate_require_enforce_admins": True})
+    shutil.rmtree(root)
+    # H2: gh is pinned; a user-writable gh on PATH is never trusted
+    root = gate_root()
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    res = gate(root, None, env={"PATH": os.path.join(root, "ghd") + os.pathsep + os.environ.get("PATH", "")})
+    check("REQ-LLA-09 a user-writable gh first on PATH (no ci_gate_gh_path) does not confirm, and is never run",
+          res[0] is False and "writable" in res[1] and gh_calls(os.path.join(root, "ghd")) == [],
+          (res, gh_calls(os.path.join(root, "ghd"))))
+    res = gate(root, gh)
+    genv = open(os.path.join(root, "ghd", "gh.env")).read() if os.path.isfile(os.path.join(root, "ghd", "gh.env")) else ""
+    check("REQ-LLA-09 gh runs with GH_HOST=github.com and without other GH_*/GITHUB_* overrides",
+          res[0] is True and "GH_HOST=github.com" in genv and "GITHUB_API_URL" not in genv
+          and "GH_ENTERPRISE_TOKEN" not in genv, (res, genv[:300]))
+    shutil.rmtree(root)
+    for label, fname, text in (("an http_unix_socket in the gh config", "config.yml", "http_unix_socket: /tmp/evil.sock\n"),
+                               ("a non-github.com host in gh hosts.yml", "hosts.yml",
+                                "github.com:\n    user: a\nghe.evil.example:\n    user: b\n")):
+        root = gate_root()
+        gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+        cfg = os.path.join(root, "ghcfg")
+        os.makedirs(cfg)
+        open(os.path.join(cfg, fname), "w").write(text)
+        res = gate(root, gh, env={"GH_CONFIG_DIR": cfg})
+        check(f"REQ-LLA-09 {label} does not confirm, and gh is never run",
+              res[0] is False and gh_calls(os.path.join(root, "ghd")) == [], (res, gh_calls(os.path.join(root, "ghd"))))
+        shutil.rmtree(root)
+
     # ---------------- REQ-LLA-08: Tier 3 auto modes follow the confirmed gate
     ghdir = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gh-"))
     gh_ok = fake_gh(os.path.join(ghdir, "ok"), branch=classic)
     gh_bad = fake_gh(os.path.join(ghdir, "bad"), branch=unprotected)
-    org8 = os.path.join(ghdir, "org.json")
-    json.dump({"unsigned_max_tier": 3, "approval": {"github_repo": "o/r"}}, open(org8, "w"))
-    org8off = os.path.join(ghdir, "org-off.json")
-    json.dump({"unsigned_max_tier": 3, "approval": {"github_repo": "o/r"}, "tier3_auto_modes_with_required_gate": False},
-              open(org8off, "w"))
-    E8 = dict(KEY, EVIDENCE_ORG_POLICY=org8, EVIDENCE_GH=gh_ok)
-    r = signed_repo(tier=3, claims=("src/**",))
+    org8 = org("org8", approval={"github_repo": "o/r"}, ci_gate_gh_path=gh_ok)
+    org8bad = org("org8bad", approval={"github_repo": "o/r"}, ci_gate_gh_path=gh_bad)
+    org8off = org("org8off", approval={"github_repo": "o/r"}, ci_gate_gh_path=gh_ok,
+                  tier3_auto_modes_with_required_gate=False)
+    org8norepo = org("org8norepo", ci_gate_gh_path=gh_ok)
+    E8 = dict(KEY, EVIDENCE_ORG_POLICY=org8)
+    ORIGIN = "https://github.com/o/r.git"
+    r = signed_repo(tier=3, claims=("src/**",), origin=ORIGIN)
     for mode in ("auto", "acceptEdits"):
         got, reason = edit_src(r, env=E8, perm=mode, path="src/auth/login.py")
         check(f"REQ-LLA-08 a Tier 3 edit in {mode} mode is allowed when the gate is confirmed", got == "allow", reason)
@@ -2482,22 +2594,30 @@ def suite_pilot62():
     check("REQ-LLA-08 the flag false in the org policy denies the Tier 3 auto-mode edit",
           got == "deny" and "tier3_auto_modes_with_required_gate" in reason, reason)
     shutil.rmtree(r)
-    r = signed_repo(tier=3, claims=("src/**",), extra=lambda r: open(os.path.join(r, ".evidence", "policy.json"), "w").write(
+    r = signed_repo(tier=3, claims=("src/**",), origin=ORIGIN, extra=lambda r: open(os.path.join(r, ".evidence", "policy.json"), "w").write(
         json.dumps({"tier3_auto_modes_with_required_gate": True})))
     got, reason = edit_src(r, env=dict(E8, EVIDENCE_ORG_POLICY=org8off), perm="auto", path="src/auth/login.py")
     check("REQ-LLA-08 a repository policy setting the flag true when the org sets it false is ignored (denied)",
           got == "deny" and "tier3_auto_modes_with_required_gate" in reason, reason)
     shutil.rmtree(r)
-    r = signed_repo(tier=3, claims=("src/**",))
-    got, reason = edit_src(r, env=dict(E8, EVIDENCE_GH=gh_bad), perm="auto", path="src/auth/login.py")
+    r = signed_repo(tier=3, claims=("src/**",), origin=ORIGIN)
+    got, reason = edit_src(r, env=dict(E8, EVIDENCE_ORG_POLICY=org8bad), perm="auto", path="src/auth/login.py")
     check("REQ-LLA-08 when the gate is not confirmed the denial names the cause and the owner action",
           got == "deny" and "verify-range" in reason and "not required" in reason, reason)
     shutil.rmtree(r)
-    r = signed_repo(tier=3, claims=("src/**",))
-    got, reason = edit_src(r, env=dict(KEY, EVIDENCE_GH=gh_ok), perm="auto", path="src/auth/login.py")
+    r = signed_repo(tier=3, claims=("src/**",), origin=ORIGIN)
+    got, reason = edit_src(r, env=dict(KEY, EVIDENCE_ORG_POLICY=org8norepo), perm="auto", path="src/auth/login.py")
     check("REQ-LLA-08 with no approval.github_repo the Tier 3 auto-mode edit is denied, naming it",
           got == "deny" and "github_repo" in reason, reason)
     shutil.rmtree(r)
+    for label, origin in (("no origin remote", None), ("a different origin", "https://github.com/o/x.git"),
+                          ("a lookalike origin (o/r-evil)", "https://github.com/o/r-evil.git"),
+                          ("a lookalike origin (evil/o/r)", "git@github.com:evil/o/r.git")):
+        r = signed_repo(tier=3, claims=("src/**",), origin=origin)
+        got, reason = edit_src(r, env=E8, perm="auto", path="src/auth/login.py")
+        check(f"REQ-LLA-08 a repository with {label} is denied Tier 3 auto mode although o/r's gate is confirmed",
+              got == "deny" and "origin" in reason, reason)
+        shutil.rmtree(r)
     shutil.rmtree(ghdir)
 
     # ---------------- REQ-LLA-10: creating a commit status or check run is check-forgery
@@ -2507,14 +2627,26 @@ def suite_pilot62():
               "gh api repos/o/r/check-runs -X POST -f name=verify-range -f head_sha=abc",
               "gh api --method=PATCH repos/o/r/check-runs/1 -f conclusion=success",
               "gh api -XPOST repos/o/r/check-suites -f head_sha=abc",
-              "gh api repos/o/r/check-runs --input run.json"):
+              "gh api repos/o/r/check-runs --input run.json",
+              "gh api -X POST repos/o/r/actions/runs/42/rerun",
+              "gh api -X POST repos/o/r/actions/runs/42/rerun-failed-jobs",
+              "gh api -X POST repos/o/r/actions/jobs/7/rerun",
+              "gh run rerun 42",
+              "gh api -H 'X-HTTP-Method-Override: POST' repos/o/r/statuses/abc",
+              "gh api -X POST repos/o/r//statuses/abc -f state=success",
+              "gh api -X POST repos/o/r/%73tatuses/abc -f state=success",
+              "gh api -X POST repos/o/r/check%2Druns -f name=verify-range",
+              "gh api graphql -F query=@mutation.graphql",
+              "gh api graphql --input q.json"):
         t, i = bash(c)
-        case(f"REQ-LLA-10 check-forgery denied: {c[:60]}", r, t, i, "deny", rule_hint="commit status or check run")
+        case(f"REQ-LLA-10 check-forgery denied: {c[:70]}", r, t, i, "deny", rule_hint="check")
     for c in ("gh api repos/o/r/commits/abc/check-runs", "gh api repos/o/r/commits/abc/statuses",
-              "gh api repos/o/r/commits/abc/status"):
+              "gh api repos/o/r/commits/abc/status", "gh api repos/o/r/actions/runs/42",
+              "gh api graphql -f query='{ viewer { login } }'"):
         t, i = bash(c)
         case(f"REQ-LLA-10 reading checks or statuses is allowed: {c[:60]}", r, t, i, "allow")
     shutil.rmtree(r)
+    shutil.rmtree(ORG_DIR)
 
 
 if __name__ == "__main__":
