@@ -670,10 +670,16 @@ _CHUNK, _OVERLAP = 1 << 20, 4096
 class _Findings:
     def __init__(self):
         self.items = []
+        self.notes = []
 
     def fail(self, rule, msg):
         if (rule, msg) not in self.items:
             self.items.append((rule, msg))
+
+    def note(self, msg):
+        """Shown to the code owner in the report; never a failure (REQ-LLA-04)."""
+        if msg not in self.notes:
+            self.notes.append(msg)
 
 
 def _vg(root, args, text=True):
@@ -1018,6 +1024,19 @@ def _record_transition(path, old, new, where, other, F):
                 F.fail(5, f"{path}: open violation {v.get('path')} ({v.get('rule')}) removed in {where}")
             elif not w.get("open") and not w.get("cleared_by"):
                 F.fail(5, f"{path}: violation {v.get('path')} ({v.get('rule')}) closed without a signed clear in {where}")
+        # entries that first appear here (REQ-LLA-04): closed at birth only by a verified undo of an
+        # auto-resolvable rule, which is shown to the code owner, or by a signed clear
+        import integrity
+        was_keys = {_vkey(v) for v in _violation_entries(old or {})}
+        for w in _violation_entries(new):
+            if not isinstance(w, dict) or _vkey(w) in was_keys or w.get("open") or w.get("cleared_by"):
+                continue
+            if w.get("resolved") == "restored" and (w.get("rule"), w.get("action")) in integrity.AUTO_RESOLVABLE:
+                F.note(f"{path}: {w.get('path')} ({w.get('rule')}) was undone by the integrity monitor and recorded "
+                       f"closed (session {w.get('session')}, {w.get('at')}); nothing to clear, shown for review")
+            else:
+                F.fail(5, f"{path}: violation {w.get('path')} ({w.get('rule')}) first appears closed in {where} without "
+                          "a signed clear or a verified restore")
     if not other:
         return
     if old is None:
@@ -1249,6 +1268,8 @@ def cmd_verify_range(args):
         (_verify_push if args.push_report else _verify_pr)(root, F)
     except Exception as e:  # never a traceback, never a pass
         F.fail(0, f"verify-range could not complete ({type(e).__name__}: {e})")
+    for msg in F.notes:
+        print(f"NOTE: {msg}")
     for rule, msg in F.items:
         print(f"FAIL rule {rule}: {msg}")
     if args.push_report:
