@@ -489,6 +489,64 @@ def verify_range_tests():
     case("a merge of a shared log both sides appended to", None, shared_log_both_sides,
          fixture=lambda: vr_fixture(base_extra=lambda d: _vr_shared_log(d)))
 
+    # Security review (step 11): shapes that hid from per-commit checks
+    def rename_log_away_and_back(d, b, h):
+        with Signed() as s:
+            s.st.audit_append(d, "old", {"event": "deny", "key": "ABC-0"})
+            s.st.audit_append(d, "old", {"event": "integrity-violation", "key": "ABC-0"})
+        vr_git(d, "git checkout -q main && git add -A && git commit -q -m 'ABC-0: log'")
+        nb = vr_git(d, "git rev-parse HEAD")
+        vr_git(d, f"git checkout -q feature/ABC-7-login && git merge -q --no-ff -m \"Merge branch 'main' into feature/ABC-7-login\" main")
+        log = os.path.join(d, ".evidence", "audit", "old.jsonl")
+        first = open(log).read().splitlines(True)[:1]
+        vr_git(d, "git mv .evidence/audit/old.jsonl .evidence/audit/x.jsonl")
+        vr_commit(d, "ABC-7: move a log")
+        vr_git(d, "git rm -q .evidence/audit/x.jsonl")
+        w(d, ".evidence/audit/old.jsonl", "".join(first))  # back, with its tail cut off
+        return {"base": nb, "head": vr_commit(d, "ABC-7: put it back")}
+    case("an audit log renamed away and added back truncated", 4, rename_log_away_and_back)
+
+    def rename_record_away_and_back(d, b, h):
+        vpath = os.path.join(d, ".evidence/changes/ABC-3/violations.json")
+        with Signed() as s:
+            s.st.write_violations(vpath, [{"path": "x", "rule": "r", "at": "t", "open": True}], d)
+        vr_git(d, "git mv .evidence/changes/ABC-3/violations.json .evidence/changes/ABC-3/v.json")
+        vr_commit(d, "ABC-7: move a record")
+        vr_git(d, "git rm -q .evidence/changes/ABC-3/v.json")
+        with Signed() as s:
+            s.st.write_violations(vpath, [], d)  # back, without the open violation
+        return vr_commit(d, "ABC-7: put it back")
+
+    def open_violation_at_base(d):
+        vr_state(d, key="ABC-3")
+        with Signed() as s:
+            s.st.write_violations(os.path.join(d, ".evidence/changes/ABC-3/violations.json"),
+                                  [{"path": "x", "rule": "r", "at": "t", "open": True}], d)
+    case("another change's violations renamed away and added back without the open one", 5, rename_record_away_and_back,
+         fixture=lambda: vr_fixture(base_extra=open_violation_at_base))
+
+    def old_base_merge(d, b, h):
+        m_old = b  # ABC-3 is implementing here
+        vr_git(d, "git checkout -q main")
+        vr_state(d, key="ABC-3", stage="released")
+        vr_git(d, "git add -A && git commit -q -m 'ABC-3: release'")
+        nb = vr_git(d, "git rev-parse HEAD")
+        vr_git(d, f"git checkout -q feature/ABC-7-login && git merge -q --no-ff -m \"Merge branch 'main' into feature/ABC-7-login\" main")
+        subprocess.run(f"git merge -q -s ours --no-commit {m_old}", shell=True, cwd=d, env=ENV, capture_output=True)
+        vr_git(d, f"git checkout {m_old} -- .evidence/changes/ABC-3/state.json")
+        return {"base": nb, "head": vr_commit(d, "ABC-7: merge an old main commit")}
+    case("a crafted merge of an old base commit that rolls back another change's release", 5, old_base_merge,
+         fixture=lambda: vr_fixture(base_extra=other_change))
+
+    case("an unclaimed change to .evidence/policy.json", 2,
+         lambda d, b, h: (w(d, ".evidence/policy.json", "{\"verify_range_allow_large\": [\"**\"]}\n"),
+                          vr_commit(d, "ABC-7: loosen policy"))[1])
+    case("a PR that targets another branch than the default", 0,
+         lambda d, b, h: {"event": {"pull_request": {"number": 5, "base": {"sha": b, "ref": "develop"},
+                                                     "head": {"sha": h, "ref": "feature/ABC-7-login"},
+                                                     "user": {"login": "dev"}},
+                                    "repository": {"default_branch": "main"}}})
+
     def copied_approval(d, b, h):
         with Signed() as s:
             rec = s.signing.sign({"key": "ABC-3", "plan_path": "plan/ABC-7.md", "approver": "lead", "method": "github",

@@ -159,9 +159,13 @@ def _permission_grant(old_b64, cur_b64):
     settings.local.json is new entries in permissions.allow (what Claude Code writes when the
     human answers "don't ask again"); otherwise None."""
     try:
-        old = json.loads(base64.b64decode(old_b64)) if old_b64 else {}
-        new = json.loads(base64.b64decode(cur_b64))
-    except (ValueError, TypeError):
+        # strict UTF-8 with no BOM: json.loads also takes UTF-16/32, which Claude Code may not read
+        old = json.loads(base64.b64decode(old_b64).decode("utf-8")) if old_b64 else {}
+        raw = base64.b64decode(cur_b64)
+        if raw.startswith(b"\xef\xbb\xbf"):
+            return None
+        new = json.loads(raw.decode("utf-8"))
+    except (ValueError, TypeError, UnicodeDecodeError):
         return None
     if not isinstance(old, dict) or not isinstance(new, dict):
         return None

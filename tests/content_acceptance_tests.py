@@ -336,7 +336,7 @@ runs = run_blocks(vr)
 perms = re.search(r"^permissions:\s*\n((?:\s+.*\n)+)", vr, re.M)
 check("REQ-IMH-21 verify-range.yml runs on pull_request_target (opened, synchronize, reopened), workflow_dispatch with a "
       "PR number, and push to main",
-      re.search(r"pull_request_target:\s*\n\s+types:\s*\[\s*opened,\s*synchronize,\s*reopened\s*\]", vr)
+      re.search(r"pull_request_target:\s*\n\s+types:\s*\[\s*opened,\s*synchronize,\s*reopened(?:,\s*edited)?\s*\]", vr)
       and re.search(r"workflow_dispatch:\s*\n\s+inputs:\s*\n\s+pr:", vr)
       and re.search(r"push:\s*\n\s+branches:\s*\[\s*main\s*\]", vr), vr[:400])
 check("REQ-IMH-21 checks out only the base, full depth, without persisted credentials",

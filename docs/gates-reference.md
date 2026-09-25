@@ -30,9 +30,9 @@ with git plumbing and executes nothing from the PR. It fails the PR when (ADR-00
 
 | Rule | Fails when |
 | --- | --- |
-| 0 | the event, SHAs, signing key (32+ characters) or token are missing or malformed, or the fetched PR head is not the event's head |
+| 0 | the event, SHAs, signing key (32+ characters) or token are missing or malformed, the fetched PR head is not the event's head, or the PR doesn't target the default branch |
 | 1 | the head branch doesn't carry exactly one change key; a commit lacks the key or an `Agent-Session:` / `Human-Commit:` trailer; the change state is unsigned or released; `approval.json` doesn't match the plan's hash; or no **code owner** of every changed path (the base's `CODEOWNERS`, last matching rule) approved the **head commit**, other than the PR author |
-| 2 | any path outside `.evidence/**`, in any commit, any merge or the net diff, is outside the plan's claims |
+| 2 | any path, in any commit, any merge or the net diff, is outside the plan's claims. Only `.evidence/audit/`, `.evidence/changes/` and `.evidence/violations/` are exempt, because rules 4–5 judge them; `.evidence/policy.json` and the secrets allow-list must be claimed |
 | 3 | an added blob holds a possible secret, or is over `verify_range_blob_cap_mb` and not on `verify_range_allow_large` |
 | 4 | a named session's audit log is missing or doesn't verify, a base log is deleted, or any log is not an append-only extension of its parent's |
 | 5 | a change record is unsigned, deleted or rolled back, a violation is closed without a signed clear, or another change's record is edited other than by a signed release or clear |

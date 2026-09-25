@@ -697,13 +697,23 @@ def _merge_base(root, base, head):
     return out.strip() if out else None
 
 
+def _update_parent(root, parents, p, base):
+    """A merge's non-first parent `p` is an update from the base: it is in the base, and it is newer
+    than what the branch already had (it descends from where the first parent meets the base), so an
+    old base commit can't be merged in to bring back old records."""
+    if not _is_ancestor(root, p, base):
+        return False
+    meet = _merge_base(root, parents[0], base)
+    return bool(meet) and _is_ancestor(root, meet, p)
+
+
 def _from_base_side(root, c, parents, path, base):
     """True when a merge commit's version of path is exactly a non-first parent's, and that parent
-    is already in the base: the content came in with an update from the base, not from this PR."""
+    is an update from the base: the content came in from the base, not from this PR."""
     here = (_vg(root, ["rev-parse", "-q", "--verify", f"{c}:{path}"]) or "").strip()
     for p in parents[1:]:
         there = (_vg(root, ["rev-parse", "-q", "--verify", f"{p}:{path}"]) or "").strip()
-        if here and here == there and _is_ancestor(root, p, base):
+        if here and here == there and _update_parent(root, parents, p, base):
             return True
     return False
 
@@ -765,7 +775,9 @@ def _codeowners(root, base):
 def _owners_of(rules, path):
     got = None
     for pat, owners in rules:  # the last matching rule wins
-        if st.glob_to_regex(pat).match(path):
+        # as on GitHub, a pattern without wildcards also owns everything under it (`/apps/foo`, `docs`)
+        if st.glob_to_regex(pat).match(path) or (
+                not any(ch in pat for ch in "*?[") and st.glob_to_regex(pat.rstrip("/") + "/**").match(path)):
             got = owners
     return got
 
@@ -806,8 +818,8 @@ def _check_paths(entries, claims, where, F):
     """Rule 2: every added, modified, deleted, type-changed or renamed path outside .evidence/ is claimed."""
     for status, paths in entries:
         for p in paths:
-            if p == ".evidence" or p.startswith(".evidence/"):
-                continue  # judged by rules 4-5
+            if p.startswith((".evidence/audit/", ".evidence/changes/", ".evidence/violations/")):
+                continue  # judged by rules 4-5; the rest of .evidence/ (policy, allow-list, context) is claimed like source
             if not st.claim_matches(p, claims):
                 F.fail(2, f"{p} ({status[:1]} in {where}) is outside the approved plan's claims")
 
@@ -876,8 +888,8 @@ def _check_audit(root, base, head, commits, sessions, F):
             F.fail(4, f"the audit log of session {s} (.evidence/audit/{name}) is missing at the head")
             continue
         ok, problems = st.audit_verify_lines(name, text.splitlines(), [])
-        if not ok:
-            F.fail(4, f".evidence/audit/{name} does not verify: {'; '.join(problems[:3])}")
+        if not ok or not text.strip():
+            F.fail(4, f".evidence/audit/{name} does not verify: {'; '.join(problems[:3]) or 'it is empty'}")
     mb = _merge_base(root, base, head)
     base_logs = _vg(root, ["ls-tree", "-r", "--name-only", "-z", mb, "--", ".evidence/audit"]) if mb else None
     if base_logs is None:
@@ -887,16 +899,27 @@ def _check_audit(root, base, head, commits, sessions, F):
         was, now = _mode_at(root, mb, p), _mode_at(root, head, p)
         if was is None or now is None or now != was:
             F.fail(4, f"{p}, which existed where the branch left the base, is deleted or type-changed at the head")
+            continue
+        # whole range, whatever the commit shape (a rename away and an add back, a crafted merge):
+        # every line of the log where the branch left the base is still in the head's. (Not a
+        # byte-prefix: after an update merge the merge-base holds the base's appends too.)
+        old, new = _blob_at(root, mb, p, text=False), _blob_at(root, head, p, text=False)
+        if old is None or new is None or not set(old.splitlines()) <= set(new.splitlines()):
+            F.fail(4, f"{p} at the head has lost lines of the log where the branch left the base (truncated or rewritten)")
     for c, *parents in commits:
         for n, p in enumerate(parents):
-            out = _vg(root, ["diff", "--name-only", "-z", p, c, "--", ".evidence/audit"])
+            out = _vg(root, ["diff", "--no-renames", "--name-only", "-z", p, c, "--", ".evidence/audit"])
             if out is None:
                 F.fail(4, f"git could not compare the audit logs of {c[:12]} with its parent")
                 continue
             for path in filter(None, out.split("\0")):
-                old = _blob_at(root, p, path, text=False)
-                if old is None:
+                mode = _mode_at(root, p, path)
+                if mode is None:
+                    F.fail(4, f"git could not read {path} in the parent of {c[:12]}")
+                    continue
+                if mode == "":
                     continue  # a new log; named sessions' logs are verified above
+                old = _blob_at(root, p, path, text=False)
                 new = _blob_at(root, c, path, text=False)
                 same_type = new is not None and _mode_at(root, c, path) == _mode_at(root, p, path)
                 if n == 0:
@@ -919,7 +942,7 @@ def _check_records(root, base, head, commits, key, own_branch_file, F):
         return bool(m) and key is not None and (m.group(1) == key or m.group(3) == own_branch_file)
 
     mb = _merge_base(root, base, head)
-    net = _vg(root, ["diff", "--name-only", "-z", f"{base}...{head}", "--", ".evidence"])
+    net = _vg(root, ["diff", "--no-renames", "--name-only", "-z", f"{base}...{head}", "--", ".evidence"])
     if net is None or mb is None:
         F.fail(5, "git could not list the change records that differ from the base")
         return
@@ -946,73 +969,90 @@ def _check_records(root, base, head, commits, key, own_branch_file, F):
         was, now = _mode_at(root, mb, path), _mode_at(root, head, path)
         if was is None or now is None or now != was:
             F.fail(5, f"{path}, which existed where the branch left the base, is deleted or type-changed at the head")
+        else:
+            # whole range, whatever the commit shape (a rename away and an add back, a crafted merge):
+            # the record where the branch left the base, against the head's; a head version equal to
+            # the base tip's came from the base itself
+            if _vg(root, ["rev-parse", "-q", "--verify", f"{head}:{path}"]) == \
+                    _vg(root, ["rev-parse", "-q", "--verify", f"{base}:{path}"]):
+                continue
+            _record_transition(path, _json_at(root, mb, path), _json_at(root, head, path), "the range",
+                               key is not None and not mine(path), F)
     for c, *parents in commits:
         # a merge is judged against its first parent; what its other parents bring in from the
         # base was judged when it merged there
         for p in parents[:1]:
-            out = _vg(root, ["diff", "--name-only", "-z", p, c, "--", ".evidence"])
+            out = _vg(root, ["diff", "--no-renames", "--name-only", "-z", p, c, "--", ".evidence"])
             if out is None:
                 F.fail(5, f"git could not compare the change records of {c[:12]} with its parent")
                 continue
             for path in filter(None, out.split("\0")):
-                m = _RECORD.match(path)
-                if not m:
+                if not _RECORD.match(path):
                     continue
                 if len(parents) > 1 and _from_base_side(root, c, parents, path, base):
                     continue
-                old, new = _json_at(root, p, path), _json_at(root, c, path)
-                if new is None:
-                    if old is not None:
-                        F.fail(5, f"{path} is deleted in {c[:12]}")
-                    continue
-                kind = m.group(2) or "violations"
-                if kind == "state" and old is not None:
-                    a, b = _stage_index(old), _stage_index(new)
-                    if a is None or b is None or b < a:
-                        F.fail(5, f"{path}: stage moves from {old.get('stage')} to {new.get('stage')} in {c[:12]}")
-                if kind == "violations":
-                    now = {_vkey(v): v for v in _violation_entries(new)}
-                    for v in _violation_entries(old or {}):
-                        if not v.get("open"):
-                            continue
-                        w = now.get(_vkey(v))
-                        if w is None:
-                            F.fail(5, f"{path}: open violation {v.get('path')} ({v.get('rule')}) removed in {c[:12]}")
-                        elif not w.get("open") and not w.get("cleared_by"):
-                            F.fail(5, f"{path}: violation {v.get('path')} ({v.get('rule')}) closed without a signed "
-                                      f"clear in {c[:12]}")
-                if key is None or mine(path):
-                    continue
-                if old is None:
-                    if kind == "approval":  # a change's approval arrives with its own PR, never in another's
-                        F.fail(5, f"{path} (another change's approval) is added in {c[:12]}")
-                    continue
-                # another change's record: only a signed release or a signed clear
-                if kind == "state":
-                    def rest(r):
-                        return {k: v for k, v in r.items() if k not in ("stage", "history", "sig")}
-                    if not (new.get("stage") == "released" and rest(new) == rest(old)):
-                        F.fail(5, f"{path} (another change) is edited in {c[:12]} other than by a release")
-                elif kind == "approval":
-                    if new != old:
-                        F.fail(5, f"{path} (another change) is edited in {c[:12]}")
-                else:
-                    was = {_vkey(v): v for v in _violation_entries(old)}
-                    for k2, w in {_vkey(v): v for v in _violation_entries(new)}.items():
-                        v = was.get(k2)
-                        closed = v is not None and v.get("open") and not w.get("open") and w.get("cleared_by")
-                        if v is None or (w != v and not closed):
-                            F.fail(5, f"{path} (another change) is edited in {c[:12]} other than by a signed clear")
+                _record_transition(path, _json_at(root, p, path), _json_at(root, c, path), c[:12],
+                                   key is not None and not mine(path), F)
+
+
+def _record_transition(path, old, new, where, other, F):
+    """Rule 5 for one record between two versions: never deleted, stages never regress, open
+    violations never removed or closed without a signed clear; for another change's record
+    (`other`), only a signed release or a signed clear, and never a new approval."""
+    kind = _RECORD.match(path).group(2) or "violations"
+    if new is None:
+        if old is not None:
+            F.fail(5, f"{path} is deleted in {where}")
+        return
+    if kind == "state" and old is not None:
+        a, b = _stage_index(old), _stage_index(new)
+        if a is None or b is None or b < a:
+            F.fail(5, f"{path}: stage moves from {old.get('stage')} to {new.get('stage')} in {where}")
+    if kind == "violations":
+        now = {_vkey(v): v for v in _violation_entries(new)}
+        for v in _violation_entries(old or {}):
+            if not v.get("open"):
+                continue
+            w = now.get(_vkey(v))
+            if w is None:
+                F.fail(5, f"{path}: open violation {v.get('path')} ({v.get('rule')}) removed in {where}")
+            elif not w.get("open") and not w.get("cleared_by"):
+                F.fail(5, f"{path}: violation {v.get('path')} ({v.get('rule')}) closed without a signed clear in {where}")
+    if not other:
+        return
+    if old is None:
+        if kind == "approval":  # a change's approval arrives with its own PR, never in another's
+            F.fail(5, f"{path} (another change's approval) is added in {where}")
+        return
+    if kind == "state":
+        def rest(r):
+            return {k: v for k, v in r.items() if k not in ("stage", "history", "sig")}
+        if new != old and not (new.get("stage") == "released" and rest(new) == rest(old)):
+            F.fail(5, f"{path} (another change) is edited in {where} other than by a release")
+    elif kind == "approval":
+        if new != old:
+            F.fail(5, f"{path} (another change) is edited in {where}")
+    else:
+        was = {_vkey(v): v for v in _violation_entries(old)}
+        for k2, w in {_vkey(v): v for v in _violation_entries(new)}.items():
+            v = was.get(k2)
+            closed = v is not None and v.get("open") and not w.get("open") and w.get("cleared_by")
+            if v is None or (w != v and not closed):
+                F.fail(5, f"{path} (another change) is edited in {where} other than by a signed clear")
 
 
 def _review_approval(root, repo, number, head, author, paths, base, F):
     """Rule 1: an APPROVED review on the head SHA, not by the PR author, from a user who owns every
     changed path by the base's CODEOWNERS (last matching rule; team owners unsupported)."""
     try:
-        reviews = json.loads(st.run_gh(["api", f"repos/{repo}/pulls/{number}/reviews?per_page=100"], root, repo))
+        # every page: a later CHANGES_REQUESTED must not hide behind 100 padding reviews
+        reviews = json.loads(st.run_gh(["api", "--paginate", "--slurp", f"repos/{repo}/pulls/{number}/reviews?per_page=100"],
+                                       root, repo))
     except (RuntimeError, ValueError, OSError) as e:
         F.fail(1, f"could not read the PR's reviews: {e}")
         return
+    if isinstance(reviews, list) and reviews and all(isinstance(pg, list) for pg in reviews):
+        reviews = [rv for pg in reviews for rv in pg]  # --slurp: one list per page
     latest = {}
     for rv in reviews if isinstance(reviews, list) else []:
         login = ((rv.get("user") or {}).get("login") or "").lower()
@@ -1078,6 +1118,11 @@ def _verify_pr(root, F):
     if not isinstance(number, int) or not _SHA.fullmatch(base) or not _SHA.fullmatch(head):
         F.fail(0, "the PR number, base SHA or head SHA is missing or malformed")
         return
+    default = ((ev.get("repository") or {}).get("default_branch")
+               or (((pr.get("base") or {}).get("repo") or {}).get("default_branch")))
+    base_ref = (pr.get("base") or {}).get("ref")
+    if default and base_ref != default:
+        F.fail(0, f"the PR targets {base_ref!r}, not the default branch {default!r}; verify-range gates merges into it")
     fetched = (_vg(root, ["rev-parse", "--verify", "-q", f"refs/pull/{number}/head^{{commit}}"]) or "").strip()
     if fetched != head:
         F.fail(0, f"refs/pull/{number}/head ({fetched[:12] or 'missing'}) is not the event's head {head[:12]}")
@@ -1103,7 +1148,7 @@ def _verify_pr(root, F):
         if changes is None:
             F.fail(2, f"git could not list the paths of {c[:12]}")
             continue
-        if combined and not changes and all(_is_ancestor(root, p, base) for p in parents[1:]):
+        if combined and not changes and all(_update_parent(root, parents, p, base) for p in parents[1:]):
             continue  # a clean "Update branch" merge of the base
         checked.append((c, changes))
         msg = _vg(root, ["log", "-1", "--format=%B", c]) or ""
@@ -1187,7 +1232,7 @@ def _verify_push(root, F):
         appr = _json_at(root, c, f".evidence/changes/{keys[0]}/approval.json") if len(keys) == 1 else None
         plan = _blob_at(root, c, str(appr.get("plan_path") or "")) if isinstance(appr, dict) else None
         if plan is None:
-            if changes and not (combined and all(_is_ancestor(root, p, before) for p in parents[1:])):
+            if changes and not (combined and all(_update_parent(root, parents, p, before) for p in parents[1:])):
                 F.fail(2, f"{c[:12]} has no single change key with an approved plan, so its paths are unchecked: "
                           + ", ".join(p for _, ps in changes for p in ps)[:300])
             continue

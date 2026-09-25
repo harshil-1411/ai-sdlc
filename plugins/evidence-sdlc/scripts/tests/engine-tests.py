@@ -1705,7 +1705,10 @@ def suite_pilot58():
               "git commit -i -m 'ABC-1: x'" + tr, "git commit -p -m 'ABC-1: x'" + tr,
               "git commit --pathspec-from-file=list.txt -m 'ABC-1: x'" + tr,
               "git add src/app.py && git commit -m 'ABC-1: x'" + tr,
-              "GIT_INDEX_FILE=/tmp/idx git commit -m 'ABC-1: x'" + tr):
+              "GIT_INDEX_FILE=/tmp/idx git commit -m 'ABC-1: x'" + tr,
+              # abbreviated long options, which git accepts (security review, step 11)
+              "git commit --patc -m 'ABC-1: x'" + tr, "git commit --inter -m 'ABC-1: x'" + tr,
+              "git commit --pathspec-from-f=list.txt -m 'ABC-1: x'" + tr, "git commit --onl -m 'ABC-1: x'" + tr):
         t, i = bash(c)
         sh("git add -A .evidence", r)  # evidence staged, so only the bypass itself can deny
         case(f"REQ-IMH-10 commit bypass denied: {c[:60]}", r, t, i, "deny")
@@ -1821,6 +1824,10 @@ def suite_pilot58():
     _, note = around(r, lambda: open(sl, "w").write(json.dumps(widened)), env=KEY)
     check("REQ-IMH-01 any other change to settings.local.json (a deny rule removed) is still restored and recorded",
           "settings.local.json" in note and json.load(open(sl)) == grant, note)
+    bom = {"permissions": {"allow": ["Bash(ls)", "Bash(git status)", "Bash(make)"], "deny": ["Bash(rm:*)"]}}
+    _, note = around(r, lambda: open(sl, "wb").write(b"\xef\xbb\xbf" + json.dumps(bom).encode()), env=KEY)
+    check("REQ-IMH-01 an allow-only change re-encoded with a BOM is not taken as a permission grant",
+          "settings.local.json" in note and json.load(open(sl)) == grant, note)
     shutil.rmtree(r)
 
     # nit 1: file_in_commit answers "present" (callers deny) when git cannot answer
@@ -1835,6 +1842,7 @@ def suite_pilot58():
     # Code review (step 11): dispatching a workflow from another ref is denied; from the default branch it isn't
     r = make_repo()
     for c in ("gh workflow run verify-range.yml --ref feature/ABC-1-x -f pr=5", "gh workflow run ci.yml -r feature/x",
+              "gh workflow run verify-range.yml -rfeature/x -f pr=5", "gh workflow run ci.yml -r=feature/x",
               "gh api -X POST repos/o/r/actions/workflows/verify-range.yml/dispatches -f ref=feature/x"):
         t, i = bash(c)
         case(f"REQ-IMH-21 workflow dispatch from another ref denied: {c[:50]}", r, t, i, "deny", rule_hint="another ref")

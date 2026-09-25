@@ -22,6 +22,13 @@ re-run the check after approving a PR (`pull_request_target` doesn't fire on rev
   unclaimed paths; secrets or oversize blobs; audit logs that shrink or go missing; change records
   rolled back, closed without a signed clear, or another change's records edited. On `push` to
   `main`, `--push-report` reports and never blocks.
+- Hardened after its code and security reviews (ADR-0004 revision 3):
+  - checks run from where the branch left the base (the merge-base), and across the whole range
+    as well as per commit, with rename detection off;
+  - merges from the base are recognised only when they bring in newer base commits;
+  - `.evidence/policy.json` and the secrets allow-list must be claimed;
+  - a PR must target the default branch;
+  - reviews are read across every page.
 
 ### Gates (evidence-sdlc), now advisory for merged history
 - Engine git is neutralised (REQ-IMH-09, 22, 24): all git and `gh` calls go through

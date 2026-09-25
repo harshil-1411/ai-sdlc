@@ -81,6 +81,25 @@ These refine the rules above. Each is tested in `cli-lifecycle-tests.py` "REQ-IM
   approving review then covers), pinning the requirement to this workflow file with a ruleset
   where the host supports it, and the engine's denial of agent workflow dispatches from another
   ref.
+- **Whole-range checks, whatever the commit shape** (security review). Per-commit checks can be
+  sidestepped by a record or log that is renamed away in one commit and added back in another, or
+  by a crafted merge. So, from the merge-base to the head:
+  - every audit log keeps every line it had;
+  - every change record obeys the same transition rules as a single commit, unless its head
+    version equals the base tip's.
+
+  All diffs run with `--no-renames`.
+- **An "update from the base" parent must be newer than what the branch had**: in the base, and
+  descending from where the branch's first parent meets the base. A merge of an old base commit is
+  judged like any commit.
+- **Claims exempt only `.evidence/audit/`, `.evidence/changes/` and `.evidence/violations/`**,
+  which rules 4–5 judge. `.evidence/policy.json`, the secrets allow-list and `.evidence/context/`
+  must be claimed like source.
+- **Rule 0 also fails a PR whose base is not the default branch**, read from the event. The
+  workflow re-runs on `edited`, so a retargeted PR is checked again. Reviews are read across every
+  page.
+- **Push report (rule 7) is best-effort against admins:** it runs the pushed commit's own workflow
+  and CLI, so a direct push can alter the report that should catch it.
 - **`Human-Commit:` commits** carry no audit-log requirement. They have no agent session, and the
   head-commit code-owner review covers them.
 

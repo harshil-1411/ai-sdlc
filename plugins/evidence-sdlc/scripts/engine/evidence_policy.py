@@ -425,10 +425,15 @@ def _commit_bypass(sargs):
                 found.append(a)
             i += 2
             continue
-        if a.startswith("--pathspec-from-file="):
-            found.append("--pathspec-from-file")
-        elif a in ("--only", "--include", "--patch", "--interactive"):
-            found.append(a)
+        name = a.split("=", 1)[0]
+        # git accepts any unambiguous prefix of a long option (--patc, --pathspec-from-f=…)
+        long_hit = next((o for o in ("--only", "--include", "--patch", "--interactive", "--pathspec-from-file")
+                         if name.startswith("--") and len(name) > 3 and o.startswith(name)), None)
+        if long_hit:
+            found.append(long_hit)
+            if long_hit == "--pathspec-from-file" and "=" not in a:
+                i += 2
+                continue
         elif re.fullmatch(r"-[A-Za-z]+", a):
             letters = a[1:]
             # value-taking letters end the cluster: -am 'msg', -uno, -Skeyid
@@ -563,7 +568,7 @@ def _check_gh(ctx, s):
             return deny("agent-merge", "`gh api` with fields against a /merge endpoint is a merge; that is a human action.")
         if re.search(r"/dispatches\b", endpoint) and (method in ("POST", None)):
             return deny("workflow-dispatch", _DISPATCH_DENIED)
-    if words[:2] == ["workflow", "run"] and any(a in ("--ref", "-r") or a.startswith("--ref=") for a in args):
+    if words[:2] == ["workflow", "run"] and any(a.startswith(("-r", "--ref")) for a in args):  # -rX, -r=X, --ref=X
         # dispatched from another ref (a PR branch), a workflow runs that branch's own YAML with the
         # repository's secrets, and can post a check under the merge gate's name (review, ADR-0004).
         # Without --ref it runs the default branch's workflow.
