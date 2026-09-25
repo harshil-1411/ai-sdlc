@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-ENGINE_VERSION = "2.1.0"
+ENGINE_VERSION = "2.2.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_POLICY = os.path.join(HERE, "..", "..", "policy", "default-policy.json")
 ORG_POLICY_PATHS = [
@@ -294,6 +294,15 @@ def _merge(base, over, tighten_only):
             if v.get("github_allowed_approvers") and not merged.get("github_allowed_approvers"):
                 merged["github_allowed_approvers"] = list(v["github_allowed_approvers"])
             out[k] = merged
+        elif tighten_only and k == "auto_resolve_max_per_session":
+            # a repository may only lower the cap on restored changes closed at birth (REQ-LLA-03)
+            if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+                cur = base.get(k, 3)
+                out[k] = min(v, cur) if isinstance(cur, int) and not isinstance(cur, bool) else v
+        elif tighten_only and k == "tier3_auto_modes_with_required_gate":
+            # a repository may only switch Tier 3 auto modes off, never on (REQ-LLA-08)
+            if v is False:
+                out[k] = False
         elif tighten_only and k == "key_pattern":
             # descriptive (which tracker this repository uses), but it must still look
             # like a key: a pattern that matches ordinary words would make the commit

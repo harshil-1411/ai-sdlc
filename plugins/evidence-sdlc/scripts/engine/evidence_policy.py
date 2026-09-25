@@ -236,9 +236,11 @@ def check_gated(ctx, rel, kind="write", detail=""):
                     f"change ({approval.get('approver')}). Tier 3 needs a second person: another engineer approves "
                     "in their own session or terminal, or the plan is approved on GitHub.")
     if tier >= 3 and pol.get("deny_tier3_auto_modes", True) and ctx.permission_mode in pol.get("tier3_denied_permission_modes", []):
-        return deny("tier3-auto-mode",
-                    f"{what}: change {key} is Tier 3, which requires per-change human review, but this session is in "
-                    f"'{ctx.permission_mode}' mode. Switch to the default permission mode for Tier 3 work.")
+        why = _tier3_gate_problem(ctx)
+        if why:
+            return deny("tier3-auto-mode",
+                        f"{what}: change {key} is Tier 3, which requires per-change human review, but this session is in "
+                        f"'{ctx.permission_mode}' mode. Switch to the default permission mode for Tier 3 work. {why}")
     if rel and pol.get("enforce_claims", True):
         claims = st.plan_claims(open(plan, encoding="utf-8", errors="replace").read())
         if not st.claim_matches(rel, claims):
@@ -371,6 +373,31 @@ def _ci_gate_fetch(ctx, bind):
         return False, "; ".join(why), ev
     except Exception as e:  # gh missing, failing, timing out, non-JSON: not confirmed, never an error
         return False, f"GitHub could not be read through gh ({type(e).__name__}: {str(e)[:160]})", {}
+
+
+TIER3_NEVER_GATE_MODES = ("bypassPermissions", "dontAsk")
+
+
+def _tier3_gate_problem(ctx):
+    """None when a Tier 3 edit in this permission mode is allowed because the server gate is
+    confirmed (REQ-LLA-08); otherwise the missing condition, with the owner action."""
+    import signing
+    pol, mode = ctx.policy, ctx.permission_mode
+    allowed = pol.get("tier3_gate_allowed_modes", ["acceptEdits", "auto"])
+    if mode in TIER3_NEVER_GATE_MODES or not isinstance(allowed, list) or mode not in allowed:
+        return f"'{mode}' is never allowed for Tier 3, whatever the server gate."
+    if pol.get("tier3_auto_modes_with_required_gate", True) is not True:
+        return ("The org policy sets tier3_auto_modes_with_required_gate to false (a repository policy can only "
+                "switch it off), so Tier 3 is not allowed in this mode.")
+    if not signing.enabled():
+        return ("This session has no signing key (UNSIGNED MODE), so the server-gate check cannot be cached "
+                "safely and Tier 3 is not allowed in this mode.")
+    ok, why, _ = _ci_gate(ctx)
+    if ok:
+        return None
+    return (f"Tier 3 in this mode needs the server gate confirmed on GitHub, and it is not: {why}. Owner action: make "
+            f"`{pol.get('ci_gate_check', 'verify-range')}` a required status check on the default branch with its "
+            "source set to GitHub Actions, and set approval.github_repo in the org policy.")
 
 
 def _ci_gate(ctx):
@@ -692,7 +719,19 @@ def _check_gh(ctx, s):
                 method = args[i + 1].upper()
             elif a.startswith("--method="):
                 method = a.split("=", 1)[1].upper()
+            elif a.startswith("-X") and len(a) > 2:
+                method = a[2:].lstrip("=").upper()
         endpoint = next((w for w in words[1:] if "/" in w), "")
+        # REQ-LLA-10: a required check matched by name can be satisfied by a commit status or a check run
+        # anyone with the token can post; the authority is the app pin (ADR-0005), this is early feedback.
+        fields = any(a in ("-f", "-F", "--field", "--raw-field", "--input") or a.startswith(("-f", "-F", "--field=",
+                                                                                               "--raw-field=", "--input="))
+                     for a in args)
+        if any(re.search(r"/statuses/[^/\s]|/check-runs\b|/check-suites\b", w) for w in words[1:]) and (
+                method in ("POST", "PATCH", "PUT") or (method is None and fields)):
+            return deny("check-forgery",
+                        "Creating or updating a commit status or check run from an agent session is not allowed: a "
+                        "required check matched by name could be satisfied that way. CI posts checks; reading them is fine.")
         if method in ("PUT", "POST", "PATCH", "DELETE") and re.search(r"/merge\b|/protection\b|/rulesets\b|/branches/[^/]+/rename|/git/refs", endpoint):
             return deny("agent-merge",
                         f"`gh api -X {method} {endpoint}` changes merges, branch protection or refs. That is a human action.")
@@ -720,6 +759,9 @@ def _check_gh(ctx, s):
             return deny("agent-merge", "This GraphQL mutation merges, approves or changes protection; that is a human action.")
         if "/approve-plan" in joined:
             return deny("self-approval", "A `/approve-plan` comment is a human's approval; the agent may not post one.")
+        if "graphql" in words and re.search(r"createCheckRun|updateCheckRun|createCheckSuite|rerequestCheckSuite", joined):
+            return deny("check-forgery", "This GraphQL mutation creates or updates a commit status or check run; CI posts "
+                                         "checks, not an agent session.")
     if words[:2] == ["pr", "create"]:
         return _review_gate(ctx, "Opening a pull request")
     return None

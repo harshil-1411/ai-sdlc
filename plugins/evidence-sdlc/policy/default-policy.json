@@ -275,6 +275,35 @@
   ],
   "verify_range_blob_cap_mb": 20,
   "verify_range_allow_large": [],
+  "auto_resolve_max_per_session": 3,
+  "local_settings_kept_keys": [
+    "model",
+    "outputStyle"
+  ],
+  "user_config_not_charged": [
+    "/Library/Application Support/ClaudeCode/managed-settings.json",
+    "/Library/Application Support/ClaudeCode/managed-settings.d/**",
+    "/Library/Application Support/ClaudeCode/evidence-policy.json",
+    "/etc/claude-code/managed-settings.json",
+    "/etc/claude-code/managed-settings.d/**",
+    "/etc/claude-code/evidence-policy.json"
+  ],
+  "claude_json_security_keys": [
+    "mcpServers",
+    "allowedTools",
+    "enabledMcpjsonServers",
+    "disabledMcpjsonServers",
+    "enableAllProjectMcpServers"
+  ],
+  "tier3_auto_modes_with_required_gate": true,
+  "tier3_gate_allowed_modes": [
+    "acceptEdits",
+    "auto"
+  ],
+  "ci_gate_check": "verify-range",
+  "ci_gate_app_id": 15368,
+  "ci_gate_require_enforce_admins": false,
+  "ci_gate_cache_seconds": 900,
   "approval": {
     "mode": "local",
     "github_allowed_approvers": [],
