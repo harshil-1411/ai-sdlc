@@ -1807,6 +1807,22 @@ def suite_pilot58():
     check("REQ-IMH-01 a pre-existing symlinked control-plane directory is reported", ".claude/skills" in note, note)
     shutil.rmtree(r)
 
+    # B4 (owner decision 2026-09-25): a "don't ask again" grant written mid-call is kept and logged, not reverted
+    r = committed_repo()
+    os.makedirs(os.path.join(r, ".claude"), exist_ok=True)
+    sl = os.path.join(r, ".claude", "settings.local.json")
+    open(sl, "w").write(json.dumps({"permissions": {"allow": ["Bash(ls)"], "deny": ["Bash(rm:*)"]}}))
+    grant = {"permissions": {"allow": ["Bash(ls)", "Bash(git status)"], "deny": ["Bash(rm:*)"]}}
+    _, note = around(r, lambda: open(sl, "w").write(json.dumps(grant)), env=KEY)
+    logged = any('"permission-grant"' in l for l in open(os.path.join(r, ".evidence", "audit", "s1.jsonl")))
+    check("REQ-IMH-01 a permission grant added to settings.local.json during a call is kept and logged, not a violation",
+          not note and json.load(open(sl)) == grant and logged and "permission-grant" not in vtext(r), (note, logged))
+    widened = {"permissions": {"allow": ["Bash(ls)", "Bash(git status)"], "deny": []}}
+    _, note = around(r, lambda: open(sl, "w").write(json.dumps(widened)), env=KEY)
+    check("REQ-IMH-01 any other change to settings.local.json (a deny rule removed) is still restored and recorded",
+          "settings.local.json" in note and json.load(open(sl)) == grant, note)
+    shutil.rmtree(r)
+
     # nit 1: file_in_commit answers "present" (callers deny) when git cannot answer
     r = committed_repo()
     nogit = os.path.realpath(tempfile.mkdtemp(prefix="evidence-nogit-"))

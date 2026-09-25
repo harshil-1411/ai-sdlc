@@ -791,45 +791,49 @@ def audit_verify(path, warnings=None):
     An entry hash seen earlier in the log is a replay, and in a session log (<session>.jsonl) every
     entry must belong to that session; the approval and clear-violations logs are shared by name
     (REQ-IMH-11)."""
+    with open(path, encoding="utf-8") as f:
+        return audit_verify_lines(os.path.basename(path), f, warnings)
+
+
+def audit_verify_lines(name, lines, warnings=None):
+    """audit_verify over the lines of a log called `name` (a file, or a blob read from git)."""
     import signing
     problems, prev, prev_of_prev, prev_session, first_session = [], "", None, None, None
     seen = set()
-    name = os.path.basename(path)
     shared = not name.endswith(".jsonl") or name.startswith("approval-") or name == "clear-violations.jsonl"
     stem = name[:-len(".jsonl")]
-    with open(path, encoding="utf-8") as f:
-        for n, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                e = json.loads(line)
-            except ValueError:
-                problems.append(f"line {n}: not JSON")
-                prev, prev_of_prev = "", None
-                continue
-            first_session = first_session if n > 1 else e.get("session")
-            if e.get("prev", "") != prev:
-                # a fork is two different entries of this log's own session appended from one
-                # predecessor -- not a duplicate of its sibling, not another session's chain spliced in
-                if (prev_of_prev is not None and e.get("prev", "") == prev_of_prev and e.get("hash") != prev
-                        and e.get("session") == prev_session == first_session):
-                    if warnings is not None:
-                        warnings.append(f"line {n}: fork (appended concurrently with line {n - 1} from the same entry)")
-                else:
-                    problems.append(f"line {n}: chain broken (prev does not match line {n - 1})")
-            if entry_hash(e, e.get("prev", "")) != e.get("hash"):
-                problems.append(f"line {n}: content altered (hash mismatch)")
-            if signing.verify(e) is False:
-                problems.append(f"line {n}: signature missing or invalid (entry not written by the gate engine)")
-            if e.get("hash") in seen:
-                problems.append(f"line {n}: replayed (an earlier line has the same entry hash)")
-            seen.add(e.get("hash"))
-            if not shared:
-                own = re.sub(r"[^A-Za-z0-9_-]", "_", str(e.get("session") or "unknown"))[:80] or "unknown"
-                if own != stem:
-                    problems.append(f"line {n}: entry of session {e.get('session')!r} in the log of {stem!r}")
-            prev, prev_of_prev, prev_session = e.get("hash", ""), e.get("prev", ""), e.get("session")
+    for n, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            problems.append(f"line {n}: not JSON")
+            prev, prev_of_prev = "", None
+            continue
+        first_session = first_session if n > 1 else e.get("session")
+        if e.get("prev", "") != prev:
+            # a fork is two different entries of this log's own session appended from one
+            # predecessor -- not a duplicate of its sibling, not another session's chain spliced in
+            if (prev_of_prev is not None and e.get("prev", "") == prev_of_prev and e.get("hash") != prev
+                    and e.get("session") == prev_session == first_session):
+                if warnings is not None:
+                    warnings.append(f"line {n}: fork (appended concurrently with line {n - 1} from the same entry)")
+            else:
+                problems.append(f"line {n}: chain broken (prev does not match line {n - 1})")
+        if entry_hash(e, e.get("prev", "")) != e.get("hash"):
+            problems.append(f"line {n}: content altered (hash mismatch)")
+        if signing.verify(e) is False:
+            problems.append(f"line {n}: signature missing or invalid (entry not written by the gate engine)")
+        if e.get("hash") in seen:
+            problems.append(f"line {n}: replayed (an earlier line has the same entry hash)")
+        seen.add(e.get("hash"))
+        if not shared:
+            own = re.sub(r"[^A-Za-z0-9_-]", "_", str(e.get("session") or "unknown"))[:80] or "unknown"
+            if own != stem:
+                problems.append(f"line {n}: entry of session {e.get('session')!r} in the log of {stem!r}")
+        prev, prev_of_prev, prev_session = e.get("hash", ""), e.get("prev", ""), e.get("session")
     return not problems, problems
 
 

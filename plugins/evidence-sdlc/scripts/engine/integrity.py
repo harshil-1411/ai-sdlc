@@ -151,6 +151,35 @@ def _read_cp(root, rel):
         return None
 
 
+PERMISSION_FILE = ".claude/settings.local.json"
+
+
+def _permission_grant(old_b64, cur_b64):
+    """The allow rules added, if the only difference between the two versions of
+    settings.local.json is new entries in permissions.allow (what Claude Code writes when the
+    human answers "don't ask again"); otherwise None."""
+    try:
+        old = json.loads(base64.b64decode(old_b64)) if old_b64 else {}
+        new = json.loads(base64.b64decode(cur_b64))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return None
+    o_allow = (old.get("permissions") or {}).get("allow") or []
+    n_allow = (new.get("permissions") or {}).get("allow") or []
+    if not isinstance(o_allow, list) or not isinstance(n_allow, list) or not all(isinstance(x, str) for x in n_allow):
+        return None
+    if any(x not in n_allow for x in o_allow):
+        return None
+    added = [x for x in n_allow if x not in o_allow]
+    if not added:
+        return None
+
+    def rest(d):  # everything except permissions.allow must be exactly as before
+        return {**d, "permissions": {k: v for k, v in (d.get("permissions") or {}).items() if k != "allow"}}
+    return added if rest(old) == rest(new) else None
+
+
 def _git_dir_id(root):
     gd = (st.run_git(["rev-parse", "--absolute-git-dir"], root) or "").strip()
     try:
@@ -443,6 +472,12 @@ def check(ctx, judge):
         old = before.get(rel)
         cur = _read_cp(root, rel)
         can_restore = signed
+        if rel == PERMISSION_FILE and cur is not None and cur != old and (rel not in before or old is not None):
+            added = _permission_grant(old, cur)
+            if added:
+                # kept, and logged by the hook as a permission-grant audit event, not a violation
+                violations.append({"path": rel, "rule": "permission-grant", "action": "kept", "added": added})
+                continue
         if rel in before and old is not None and cur != old:
             if can_restore:
                 try:

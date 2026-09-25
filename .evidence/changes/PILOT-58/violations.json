@@ -19,7 +19,17 @@
       "open": false,
       "cleared_by": "suparn.bector@msbdocs.com",
       "cleared_at": "2026-09-25T03:02:00Z"
+    },
+    {
+      "path": ".claude/settings.local.json",
+      "rule": "control-plane",
+      "action": "restored",
+      "at": "2026-09-25T04:32:30Z",
+      "session": "7ef91d89-f94a-4070-9b35-c3aae1b4f254",
+      "open": false,
+      "cleared_by": "suparn.bector@msbdocs.com",
+      "cleared_at": "2026-09-25T04:37:31Z"
     }
   ],
-  "sig": "e96c153192716a1803e3defbf280c2497c7ff6ca3f52b599956d84a6d97d1d06"
+  "sig": "54ca2816dc5e122db46c76932b15ddc3049e3b1f3faf24981c61298738843a36"
 }

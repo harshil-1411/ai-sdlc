@@ -273,6 +273,11 @@ def run_integrity(ctx):
     except Exception as e:  # a check the agent can make fail must not become a silent pass
         notes = [f"the integrity check for that command failed ({e}), so its effects were not checked."[:300]]
         violations, changed = [{"path": "(integrity check)", "rule": "integrity-check-error", "action": "recorded"}], []
+    # A permission the human granted at Claude Code's prompt lands in settings.local.json while the call is
+    # in flight (the hook runs before the prompt). It is kept and logged, not treated as tampering.
+    for g in [v for v in violations if v.get("rule") == "permission-grant"]:
+        _audit(ctx, {"event": "permission-grant", "violation_path": g["path"], "added": g.get("added", [])[:20]})
+    violations = [v for v in violations if v.get("rule") != "permission-grant"]
     if not violations:
         return None, changed
     try:
