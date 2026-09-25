@@ -262,6 +262,138 @@ def check_gated(ctx, rel, kind="write", detail=""):
     return ALLOW
 
 
+# ------------------------------------------------------------------ server gate (REQ-LLA-08, 09)
+
+CI_GATE_APP_ID = 15368  # the GitHub Actions app [NEEDS VERIFICATION against a captured response]
+CI_GATE_FAIL_SECONDS = 60
+CI_GATE_BUDGET_SECONDS = 15  # all gh calls on a cache miss, inside the hook's 25 s budget
+
+
+def _ci_gate_cache_rel(root):
+    import hashlib
+    return "evidence-chain-ci-gate/" + hashlib.sha256(root.encode()).hexdigest()[:16] + ".json"
+
+
+def _ci_gate_bind(ctx):
+    pol = ctx.policy
+    return {"root": ctx.root, "repo": (pol.get("approval") or {}).get("github_repo") or "",
+            "check": pol.get("ci_gate_check", "verify-range"), "app_id": pol.get("ci_gate_app_id", CI_GATE_APP_ID),
+            "enforce_admins": bool(pol.get("ci_gate_require_enforce_admins", False)),
+            "ttl": int(pol.get("ci_gate_cache_seconds", 900))}
+
+
+def _ci_gate_cache_read(ctx, bind):
+    """The cached (confirmed, why, evidence), or None when there is no usable cache: unsigned,
+    altered, a link or non-file, bound to other values, from the future or expired."""
+    import signing
+    import tempfile
+    import time
+    try:
+        obj = json.loads(st.read_file_nofollow(tempfile.gettempdir(), _ci_gate_cache_rel(ctx.root), 64 * 1024))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(obj, dict) or signing.verify(obj) is not True or obj.get("bind") != bind:
+        return None
+    at, ttl = obj.get("at"), bind["ttl"] if obj.get("confirmed") is True else CI_GATE_FAIL_SECONDS
+    if not isinstance(at, (int, float)) or isinstance(at, bool) or not (0 <= time.time() - at <= ttl):
+        return None
+    return obj.get("confirmed") is True, str(obj.get("why") or ""), obj.get("evidence") or {}
+
+
+def _ci_gate_cache_write(ctx, bind, confirmed, why, evidence):
+    import signing
+    import tempfile
+    import time
+    if not signing.enabled():
+        return  # an unsigned cache could be forged, so none is written
+    try:
+        st.write_file(tempfile.gettempdir(), _ci_gate_cache_rel(ctx.root),
+                      json.dumps(signing.sign({"bind": bind, "confirmed": bool(confirmed), "why": why,
+                                               "evidence": evidence, "at": time.time()})))
+    except (OSError, ValueError):
+        pass
+
+
+def _ci_gate_fetch(ctx, bind):
+    """Read GitHub through the pinned gh: the default branch, then its classic protection and,
+    if that does not confirm, its rulesets. Returns (confirmed, why, evidence); fails closed."""
+    import time
+    import urllib.parse
+    repo, check, app = bind["repo"], bind["check"], bind["app_id"]
+    deadline = time.monotonic() + CI_GATE_BUDGET_SECONDS
+
+    def api(path):
+        left = deadline - time.monotonic()
+        if left <= 1:
+            raise RuntimeError("the time allowed for reading GitHub ran out")
+        return json.loads(st.run_gh(["api", path], ctx.root, repo, timeout=min(10, left)))
+
+    def pinned(v):
+        return isinstance(v, int) and not isinstance(v, bool) and v == app
+
+    try:
+        info = api(f"repos/{repo}")
+        branch = info.get("default_branch") if isinstance(info, dict) else None
+        if not isinstance(branch, str) or not branch:
+            return False, f"GitHub did not report a default branch for {repo}", {}
+        q = urllib.parse.quote(branch, safe="")
+        b = api(f"repos/{repo}/branches/{q}")
+        rsc = ((b.get("protection") or {}).get("required_status_checks") or {}) if isinstance(b, dict) else {}
+        checks = [c for c in (rsc.get("checks") or []) if isinstance(c, dict) and c.get("context") == check]
+        level = rsc.get("enforcement_level")
+        ev = {"repo": repo, "branch": branch, "check": check, "classic": {"enforcement_level": level,
+                                                                         "app_ids": [c.get("app_id") for c in checks]}}
+        why = []
+        if checks and level in ("non_admins", "everyone"):
+            if not any(pinned(c.get("app_id")) for c in checks):
+                why.append(f"`{check}` is required on {branch} but not pinned to GitHub Actions (app {app}); its "
+                           "source is " + ", ".join("any source" if c.get("app_id") is None else f"app {c.get('app_id')}"
+                                                    for c in checks))
+            elif bind["enforce_admins"] and level != "everyone":
+                why.append(f"`{check}` on {branch} is not enforced for administrators "
+                           "(ci_gate_require_enforce_admins is set)")
+            else:
+                return True, f"`{check}` is required on {branch} by branch protection, pinned to GitHub Actions", ev
+        rules = api(f"repos/{repo}/rules/branches/{q}")
+        found = []
+        for rule in rules if isinstance(rules, list) else []:
+            if isinstance(rule, dict) and rule.get("type") == "required_status_checks":
+                for c in ((rule.get("parameters") or {}).get("required_status_checks") or []):
+                    if isinstance(c, dict) and c.get("context") == check:
+                        found.append(c.get("integration_id"))
+        ev["rulesets"] = {"integration_ids": found}
+        if any(pinned(i) for i in found):
+            return True, f"`{check}` is required on {branch} by a ruleset, pinned to GitHub Actions", ev
+        if found:
+            why.append(f"`{check}` is required on {branch} by a ruleset but not pinned to GitHub Actions (app {app})")
+        if not why:
+            why.append(f"`{check}` is not required on {branch} (neither branch protection nor a ruleset requires it)")
+        return False, "; ".join(why), ev
+    except Exception as e:  # gh missing, failing, timing out, non-JSON: not confirmed, never an error
+        return False, f"GitHub could not be read through gh ({type(e).__name__}: {str(e)[:160]})", {}
+
+
+def _ci_gate(ctx):
+    """(confirmed, why, evidence): is `ci_gate_check` a required status check on the default branch
+    of approval.github_repo, pinned to the GitHub Actions app (REQ-LLA-09)? Read from GitHub, never
+    from a local assertion, and cached in a signed temp file (900 s confirmed, 60 s not)."""
+    bind = _ci_gate_bind(ctx)
+    if not bind["repo"]:
+        return False, "approval.github_repo is not set in the org policy, so the server gate cannot be read", {}
+    cached = _ci_gate_cache_read(ctx, bind)
+    if cached is not None:
+        return cached
+    confirmed, why, ev = _ci_gate_fetch(ctx, bind)
+    _ci_gate_cache_write(ctx, bind, confirmed, why, ev)
+    if confirmed:
+        try:
+            st.audit_append(ctx.root, ctx.session, {"event": "tier3-auto-mode-allowed", "gate": ev, "why": why,
+                                                    "engine": st.ENGINE_VERSION})
+        except Exception:
+            pass  # the audit log must never break a session; the next cache fill logs again
+    return confirmed, why, ev
+
+
 # ------------------------------------------------------------------ bash rules
 
 def _read_file(ctx, path):

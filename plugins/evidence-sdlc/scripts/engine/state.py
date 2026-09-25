@@ -157,7 +157,8 @@ def run_gh(args, cwd, repo, timeout=60):
     if args[:1] == ["api"]:
         # gh api takes no --repo: the endpoint itself must name the pinned repository
         path = next((a for a in args[1:] if not a.startswith("-")), "")
-        if not path.lstrip("/").startswith(f"repos/{repo}/"):
+        rel = path.lstrip("/")
+        if rel != f"repos/{repo}" and not rel.startswith(f"repos/{repo}/"):  # the repository itself, or under it
             raise RuntimeError(f"gh api {path} is outside the pinned repository {repo}")
         argv = list(args)
     else:
@@ -638,8 +639,23 @@ def record_violations(root, key, state, branch, violations, session):
     p = violations_path(root, key if state else None, branch)
     data = _read_violations(p)
     for v in violations:
-        data.append(dict(v, at=now(), session=session, open=True))
+        if v.get("resolved") == "restored":
+            # closed at birth: the monitor undid the change and verified the undo (REQ-LLA-01)
+            t = now()
+            data.append(dict(v, at=t, session=session, open=False, resolved="restored", resolved_at=t))
+        else:
+            data.append(dict({k: x for k, x in v.items() if k != "resolved"}, at=now(), session=session, open=True))
     write_violations(p, data, root)
+
+
+def auto_resolved_count(root, key, branch, session):
+    """How many entries this session has had closed at birth as restored, across the change's and
+    the branch's records (REQ-LLA-03). An unreadable record reads as an open entry, which counts 0."""
+    n = 0
+    for p in {violations_path(root, key, branch), violations_path(root, None, branch)}:
+        n += sum(1 for v in _read_violations(p)
+                 if isinstance(v, dict) and v.get("resolved") == "restored" and v.get("session") == session)
+    return n
 
 
 def _read_violations(p):

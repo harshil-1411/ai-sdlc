@@ -31,6 +31,10 @@ MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024
 # Audit logs are hashed on every Bash call. Past this size a log is not read at all: the
 # monitor could not finish inside the hook's time limit, so the log is refused instead.
 AUDIT_LOG_CAP = 64 * 1024 * 1024
+# (rule, action) pairs the monitor can undo and verify; only these may be closed at birth
+# (REQ-LLA-01) and accepted closed by verify-range rule 5 (REQ-LLA-04).
+AUTO_RESOLVABLE = frozenset({("control-plane", "restored"), ("control-plane", "removed"),
+                             ("control-plane-symlink", "removed")})
 
 
 def oversize_audit_logs(root):
@@ -154,10 +158,17 @@ def _read_cp(root, rel):
 PERMISSION_FILE = ".claude/settings.local.json"
 
 
-def _permission_grant(old_b64, cur_b64):
-    """The allow rules added, if the only difference between the two versions of
-    settings.local.json is new entries in permissions.allow (what Claude Code writes when the
-    human answers "don't ask again"); otherwise None."""
+LOCAL_SETTINGS_KEPT_KEYS = ["model", "outputStyle"]
+_ABSENT = object()
+
+
+def _local_settings_change(old_b64, cur_b64, pol=None):
+    """How a change to settings.local.json made during a call is judged, by effect (REQ-LLA-05):
+    ("grant", added) when the only difference is new permissions.allow entries (the B4 case);
+    ("kept", summary) when every difference is an allow entry added or removed, a deny or ask
+    entry added, an additionalDirectories entry added or removed, or a top-level key listed in
+    local_settings_kept_keys; None for anything else, which is restored. Strict UTF-8, no BOM."""
+    pol = pol or {}
     try:
         # strict UTF-8 with no BOM: json.loads also takes UTF-16/32, which Claude Code may not read
         old = json.loads(base64.b64decode(old_b64).decode("utf-8")) if old_b64 else {}
@@ -169,19 +180,111 @@ def _permission_grant(old_b64, cur_b64):
         return None
     if not isinstance(old, dict) or not isinstance(new, dict):
         return None
-    o_allow = (old.get("permissions") or {}).get("allow") or []
-    n_allow = (new.get("permissions") or {}).get("allow") or []
-    if not isinstance(o_allow, list) or not isinstance(n_allow, list) or not all(isinstance(x, str) for x in n_allow):
+    kept_keys = pol.get("local_settings_kept_keys", LOCAL_SETTINGS_KEPT_KEYS)
+    kept_keys = [k for k in kept_keys if isinstance(k, str) and k != "permissions"] if isinstance(kept_keys, list) else []
+    summary = {}
+    for k in sorted(set(old) | set(new)):
+        if k == "permissions" or old.get(k, _ABSENT) == new.get(k, _ABSENT):
+            continue
+        if k not in kept_keys:
+            return None
+        summary.setdefault("keys", []).append(k)
+    op, np_ = old.get("permissions", {}), new.get("permissions", {})
+    if not isinstance(op, dict) or not isinstance(np_, dict):
         return None
-    if any(x not in n_allow for x in o_allow):
-        return None
-    added = [x for x in n_allow if x not in o_allow]
-    if not added:
-        return None
+    # sub-key -> (additions allowed, removals allowed)
+    rules = {"allow": (True, True), "deny": (True, False), "ask": (True, False), "additionalDirectories": (True, True)}
+    for k in sorted(set(op) | set(np_)):
+        a, b = op.get(k, _ABSENT), np_.get(k, _ABSENT)
+        if a == b:
+            continue
+        if k not in rules:
+            return None  # defaultMode, disableBypassPermissionsMode and anything unknown: restored
+        a = [] if a is _ABSENT else a
+        b = [] if b is _ABSENT else b
+        if not isinstance(a, list) or not isinstance(b, list) or not all(isinstance(x, str) for x in a + b):
+            return None
+        added, removed = [x for x in b if x not in a], [x for x in a if x not in b]
+        can_add, can_remove = rules[k]
+        if (added and not can_add) or (removed and not can_remove):
+            return None
+        if added:
+            summary[f"{k}_added"] = added[:20]
+        if removed:
+            summary[f"{k}_removed"] = removed[:20]
+    if set(summary) == {"allow_added"}:
+        return ("grant", summary["allow_added"])
+    return ("kept", summary)
 
-    def rest(d):  # everything except permissions.allow must be exactly as before
-        return {**d, "permissions": {k: v for k, v in (d.get("permissions") or {}).items() if k != "allow"}}
-    return added if rest(old) == rest(new) else None
+
+
+def _permission_grant(old_b64, cur_b64):
+    """The allow rules added, if the only difference is new permissions.allow entries (2.1.0 B4)."""
+    got = _local_settings_change(old_b64, cur_b64, {"local_settings_kept_keys": []})
+    return got[1] if got and got[0] == "grant" else None
+
+
+def _not_user_writable(path):
+    """True when the session's user could not have written `path` (REQ-LLA-06): it is not a link,
+    it is not owned by this uid, and neither it nor its parent directory is writable by this uid.
+    A path that does not exist is judged by its parent directory alone. Any error: False."""
+    try:
+        uid = os.getuid()
+        parent = os.path.dirname(path) or "/"
+        ps = os.stat(parent)
+        if ps.st_uid == uid or os.access(parent, os.W_OK):
+            return False
+        try:
+            s = os.lstat(path)
+        except FileNotFoundError:
+            return True
+        if stat.S_ISLNK(s.st_mode) or s.st_uid == uid or os.access(path, os.W_OK):
+            return False
+        return True
+    except (OSError, AttributeError):
+        return False
+
+
+CLAUDE_JSON_SECURITY_KEYS = ["mcpServers", "allowedTools", "enabledMcpjsonServers", "disabledMcpjsonServers",
+                             "enableAllProjectMcpServers"]
+CLAUDE_JSON_CAP = 64 * 1024 * 1024
+
+
+def _claude_json_projection(path, keys=None):
+    """sha256 of the security-relevant part of ~/.claude.json (REQ-LLA-07): the top-level
+    mcpServers and, under projects.*, the listed keys. Claude Code's own bookkeeping (counters,
+    caches, tips, costs) is left out. A missing, oversize or unparsable file has its own marker."""
+    keys = [k for k in (keys if isinstance(keys, list) else CLAUDE_JSON_SECURITY_KEYS) if isinstance(k, str)]
+    try:
+        s = os.lstat(path)
+    except FileNotFoundError:
+        return "missing"
+    except OSError:
+        return "unreadable"
+    if not stat.S_ISREG(s.st_mode):
+        return "not-a-file"
+    if s.st_size > CLAUDE_JSON_CAP:
+        return "oversize"
+    try:
+        with open(path, "rb") as f:
+            data = json.loads(f.read(CLAUDE_JSON_CAP + 1).decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return "invalid"
+    if not isinstance(data, dict):
+        return "invalid"
+    proj = {"mcpServers": data.get("mcpServers")}
+    projects = data.get("projects")
+    if projects is not None and not isinstance(projects, dict):
+        return "invalid"
+    per = {}
+    for p, v in sorted((projects or {}).items()):
+        if not isinstance(v, dict):
+            continue
+        sel = {k: v[k] for k in keys if k in v}
+        if sel:
+            per[p] = sel
+    proj["projects"] = per
+    return "proj:" + hashlib.sha256(json.dumps(proj, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _git_dir_id(root):
