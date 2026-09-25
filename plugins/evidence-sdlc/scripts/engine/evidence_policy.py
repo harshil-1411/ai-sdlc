@@ -400,8 +400,59 @@ def _log_tail_only(root, rel):
     return True
 
 
+# `git commit` options that take the next argument as their value (so it is not a pathspec)
+_COMMIT_VALUE_OPTS = {"-m", "--message", "-F", "--file", "-C", "-c", "--reuse-message", "--reedit-message", "--author",
+                      "--date", "--cleanup", "--trailer", "--fixup", "--squash", "-t", "--template", "--pathspec-from-file"}
+# git subcommands that change the index; combined with a commit in one command they change what
+# is committed after the gate looked at it (REQ-IMH-10)
+_INDEX_CHANGING = {"add", "rm", "mv", "reset", "restore", "checkout", "switch", "stash", "update-index", "read-tree",
+                   "apply", "am", "merge", "cherry-pick", "revert", "pull", "rebase"}
+_INDEX_ENV = ("GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+
+
+def _commit_bypass(sargs):
+    """The `git commit` forms that commit something other than the index the gate checked:
+    a pathspec, --only, --include, --patch, --interactive, --pathspec-from-file (REQ-IMH-10)."""
+    found, i = [], 0
+    while i < len(sargs):
+        a = sargs[i]
+        if a == "--":
+            if sargs[i + 1:]:
+                found.append("a pathspec")
+            break
+        if a in _COMMIT_VALUE_OPTS:
+            if a == "--pathspec-from-file":
+                found.append(a)
+            i += 2
+            continue
+        if a.startswith("--pathspec-from-file="):
+            found.append("--pathspec-from-file")
+        elif a in ("--only", "--include", "--patch", "--interactive"):
+            found.append(a)
+        elif re.fullmatch(r"-[A-Za-z]+", a):
+            letters = a[1:]
+            # value-taking letters end the cluster: -am 'msg', -uno, -Skeyid
+            for n, ch in enumerate(letters):
+                if ch in "oip":
+                    found.append(f"-{ch}")
+                if ch in "mFCctuS":
+                    if ch in "mFCct" and n == len(letters) - 1:
+                        i += 1  # its value is the next argument
+                    break
+        elif not a.startswith("-") and a:
+            found.append("a pathspec")
+        i += 1
+    return found
+
+
 def _check_commit(ctx, sargs, bodies=()):
     pol = ctx.policy
+    bypass = _commit_bypass(sargs)
+    if bypass:
+        return deny("commit-bypass",
+                    f"`git commit` with {', '.join(dict.fromkeys(bypass))} commits files other than the staged index "
+                    "the gates check. Stage exactly what you mean to commit with `git add` (as its own command), then "
+                    "run a plain `git commit -m …`.")
     heredoc = "\n".join(bodies)
     msgs, flags = cmdparse.git_commit_messages(sargs, lambda p: heredoc if p == "-" else _read_file(ctx, p))
     # `git commit -m "$(cat <<'EOF' ... EOF)"`: the message text lives in the heredoc.
@@ -760,6 +811,13 @@ def check_bash(ctx, command):
         d = _secret_decision(ctx, command, "this command")
         if d is not None:
             return d
+    git_subs = [cmdparse.git_split(s.argv)[1] for s in simples if s.prog == "git"]
+    if "commit" in git_subs and any(g in _INDEX_CHANGING for g in git_subs):
+        # the gate checks the index as it is now; the other command would change it before the commit runs
+        return deny("commit-bypass",
+                    "Run `git commit` as its own command: combined with "
+                    f"`git {next(g for g in git_subs if g in _INDEX_CHANGING)}` it would commit an index the gates never "
+                    "saw. Stage first, then commit in a separate call.")
     cwd = ctx.cwd
     for s in simples:
         if pol.get("deny_persistence", True) and (set(s.wrappers) - {s.prog}) & cmdparse.PERSISTENCE or (
@@ -778,7 +836,8 @@ def check_bash(ctx, command):
             return deny("unknown-program",
                         f"`{s.prog}` is not on this organisation's list of known programs (strict mode), so what it "
                         "writes cannot be judged. Ask the platform team to add it to known_programs.")
-        spoof = [k for k in s.env if k.startswith(("GIT_CONFIG_", "GIT_AUTHOR_", "GIT_COMMITTER_")) or k in ("EMAIL", "GIT_DIR", "GIT_WORK_TREE")]
+        spoof = [k for k in s.env if k.startswith(("GIT_CONFIG_", "GIT_AUTHOR_", "GIT_COMMITTER_"))
+                 or k in ("EMAIL", "GIT_DIR", "GIT_WORK_TREE") + _INDEX_ENV]
         if spoof:
             return deny("identity",
                         f"Setting {', '.join(sorted(spoof)[:3])} on a command changes your git identity (who git and the "

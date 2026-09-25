@@ -786,9 +786,17 @@ def audit_verify(path, warnings=None):
     A fork -- an entry whose prev is its predecessor's prev, i.e. two entries appended from the
     same last hash by concurrent calls before appends were locked -- is not a break: both are
     hash-correct (and signed), and nothing is missing. It is reported in `warnings`. A deleted,
-    altered or reordered entry still fails, because some prev then matches neither neighbour."""
+    altered or reordered entry still fails, because some prev then matches neither neighbour.
+
+    An entry hash seen earlier in the log is a replay, and in a session log (<session>.jsonl) every
+    entry must belong to that session; the approval and clear-violations logs are shared by name
+    (REQ-IMH-11)."""
     import signing
     problems, prev, prev_of_prev, prev_session, first_session = [], "", None, None, None
+    seen = set()
+    name = os.path.basename(path)
+    shared = not name.endswith(".jsonl") or name.startswith("approval-") or name == "clear-violations.jsonl"
+    stem = name[:-len(".jsonl")]
     with open(path, encoding="utf-8") as f:
         for n, line in enumerate(f, 1):
             line = line.strip()
@@ -814,6 +822,13 @@ def audit_verify(path, warnings=None):
                 problems.append(f"line {n}: content altered (hash mismatch)")
             if signing.verify(e) is False:
                 problems.append(f"line {n}: signature missing or invalid (entry not written by the gate engine)")
+            if e.get("hash") in seen:
+                problems.append(f"line {n}: replayed (an earlier line has the same entry hash)")
+            seen.add(e.get("hash"))
+            if not shared:
+                own = re.sub(r"[^A-Za-z0-9_-]", "_", str(e.get("session") or "unknown"))[:80] or "unknown"
+                if own != stem:
+                    problems.append(f"line {n}: entry of session {e.get('session')!r} in the log of {stem!r}")
             prev, prev_of_prev, prev_session = e.get("hash", ""), e.get("prev", ""), e.get("session")
     return not problems, problems
 

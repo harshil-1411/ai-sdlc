@@ -1135,7 +1135,7 @@ def suite_audit_concurrency_and_hook_scope():
         tmp = tempfile.mkdtemp(prefix="evidence-audit-")
 
         def verify(lines):
-            p = os.path.join(tmp, "x.jsonl")
+            p = os.path.join(tmp, "s1.jsonl")  # named for its session, as real logs are (REQ-IMH-11 checks it)
             open(p, "w").write("".join(json.dumps(e, sort_keys=True) + "\n" for e in lines))
             w = []
             ok, probs = st.audit_verify(p, w)
