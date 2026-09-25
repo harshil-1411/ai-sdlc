@@ -6,9 +6,11 @@ saw. So around every allowed Bash call:
 
   pre  -- snapshot: content of every existing control-plane file, and a hash of
           every dirty or untracked file in the working tree (git status)
-  post -- compare. A control-plane change is reverted from the snapshot. Any other
-          changed file is judged as if it had been an Edit; a write the gates would
-          have denied becomes a recorded violation, and push/PR stay blocked until a
+  post -- compare. A control-plane change is reverted from the snapshot; when the
+          revert is verified (re-read equals the snapshot, or the path is gone) the
+          violation is recorded closed at birth, within a per-session cap (PILOT-62).
+          Any other changed file is judged as if it had been an Edit; a write the gates
+          would have denied becomes an open violation, and push/PR stay blocked until a
           human reviews and clears it (`evidence change clear-violations`).
 
 Detection, not prevention -- the difference from the pre-check is stated plainly in
@@ -287,6 +289,73 @@ def _claude_json_projection(path, keys=None):
     return "proj:" + hashlib.sha256(json.dumps(proj, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+USER_CONFIG_NOT_CHARGED = [
+    "/Library/Application Support/ClaudeCode/managed-settings.json",
+    "/Library/Application Support/ClaudeCode/managed-settings.d/**",
+    "/Library/Application Support/ClaudeCode/evidence-policy.json",
+    "/etc/claude-code/managed-settings.json",
+    "/etc/claude-code/managed-settings.d/**",
+    "/etc/claude-code/evidence-policy.json",
+]
+
+
+def _listed(path, pats):
+    """True if `path` (absolute) matches one of the ~-expanded patterns; `/**` covers a subtree."""
+    import fnmatch
+    for pat in pats if isinstance(pats, list) else []:
+        if not isinstance(pat, str):
+            continue
+        p = os.path.expanduser(pat)
+        if p.endswith("/**"):
+            if path.startswith(p[:-2]):
+                return True
+        elif fnmatch.fnmatchcase(path, p):
+            return True
+    return False
+
+
+def _claude_json_paths(policy):
+    """~/.claude.json (and $CLAUDE_CONFIG_DIR/.claude.json when that is set) when the user control
+    plane lists ~/.claude.json: judged by its security projection, not its bytes (REQ-LLA-07)."""
+    if "~/.claude.json" not in (policy.get("user_control_plane") or []):
+        return []
+    out = [os.path.expanduser("~/.claude.json")]
+    cdir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if cdir:
+        out.append(os.path.join(os.path.expanduser(cdir), ".claude.json"))
+    return list(dict.fromkeys(out))
+
+
+def _extra_change(k, b, a, policy):
+    """How one user-level entry changed between the snapshot (b) and now (a): None (no change that
+    counts), "user-config" (a system file the session's user could not write, REQ-LLA-06) or
+    "hidden" (a hidden-change violation)."""
+    if b == a:
+        return None
+    proj_b, proj_a = isinstance(b, dict) and "proj" in b, isinstance(a, dict) and "proj" in a
+    if proj_b or proj_a:
+        if proj_a and (b is None or proj_b):
+            was = b.get("proj") if proj_b else "missing"  # absent from a snapshot: not there
+            return None if was == a.get("proj") else "hidden"
+        if proj_a and isinstance(b, str):  # a 2.1.x snapshot: whole-file hash, as before
+            return None if os.path.isfile(k) and b == _hash(k) else "hidden"
+        return "hidden"
+    if isinstance(b, str) or isinstance(a, str):
+        bh = b.get("h") if isinstance(b, dict) else b
+        ah = a.get("h") if isinstance(a, dict) else a
+        if bh == ah:
+            return None
+        if not (isinstance(b, dict) or isinstance(a, dict)):
+            return "hidden"
+    if _listed(k, policy.get("user_config_not_charged", USER_CONFIG_NOT_CHARGED)):
+        if (b is None or isinstance(b, dict)) and (a is None or isinstance(a, dict)):
+            b_sys = b.get("sys") if isinstance(b, dict) else _not_user_writable(k)
+            a_sys = a.get("sys") if isinstance(a, dict) else _not_user_writable(k)
+            if b_sys is True and a_sys is True:
+                return "user-config"
+    return "hidden"
+
+
 def _git_dir_id(root):
     gd = (st.run_git(["rev-parse", "--absolute-git-dir"], root) or "").strip()
     try:
@@ -416,11 +485,18 @@ def _extras(root, policy):
                                    if ign is not None else "git-failed")
     except subprocess.TimeoutExpired:
         ex["(index flags)"] = "timeout"
+    cj = _claude_json_paths(policy)
+    not_charged = policy.get("user_config_not_charged", USER_CONFIG_NOT_CHARGED)
     for pat in list(policy.get("user_control_plane", [])) + ["~/.gitconfig", "~/.config/git/config", "~/.claude/CLAUDE.md"]:
         p = os.path.expanduser(pat)
         for f in (glob.glob(p, recursive=True)[:500] if "*" in p else [p]):
+            if f in cj:
+                continue
             if os.path.isfile(f):
-                ex[f] = _hash(f)
+                # a listed system file also records whether the session's user could have written it
+                ex[f] = {"h": _hash(f), "sys": _not_user_writable(f)} if _listed(f, not_charged) else _hash(f)
+    for f in cj:
+        ex[f] = {"proj": _claude_json_projection(f, policy.get("claude_json_security_keys"))}
     return ex
 
 
@@ -568,8 +644,11 @@ def check(ctx, judge):
         what = "a symlink" if is_link else "not a regular file"
         notes.append(f"{rel} (control plane) is {what}, created by that command"
                      + ("; the link has been removed and nothing it points to was touched." if removed else "; nothing was followed or changed through it."))
-        violations.append({"path": rel, "rule": "control-plane-symlink" if is_link else "control-plane-not-a-file",
-                           "action": "removed" if removed else "recorded"})
+        v = {"path": rel, "rule": "control-plane-symlink" if is_link else "control-plane-not-a-file",
+             "action": "removed" if removed else "recorded"}
+        if removed and not os.path.lexists(full):
+            v["resolved"] = "restored"  # verified: the link is gone (REQ-LLA-01)
+        violations.append(v)
     # 1. control plane: restore anything that changed, remove anything created
     before = snap.get("cp", {})
     now_files = set(r for r in files_now if not r.startswith(".evidence/audit/"))
@@ -580,19 +659,32 @@ def check(ctx, judge):
         cur = _read_cp(root, rel)
         can_restore = signed
         if rel == PERMISSION_FILE and cur is not None and cur != old and (rel not in before or old is not None):
-            added = _permission_grant(old, cur)
-            if added:
-                # kept, and logged by the hook as a permission-grant audit event, not a violation
-                violations.append({"path": rel, "rule": "permission-grant", "action": "kept", "added": added})
+            judged = _local_settings_change(old, cur, pol)
+            if judged:
+                # kept, and logged by the hook as an audit event, not a violation (B4, REQ-LLA-05)
+                if judged[0] == "grant":
+                    violations.append({"path": rel, "rule": "permission-grant", "action": "kept", "added": judged[1]})
+                else:
+                    violations.append({"path": rel, "rule": "config-change", "action": "kept", "summary": judged[1]})
                 continue
         if rel in before and old is not None and cur != old:
+            verified = False
             if can_restore:
                 try:
                     st.write_file(root, rel, base64.b64decode(old))  # never through a planted symlink
+                    verified = _read_cp(root, rel) == old  # re-read: the undo is checked, not assumed
                 except (OSError, ValueError):
                     can_restore = False
-            notes.append(f"{rel} (control plane) was changed by that command" + (" and has been restored." if can_restore else "."))
-            violations.append({"path": rel, "rule": "control-plane", "action": "restored" if can_restore else "recorded"})
+            v = {"path": rel, "rule": "control-plane", "action": "restored" if can_restore else "recorded"}
+            if verified:
+                v["resolved"] = "restored"
+                notes.append(f"{rel} (control plane) was changed by that command and has been restored.")
+            elif can_restore:
+                notes.append(f"{rel} (control plane) was changed by that command; it was written back from the snapshot, "
+                             "but the restore could not be verified (the file differs from the snapshot on re-reading).")
+            else:
+                notes.append(f"{rel} (control plane) was changed by that command.")
+            violations.append(v)
         elif rel not in before and rel in now_files:
             action = "recorded"
             if can_restore:
@@ -604,13 +696,29 @@ def check(ctx, judge):
                     violations.append({"path": rel, "rule": "control-plane-removal-refused", "action": "recorded"})
                     notes.append(f"{rel} could not be removed safely ({e}).")
             notes.append(f"{rel} (control plane) was created by that command" + (" and has been removed." if action == "removed" else "."))
-            violations.append({"path": rel, "rule": "control-plane", "action": action})
+            v = {"path": rel, "rule": "control-plane", "action": action}
+            if action == "removed" and not os.path.lexists(os.path.join(root, rel)):
+                v["resolved"] = "restored"  # verified: the path is gone (REQ-LLA-01)
+            violations.append(v)
     # 1b. git metadata, hidden index flags, ignored entries, user control plane
     before_ex = snap.get("extras") or {}
     if before_ex and git_ok:
         after_ex = _extras(root, pol)
         for k in sorted(set(before_ex) | set(after_ex)):
-            if before_ex.get(k) != after_ex.get(k):
+            b, a = before_ex.get(k), after_ex.get(k)
+            how = _extra_change(k, b, a, pol)
+            if how == "user-config":
+                # a system-managed file the session's user could not write: the human's edit (REQ-LLA-06)
+                try:
+                    ls = os.lstat(k)
+                    owner, mode = ls.st_uid, oct(stat.S_IMODE(ls.st_mode))
+                except OSError:
+                    owner, mode = None, None
+                violations.append({"path": k, "rule": "user-config-changed", "action": "kept",
+                                   "old_hash": b.get("h") if isinstance(b, dict) else None,
+                                   "new_hash": a.get("h") if isinstance(a, dict) else None,
+                                   "owner_uid": owner, "mode": mode})
+            elif how:
                 notes.append(f"{k} was changed by that command (outside what git status shows).")
                 violations.append({"path": k, "rule": "hidden-change", "action": "recorded"})
     # 1c. the .evidence directories themselves: type, mode, owner, identity (REQ-IMH-05).

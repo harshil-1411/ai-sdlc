@@ -1928,13 +1928,19 @@ def suite_pilot62():
         """The fixture key (and any extra variables) in this process's environment, restored after."""
 
         def __init__(self, extra=None, key=True):
-            self.vars = dict(extra or {})
+            # in-process engine calls see what a hook would: none of the variables BASE_ENV strips
+            self.vars = {k: None for k in os.environ if k not in BASE_ENV}
+            self.vars.update(extra or {})
             if key:
                 self.vars["EVIDENCE_SIGNING_KEY"] = KEYV
 
         def __enter__(self):
             self.saved = {k: os.environ.get(k) for k in self.vars}
-            os.environ.update(self.vars)
+            for k, v in self.vars.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
             return self
 
         def __exit__(self, *a):
@@ -1957,7 +1963,8 @@ def suite_pilot62():
 
     def entries(r):
         out = []
-        for f in glob.glob(os.path.join(r, ".evidence", "**", "violations*"), recursive=True):
+        for f in (glob.glob(os.path.join(r, ".evidence", "**", "violations*"), recursive=True)
+                  + glob.glob(os.path.join(r, ".evidence", "violations", "*.json"))):
             if os.path.isfile(f):
                 try:
                     d = json.load(open(f))

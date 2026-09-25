@@ -281,7 +281,14 @@ def run_integrity(ctx):
     # in flight (the hook runs before the prompt). It is kept and logged, not treated as tampering.
     for g in [v for v in violations if v.get("rule") == "permission-grant"]:
         _audit(ctx, {"event": "permission-grant", "violation_path": g["path"], "added": g.get("added", [])[:20]})
-    violations = [v for v in violations if v.get("rule") != "permission-grant"]
+    # Other settings.local.json edits that only grant, tighten or change a display key (REQ-LLA-05), and
+    # system-managed config the session's user could not have written (REQ-LLA-06): logged, not charged.
+    for g in [v for v in violations if v.get("rule") == "config-change"]:
+        _audit(ctx, {"event": "config-change", "violation_path": g["path"], "summary": g.get("summary") or {}})
+    for g in [v for v in violations if v.get("rule") == "user-config-changed"]:
+        _audit(ctx, {"event": "user-config-changed", "config_path": g["path"], "old_hash": g.get("old_hash"),
+                     "new_hash": g.get("new_hash"), "owner_uid": g.get("owner_uid"), "mode": g.get("mode")})
+    violations = [v for v in violations if v.get("rule") not in ("permission-grant", "config-change", "user-config-changed")]
     if not violations:
         return None, changed
     try:
@@ -289,17 +296,51 @@ def run_integrity(ctx):
     except Exception as e:  # unreadable or mismatched state must not swallow the violations
         key, state = None, None
         _audit(ctx, {"event": "engine-error", "error": f"change state unreadable: {e}"[:300]})
+    # A verified undo is closed at birth (REQ-LLA-01), up to auto_resolve_max_per_session per session
+    # (REQ-LLA-03); past the cap, or if the count cannot be read, it is recorded open like any other.
+    import integrity
+    resolved = [v for v in violations if v.get("resolved") == "restored"
+                and (v.get("rule"), v.get("action")) in integrity.AUTO_RESOLVABLE]
+    rid = {id(v) for v in resolved}
     for v in violations:
-        _audit(ctx, {"event": "integrity-violation", "violation_path": v["path"], "rule": v["rule"], "action": v["action"]})
+        if id(v) not in rid:
+            v.pop("resolved", None)
+    if resolved:
+        cap = _auto_resolve_cap(ctx.policy)
+        try:
+            used = st.auto_resolved_count(ctx.root, key, ctx.branch, ctx.session)
+        except Exception:
+            used = cap
+        for v in resolved:
+            if used < cap:
+                used += 1
+                continue
+            v.pop("resolved", None)
+            notes.append(f"This session has reached auto_resolve_max_per_session ({cap}) restored changes, so the change "
+                         f"to {v['path']} stays open and needs a human `evidence change clear-violations`.")
+    for v in violations:
+        _audit(ctx, dict({"event": "integrity-violation", "violation_path": v["path"], "rule": v["rule"],
+                          "action": v["action"]}, **({"resolved": "restored"} if v.get("resolved") else {})))
     try:
         st.record_violations(ctx.root, key, state, ctx.branch, violations, ctx.session)
     except Exception as e:
         _audit(ctx, {"event": "engine-error", "error": f"violations not written: {e}"[:300]})
         notes.append(f"(The violations file could not be written: {e}; they are in the audit log.)")
-    msg = ("Integrity monitor: " + " ".join(notes) + " Push and pull requests are blocked for this change until the "
-           "unapproved changes are reverted and a human clears the record with `evidence change clear-violations "
-           f"{key or '<KEY>'}` in their own terminal.")
+    if all(v.get("resolved") for v in violations):
+        msg = ("Integrity monitor: " + " ".join(notes) + " The monitor undid this and verified the undo; it is recorded, "
+               "and there is nothing to clear.")
+    else:
+        msg = ("Integrity monitor: " + " ".join(notes) + " Push and pull requests are blocked for this change until the "
+               "unapproved changes are reverted and a human clears the record with `evidence change clear-violations "
+               f"{key or '<KEY>'}` in their own terminal."
+               + (" (Changes the monitor undid and verified are recorded as resolved and need no clear.)"
+                  if any(v.get("resolved") for v in violations) else ""))
     return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": msg}}, changed
+
+
+def _auto_resolve_cap(policy):
+    v = policy.get("auto_resolve_max_per_session", 3)
+    return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
 
 
 def run_sensor(payload, ctx=None):
