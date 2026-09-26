@@ -37,7 +37,8 @@ traceability:
   script:
     # GitLab artifacts must live in the project directory, so refuse a test-results/ the branch
     # committed: only the tests job's fresh artifact may prove anything (ADR-0002).
-    - test -z "$(git ls-files test-results)" || { echo "test-results/ is tracked in git; results come only from this pipeline's tests job"; exit 1; }
+    # (a failing git ls-files fails the job instead of reading as "nothing tracked")
+    - out=$(git ls-files -- test-results) || exit 1; test -z "$out" || { echo "test-results/ is tracked in git; results come only from this pipeline's tests job"; exit 1; }
     - python3 "$EVIDENCE" gaps --strict --only-results --results test-results
     - python3 "$EVIDENCE" audit verify
     - python3 "$EVIDENCE" metrics --json | tee metrics.json

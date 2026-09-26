@@ -10,6 +10,11 @@ set -u
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 name="$(basename "$root")-$(printf '%s' "$root" | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:12])')"
 out="${EVIDENCE_RESULTS_DIR:-${TMPDIR:-/tmp}/evidence-chain-results/$name}"
+# a results directory inside the working tree would put results under version control, and the
+# rm -f below would delete files there: refuse it (real paths, so a link or ../ cannot hide it)
+real_out="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$out")" || exit 2
+real_root="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$root")" || exit 2
+case "$real_out/" in "$real_root"/*) echo "EVIDENCE_RESULTS_DIR ($out) is inside the working tree ($root); use a directory outside it" >&2; exit 2;; esac
 mkdir -p "$out"
 # a stale suite from an earlier run must never count
 rm -f "$out"/*.xml "$out"/*.log "$out"/*.sig

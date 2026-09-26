@@ -457,8 +457,17 @@ check("REQ-USA-04 adopter templates sign only downloaded results; GitLab refuses
       re.search(r"path: \$\{\{ runner\.temp \}\}/test-results/", ev)
       and 'results sign "$RUNNER_TEMP"/test-results/*.xml' in ev
       and '--only-results --results "$RUNNER_TEMP/test-results"' in ev and "sign test-results/" not in ev
-      and re.search(r"git ls-files[^\n]*test-results", gl) and "--only-results --results test-results" in gl,
+      and 'out=$(git ls-files -- test-results) || exit 1; test -z "$out"' in gl
+      and 'test -z "$(git ls-files' not in gl and "--only-results --results test-results" in gl,
       (ev[:300], gl[-300:]))
+_rt_code = [l for l in rt.splitlines() if l.strip() and not l.strip().startswith("#")]
+_guard_at = next((i for i, l in enumerate(_rt_code) if '"$real_out/"' in l and '"$real_root"/*' in l and "exit 2" in l), -1)
+_rm_at = next((i for i, l in enumerate(_rt_code) if l.startswith("rm -f")), -1)
+check("REQ-USA-01 run-tests.sh refuses an EVIDENCE_RESULTS_DIR inside the working tree (realpath) before any rm -f",
+      0 <= _guard_at < _rm_at
+      and any(l.startswith("real_out=") and "realpath" in l and '"$out"' in l for l in _rt_code[:_guard_at])
+      and any(l.startswith("real_root=") and "realpath" in l and '"$root"' in l for l in _rt_code[:_guard_at]),
+      _rt_code[:14])
 
 # REQ-USA-12: docs, governance, HANDOFF, CHANGELOG and versions match the shipped behaviour
 cl23 = cl.split("## 2.3.0", 1)[1].split("\n## ", 1)[0] if "## 2.3.0" in cl else ""
