@@ -118,8 +118,10 @@ def sha256_file(path):
 
 # ---------------------------------------------------------------------------
 # a deliberately minimal adapter-file reader. Supports flat `key: value` lines,
-# `key:` + indented `- item` lists, inline `[a, b]` lists, and surrounding
-# quotes on values. Not a YAML parser.
+# `key:` + indented `- item` lists, inline `[a, b]` lists, one level of nested
+# `key:` mapping (artifact_chain.plan_glob), surrounding quotes on values, and
+# YAML comments: a `#` at the start or after whitespace, outside quotes, ends the
+# value (PILOT-60 REQ-USA-05). Not a YAML parser.
 # ---------------------------------------------------------------------------
 
 def _unquote(v):
@@ -127,6 +129,35 @@ def _unquote(v):
     if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
         return v[1:-1]
     return v
+
+
+def _strip_comment(value):
+    """The value with a trailing YAML comment removed: cut at the first `#` that is at
+    position 0 or follows whitespace, outside single or double quotes."""
+    quote = None
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "\"'" and (i == 0 or value[i - 1] in " \t[,"):
+            quote = ch
+        elif ch == "#" and (i == 0 or value[i - 1] in " \t"):
+            return value[:i].rstrip()
+        i += 1
+    return value.rstrip()
+
+
+def _adapter_value(value):
+    """A scalar, or an inline `[a, b]` list, after the comment is stripped."""
+    value = _strip_comment(value.strip())
+    if value.startswith("[") and value.endswith("]"):
+        return [_unquote(v) for v in value[1:-1].split(",") if v.strip()]
+    return _unquote(value)
 
 
 def load_adapter(root):
@@ -138,22 +169,38 @@ def load_adapter(root):
         return None, path
     data = {}
     current_list_key = None
+    nested_key = None  # an indented `key:` under current_list_key (a one-level mapping)
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
         if not line or line.lstrip().startswith("#"):
             continue
         if line.lstrip().startswith("- ") and line.startswith(" ") and current_list_key:
-            data.setdefault(current_list_key, []).append(_unquote(line.strip()[2:]))
+            item = _unquote(_strip_comment(line.strip()[2:]))
+            parent = data.get(current_list_key)
+            if nested_key and isinstance(parent, dict):
+                parent.setdefault(nested_key, []).append(item)
+            elif isinstance(parent, list):
+                parent.append(item)
+            continue
+        if line.startswith(" ") and current_list_key and ":" in line:
+            parent = data.get(current_list_key)
+            if parent == []:
+                parent = data[current_list_key] = {}
+            if isinstance(parent, dict):
+                key, _, value = line.strip().partition(":")
+                value = _strip_comment(value.strip())
+                nested_key = key.strip()
+                parent[nested_key] = _adapter_value(value) if value else []
+                if value:
+                    nested_key = None
             continue
         if ":" in line and not line.startswith(" "):
             key, _, value = line.partition(":")
             key = key.strip()
-            value = value.strip()
-            if value.startswith("[") and value.endswith("]"):
-                data[key] = [_unquote(v) for v in value[1:-1].split(",") if v.strip()]
-                current_list_key = None
-            elif value:
-                data[key] = _unquote(value)
+            value = _strip_comment(value.strip())
+            nested_key = None
+            if value:
+                data[key] = _adapter_value(value)
                 current_list_key = None
             else:
                 current_list_key = key
@@ -419,7 +466,7 @@ def find_eval_covers(text, req_pattern):
             break
         m = re.match(r"^\s*covers\s*:\s*(.*)$", line)
         if m:
-            ids += _ids_in(m.group(1), req_pattern)
+            ids += _ids_in(_strip_comment(m.group(1)), req_pattern)
     return ids
 
 
@@ -991,7 +1038,27 @@ def is_test_path(rel, test_dir_segments):
     return any(pat.search(parts[-1]) for pat in DEFAULT_TEST_BASENAME_PATTERNS)
 
 
-def build_graph(root, adapter, results_paths=None):
+DEFAULT_PLAN_GLOBS = ["intent/*/plan.md", "plan/*.md"]
+FROM_RE = re.compile(r"(?:^|\s)From:\s*(\S+)", re.MULTILINE)
+
+
+def _plan_regexes(adapter):
+    """artifact_chain.plan_glob as regexes over repo-relative paths (REQ-USA-06)."""
+    chain = adapter_get(adapter, "artifact_chain", {})
+    globs = as_list(chain.get("plan_glob")) if isinstance(chain, dict) and chain.get("plan_glob") else DEFAULT_PLAN_GLOBS
+    return [_glob_to_regex(g) for g in globs]
+
+
+def _plan_from(text):
+    """The path a plan's `From:` header names, without backticks or a leading ./, or None."""
+    m = FROM_RE.search(text)
+    if not m:
+        return None
+    ref = m.group(1).strip("`'\"")
+    return ref[2:] if ref.startswith("./") else ref
+
+
+def build_graph(root, adapter, results_paths=None, only_results=False):
     tracker_pattern = re.compile(adapter_get(adapter, "tracker_pattern", DEFAULT_TRACKER_PATTERN))
     req_pattern = re.compile(adapter_get(adapter, "requirement_pattern", DEFAULT_REQ_PATTERN))
     requirements_source = adapter_get(adapter, "requirements_source", "file_glob")
@@ -1024,6 +1091,10 @@ def build_graph(root, adapter, results_paths=None):
             spec_files += sorted(p for p, _ in walk_files(root, ignore)
                                  if p.name == "spec.md" and "intent" not in p.relative_to(root).parts)
         spec_files = [p for p in spec_files if not ignore.ignored(rel_posix(root, p))]
+    # REQ-USA-06: specs before plans, so a plan row that repeats its spec's ID is seen as a reference
+    plan_regexes = _plan_regexes(adapter)
+    is_plan = {p: any(r.match(rel_posix(root, p)) for r in plan_regexes) for p in spec_files}
+    spec_files = [p for p in spec_files if not is_plan[p]] + [p for p in spec_files if is_plan[p]]
     graph["spec_files_scanned"] = len(spec_files)
     req_id_occurrences = {}
     for spec in spec_files:
@@ -1032,6 +1103,7 @@ def build_graph(root, adapter, results_paths=None):
             graph["skipped_files"] += 1
             continue
         spec_rel = rel_posix(root, spec)
+        from_ref = _plan_from(text) if is_plan[spec] else None
         for line in text.splitlines():
             if "|" not in line or not req_pattern.search(line):
                 continue
@@ -1043,6 +1115,9 @@ def build_graph(root, adapter, results_paths=None):
             if idx is None:
                 continue
             req_id = cells[idx].strip("`* ")
+            known = graph["requirements"].get(req_id)
+            if from_ref and known and from_ref.rstrip("/") in (known["spec_file"], os.path.dirname(known["spec_file"])):
+                continue  # the plan's Proof row references its own spec's requirement
             req_id_occurrences.setdefault(req_id, []).append(spec_rel)
             if req_id in graph["requirements"]:
                 continue
@@ -1142,7 +1217,9 @@ def build_graph(root, adapter, results_paths=None):
             graph["csv_malformed"] = True
 
     locations = []
-    if adapter is not None and "test_results_location" in adapter:
+    if only_results:
+        pass  # REQ-USA-03: only the --results paths, never a committed results directory
+    elif adapter is not None and "test_results_location" in adapter:
         locations += as_list(adapter.get("test_results_location"))
     elif adapter is None:
         locations += DEFAULT_RESULTS_LOCATIONS
@@ -1599,9 +1676,31 @@ def missing_child_gaps(graphs, explicit, only_parent=None):
     return out
 
 
+# REQ-USA-02 (ADR-0002 rev. 2): the one requirement `gaps --self-check` may leave unproven, because
+# the self-check run IS its proof. Hard-coded in the trusted CLI; no adapter key can name or change it.
+SELF_CHECK_REQUIREMENT = "REQ-V2C-09"
+
+
+def _self_check_exempt(gaps):
+    """Remove SELF_CHECK_REQUIREMENT, and only it, from every blocking category's list."""
+    for label in STRICT_BLOCKING:
+        gaps[label] = [i for i in gaps.get(label, [])
+                       if re.split(r"[:\s(]", i.strip(), 1)[0] != SELF_CHECK_REQUIREMENT]
+    return gaps
+
+
 def cmd_gaps(root, args):
     strict = getattr(args, "strict", False)
     results_paths = getattr(args, "results", None)
+    only_results = getattr(args, "only_results", False)
+    self_check = getattr(args, "self_check", False)
+    if only_results and not results_paths:
+        print("evidence gaps: --only-results needs at least one --results PATH (the fresh results to read).",
+              file=sys.stderr)
+        return 2
+    if self_check:
+        print(f"self-check: {SELF_CHECK_REQUIREMENT} is proven by this step, not by an earlier result "
+              f"(it alone is exempt; every other requirement still blocks)")
     if getattr(args, "repos", None):
         repos, explicit = resolve_repos(args.repos)
         if not repos:
@@ -1612,12 +1711,15 @@ def cmd_gaps(root, args):
         graphs, roots_by_name, blockers = {}, {}, []
         for r in repos:
             adapter, _ = load_adapter(r)
-            graphs[r.name] = build_graph(r, adapter, results_paths)
+            graphs[r.name] = build_graph(r, adapter, results_paths, only_results)
             roots_by_name[r.name] = r
             print(f"--- {r.name} ---")
             print(assessment_basis_line(r, graphs[r.name]))
             print()
-            blockers += _print_gaps("", compute_gaps(r, graphs[r.name]), strict)
+            rgaps = compute_gaps(r, graphs[r.name])
+            if self_check:
+                _self_check_exempt(rgaps)
+            blockers += _print_gaps("", rgaps, strict)
 
         req_repos = {}
         for name, g in graphs.items():
@@ -1653,7 +1755,7 @@ def cmd_gaps(root, args):
         return 0
 
     adapter, _ = load_adapter(root)
-    graph = build_graph(root, adapter, results_paths)
+    graph = build_graph(root, adapter, results_paths, only_results)
 
     print("evidence gaps")
     print("=" * 60)
@@ -1672,6 +1774,8 @@ def cmd_gaps(root, args):
     print(assessment_basis_line(root, graph))
     print()
     gaps = compute_gaps(root, graph)
+    if self_check:
+        _self_check_exempt(gaps)
     blockers = _print_gaps("", gaps, strict)
 
     if blockers:
@@ -1952,6 +2056,12 @@ def register_gaps(sub):
     p.add_argument("--parent", metavar="KEY", help="with --repos: only check this parent key's child chains")
     p.add_argument("--strict", action="store_true",
                    help="also block on SELF-ASSERTED, UNPROVEN, UNVERIFIED-RESULT and DUPLICATE-ID")
+    p.add_argument("--only-results", action="store_true",
+                   help="ingest only the --results paths and ignore the adapter's test_results_location "
+                        "(CI reads only the fresh artifact; needs --results)")
+    p.add_argument("--self-check", action="store_true",
+                   help=f"run as this repository's own final self-check: {SELF_CHECK_REQUIREMENT}, and only it, "
+                        "is exempt, because this run is its proof")
     _add_results_arg(p)
     p.set_defaults(func=cmd_gaps)
 

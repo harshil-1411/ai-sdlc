@@ -641,7 +641,7 @@ def gaps_repo(adapter_extra="", committed=True, plans=(), specs=((SPEC60, "spec.
             shutil.copy(os.path.join(FIX60, src), os.path.join(d, rel))
     os.makedirs(os.path.join(d, "tests"))
     with open(os.path.join(d, "tests", "test_x.sh"), "w") as f:
-        for rid in ("REQ-X-01", "REQ-X-02", "REQ-V2C-09", "REQ-Y-01"):
+        for rid in ("REQ-X-01", "REQ-X-02", "REQ-V2C-09") + (("REQ-Y-01",) if plans else ()):
             f.write(f'check_ok "{rid} works"\n')
     if committed:
         os.makedirs(os.path.join(d, "validation", "results"))
@@ -661,14 +661,14 @@ def gaps_tests():
     fresh = d + "-fresh"
     _junit(os.path.join(fresh, "r.xml"), ["REQ-X-01", "REQ-X-02"])
     r = run(["gaps", "--strict", "--self-check", "--only-results", "--results", fresh], d)
-    check("REQ-USA-02 gaps --strict --self-check passes when only REQ-V2C-09 is unproven, and says so",
+    check("REQ-USA-02 gaps --strict --self-check passes when only the self-check requirement is unproven, and says so",
           r.returncode == 0 and "self-check: REQ-V2C-09" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
     r = run(["gaps", "--strict", "--only-results", "--results", fresh], d)
-    check("REQ-USA-02 without --self-check the unproven REQ-V2C-09 still blocks",
+    check("REQ-USA-02 without --self-check the unproven self-check requirement still blocks",
           r.returncode == 1 and "REQ-V2C-09" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
     _junit(os.path.join(fresh, "r.xml"), ["REQ-X-01"])
     r = run(["gaps", "--strict", "--self-check", "--only-results", "--results", fresh], d)
-    check("REQ-USA-02 --self-check does not exempt another unproven requirement (REQ-X-02 blocks)",
+    check("REQ-USA-02 --self-check does not exempt another unproven requirement",
           r.returncode == 1 and "REQ-X-02" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
     shutil.rmtree(d)
     shutil.rmtree(fresh)
@@ -676,7 +676,7 @@ def gaps_tests():
     fresh = d + "-fresh"
     _junit(os.path.join(fresh, "r.xml"), ["REQ-X-01", "REQ-V2C-09"])
     r = run(["gaps", "--strict", "--self-check", "--only-results", "--results", fresh], d)
-    check("REQ-USA-02 an adapter self_check_requirement key cannot exempt REQ-X-02",
+    check("REQ-USA-02 an adapter self_check_requirement key cannot exempt another requirement",
           r.returncode == 1 and "REQ-X-02" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
     shutil.rmtree(d)
     shutil.rmtree(fresh)
