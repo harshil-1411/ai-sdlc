@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-D9A441?style=flat-square&labelColor=0E1116"></a>
-  <img alt="Version 2.3.0" src="https://img.shields.io/badge/plugins-2.3.0-EDE8DC?style=flat-square&labelColor=0E1116">
+  <img alt="Version 2.4.0" src="https://img.shields.io/badge/plugins-2.4.0-EDE8DC?style=flat-square&labelColor=0E1116">
   <img alt="Python 3.8+" src="https://img.shields.io/badge/python-3.8%2B-EDE8DC?style=flat-square&labelColor=0E1116">
   <img alt="macOS or Linux" src="https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20WSL-EDE8DC?style=flat-square&labelColor=0E1116">
   <img alt="Fail-closed" src="https://img.shields.io/badge/gates-fail--closed-E0645A?style=flat-square&labelColor=0E1116">
@@ -36,24 +36,14 @@ After the human approves that exact plan text, it wanders outside the plan:
 > "Files claimed" for AUTH-7. Add it to the plan (which voids the approval) and ask for
 > re-approval, or leave the file alone.
 
-And tries to sneak a write past the Edit tool:
-
-> This command modifies files in a way the gates cannot inspect (python3 inline code
-> that writes files). Use the Edit or Write tools for file changes so the plan, claims,
-> test-protection and secret checks can run.
-
 ## What it is
 
-Five Claude Code plugins (skills, agents, slash commands and hooks) that put an agent
-inside the whole development lifecycle while keeping the controls an audited product
-needs. **Skills make the standards likely. One fail-closed gate engine makes the
-non-negotiable ones certain.** It is a Python hook that sees every Edit, Write and Bash
-call.
-
-**Who it's for:** teams shipping software an outside party can ask them to justify.
-That includes regulated industries (medical devices, pharma, financial services,
-payments) and any team that has decided "an AI wrote it" must never become "nobody can
-explain why it's correct."
+Five Claude Code plugins that put an agent inside the whole development lifecycle while
+keeping the controls an audited product needs. **Skills make the standards likely; one
+fail-closed gate engine, a Python hook on every Edit, Write and Bash call, makes the
+non-negotiable ones certain.** It's for teams shipping software an outside party can
+ask them to justify: regulated industries, and any team that has decided "an AI wrote
+it" must never become "nobody can explain why it's correct."
 
 ## How it works
 
@@ -64,16 +54,10 @@ explain why it's correct."
 Every stage ends with a committed artifact the next stage reads: `intent.md` →
 `spec.md` → `plan.md` → diff and tests → PR and review findings → release evidence.
 The chain of commits is the audit trail, so nobody has to rebuild it by hand at release
-time. Along the way:
+time. The agent cannot approve its own plan or edit the configuration that governs it,
+and the `evidence` CLI derives the traceability matrix from what the repository contains.
 
-- No source edit happens without a human-approved plan for an active change.
-- Only files the plan claims can be edited.
-- Commits carry the tracker key and the agent session.
-- Nothing reaches a protected branch or production without a human.
-- The agent cannot approve its own plan or edit the configuration that governs it.
-- The `evidence` CLI derives the traceability matrix from what the repository actually contains.
-
-### The five plugins
+### The five plugins ([every skill's triggers](docs/skills-reference.md))
 
 | Plugin | What it does | Contents |
 | --- | --- | --- |
@@ -82,8 +66,6 @@ time. Along the way:
 | `evidence-quality` | Test strategy, automation, E2E, accessibility, performance, security and static analysis, CI design, test-case authoring, traceability IDs | 10 skills, `test-designer`, `flake-triage` |
 | `evidence-compliance` | Loads only the control sets the compliance profile names, and derives the evidence package from the chain | 2 skills, `compliance-reviewer` |
 | `evidence-integrations` | Changes that cross the platform boundary, and contract tests | 2 skills |
-
-Every skill's trigger phrases are in [docs/skills-reference.md](docs/skills-reference.md).
 
 ## Install
 
@@ -249,6 +231,10 @@ fires, what it produces and which gate checks it. Full index:
   plugin can't configure them.
 - The audit log is tamper-evident, not tamper-proof. To make it tamper-resistant, ship
   it off the machine (OTel or a CI artifact).
+- The gates are guardrails against agent mistakes, not a security boundary against an
+  agent trying to get around them. Known bypasses are listed in [CHANGELOG.md](CHANGELOG.md)
+  (2.4.0, Known issues). Rely on CI's `verify-range`, branch protection, code-owner review
+  and the Claude Code sandbox for enforcement.
 - Approving a change nobody read is worse than no AI at all. Tier the work, and measure
   how deeply reviews actually go ([docs/concepts.md](docs/concepts.md#measure-these)).
 

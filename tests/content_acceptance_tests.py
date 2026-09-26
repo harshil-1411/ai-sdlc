@@ -515,8 +515,9 @@ check("REQ-USA-12 both git config sets are documented with their reasons; the kn
 check("REQ-USA-12 CHANGELOG 2.3.0 states the owner actions and PILOT-64; HANDOFF carries the ci.yml diff",
       cl23 and "ci.yml" in cl23 and "git_allowed_config" in cl23 and "PILOT-64" in cl23 and "MAN-USA-01" in cl23
       and "## PILOT-60 owner actions" in ho60 and "```diff\n--- a/.github/workflows/ci.yml" in ho60, cl23[:200])
-check("REQ-USA-12 all five plugins, the marketplace and the engine are version 2.3.0",
-      set(vers.values()) == {"2.3.0"} and set(v for v in mvers if v) == {"2.3.0"} and _st.ENGINE_VERSION == "2.3.0",
+# Since PILOT-59 part 1 (2.4.0) this checks the versions agree at 2.3.0 or later, instead of pinning 2.3.0.
+check("REQ-USA-12 all five plugins, the marketplace and the engine agree on one version, 2.3.0 or later",
+      len(_v22) == 1 and tuple(int(x) for x in next(iter(_v22)).split(".")) >= (2, 3, 0),
       (vers, mvers, _st.ENGINE_VERSION))
 
 fails = sum(1 for _, ok, _ in res if not ok)

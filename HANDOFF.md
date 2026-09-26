@@ -1,25 +1,113 @@
-# Handoff — Evidence Chain v2
+# Handoff — Evidence Chain
 
 For whoever picks this up next (engineer or agent session). Read this first, then
-`README.md`. Last updated 2026-09-24 by the maintainer's Claude Code session.
+`README.md`. Last updated 2026-09-26 by the maintainer's Claude Code session.
+
+## The decision to know first
+
+**The plugin is feature complete, and gate hardening is frozen.** The AI SDLC plugin
+(five plugins, 30 skills, intent → spec → plan → build → review → release, the
+traceability CLI) has existed since mid-September. From the v2 hardening on, the work
+turned into making the gate engine hold against a *hostile* agent, which means
+understanding every possible shell command. That race does not converge: each review
+round of PILOT-58, 60, 62 and 59 found new bypasses, and the last one found 21.
+
+So, from 2.4.0:
+- **The gates are guardrails against agent mistakes, not a security boundary.** The
+  controls to rely on are the `verify-range` merge gate in CI, branch protection,
+  code-owner review and the Claude Code sandbox.
+- **No new hardening PILOTs** unless a pilot team hits a real problem. Everything still
+  open is parked below, with its reason.
+- **The next milestone is a pilot, not code:** one real team, one real repo, one week
+  (checklist below). The auditors said the same: the remaining score points need owner
+  actions and real use, not more engine code.
 
 ## Where things stand
 
 | | |
 | --- | --- |
-| Repository | https://github.com/harshil-1411/ai-sdlc, branch `main` (only branch on GitHub) |
-| Head | `6c32020`: PILOT-53 round 6 |
-| Version | 2.0.0, all five plugins |
-| Maintainer | suparn.bector@msbdocs.com |
-| Enterprise score | **3.3 / 5**, independently verified at `774bba8` (v1 was 2.1). Round 6 (`6c32020`) is not re-scored. |
+| Repository | https://github.com/harshil-1411/ai-sdlc |
+| Branches | `main` and `develop` only. All feature branches were merged and deleted on 2026-09-26 |
+| Version | 2.4.0, all five plugins and the engine |
+| Maintainer | suparn.bector@msbdocs.com; second reviewer Harshil (`harshil-1411`) |
+| Enterprise score | **3.3 / 5**, independently verified at `774bba8` on 2026-09-24 (v1 was 2.1). **Not re-scored since**; re-score once, after the pilot |
 | Reports | [v1 audit](https://claude.ai/artifact/2AC3mxyFdmkHKYgogwLFpG) · [v1 vs v2](https://claude.ai/artifact/7WPE6snzrdb6DFjjFRBKLC) (private; the owner shares them) |
-| Tests | engine 342 · lifecycle 25 · sensor 17 · CLI 80 · content 66, all passing; `evidence gaps --strict` shows 103/103 requirements PROVEN |
+| Tests | Last full runs: engine 942 passed / 0 failed (PILOT-59 part 1). Content: one known failure, REQ-USA-04, until the owner applies the `ci.yml` diff under "PILOT-60 owner actions" |
+| Backup | Every pre-cleanup branch is in `~/Desktop/evidence-chain-backups/evidence-chain-all-branches-20260926.bundle` on the maintainer's machine |
 
-The work since the v1 audit is recorded as intent/spec/plan in:
-- `intent/2026-09-24-v2-enterprise-hardening/` (PILOT-53)
-- `intent/2026-09-24-testing-depth-and-strategy-interview/` (PILOT-51)
+### How 2.2.0 to 2.4.0 reached `main` (needs after-the-fact checks)
 
-`CHANGELOG.md` summarises it.
+PILOT-62 (2.2.0), PILOT-60 (2.3.0), PILOT-59 part 1 (2.4.0) and the PILOT-61 plan were
+pushed straight to `main` on 2026-09-26 with branch protection **bypassed**: no pull
+request, no code-owner review, no CI run. They were built with the gates switched off,
+so the commits carry no `Agent-Session` trailer and `verify-range` rejects the range.
+Before the pilot:
+1. Run CI on `main` (`gh workflow list`, then `gh workflow run <name> --ref main`) and fix
+   anything red.
+2. Harshil reviews the range `7759c17..main` after the fact.
+3. From now on: feature branch off `develop` → PR into `develop` → PR `develop` → `main`.
+   Protect `develop` like `main`.
+
+## PILOT status
+
+| Key | What | Status |
+| --- | --- | --- |
+| PILOT-51, 52, 53 | v2 hardening | Merged (2.0.x) |
+| PILOT-54, 57 | Repo placeholders; human TTY and commit audit | Merged |
+| PILOT-58 | Integrity monitor hardening, `verify-range` (2.1.0) | Merged. **Release record never made:** run `evidence change release PILOT-58` (human, with the key) |
+| PILOT-62 | Local layer advisory (2.2.0) | Merged |
+| PILOT-60 | Usability (2.3.0) | Merged. Owner actions below |
+| PILOT-59 part 1 | Review deferrals, REQ-CON-14..23 (2.4.0) | Merged, with 21 known bypasses (CHANGELOG 2.4.0, Known issues) |
+| PILOT-59 part 2 | Monitor concurrency, REQ-CON-01..13 | **Parked.** Workaround: run agents one at a time |
+| PILOT-59 parser rework | Fail-closed Bash grammar | **Parked.** Two attempts were stopped by the model's safety classifier because the prompts carried working bypass commands |
+| PILOT-61 | Signer key isolation | **Parked, plan only** (`intent/2026-09-25-signer-key-isolation/`). Needs admin install on every machine |
+| PILOT-63 | Release record written by CI on merge | Parked, proposed (from PILOT-62) |
+| PILOT-64 | Plan re-approval missing from history; `CLAUDE_CONFIG_DIR` watching | Parked, proposed |
+
+Reopen a parked item only when a pilot team is hurt by it.
+
+## Next steps, in order
+
+1. **Close out the direct merge** (the three steps above).
+2. **Owner actions** (no code can do these):
+   - [ ] Apply the `ci.yml` diff under "PILOT-60 owner actions" (it makes REQ-USA-04 pass), then MAN-USA-01 and MAN-USA-02.
+   - [ ] Apply the `verify-range.yml` hardening diff under "PILOT-62 owner actions".
+   - [ ] Add `verify-range` as a required check on `main`; confirm "Require review from Code Owners" is on; run MAN-IMH-01 on the next PR.
+   - [ ] Org policy: `approval.github_identities` (`suparn.bector@msbdocs.com` → `suparnbector`), `approval.mode: "github"`, `approval.github_repo`, `approval.github_allowed_approvers`, `approval.github_repo_roots`, and `ci_gate_gh_path` pointing at a root-owned `gh`.
+   - [ ] Confirm the Actions variable `EVIDENCE_REQUIRE_SIGNED=true`.
+   - [ ] Capture real `gh api` responses for `repos/…`, `…/branches/main/protection` and `…/rules/branches/main`; the gate fixtures use documented shapes [NEEDS VERIFICATION].
+   - [ ] Re-enable the gates on the maintainer's machine (see "Working on this repo").
+   - [ ] `evidence change release PILOT-58`.
+3. **Pilot** (checklist below).
+4. **Re-score once**, after the pilot, with independent auditors and a set budget.
+
+## Pilot checklist
+
+- [ ] Pick one team and one real repository with a tracker (Jira or GitHub Issues) and CI.
+- [ ] Install all five plugins; deploy `managed-settings.json` with the signing key; run the canary (`docs/managed-settings.md`); `evidence doctor` is clean.
+- [ ] Run discovery; a human answers the `[ASK]` items in `.evidence/context/`.
+- [ ] Ship at least one Tier 1, one Tier 2 and one Tier 3 change end to end, each approved by a human in the chat.
+- [ ] Merge through `verify-range` and code-owner review; produce `evidence export` for one release.
+- [ ] Record, per change: time added by the process, false denials (and the rule), real catches, and anything the team worked around.
+- [ ] Exit review after a week: keep, change or drop each gate. Turn real pain into PILOTs; nothing else.
+
+## Working on this repo
+
+- **Gates:** on the maintainer's machine they are **off**. The local, uncommitted
+  `.claude/settings.json` disables `evidence-sdlc@evidence-chain`, and the local
+  `default-policy.json` is loosened (`develop` and `~/.claude.json` removed from
+  protection, `enforce_claims` false, `auto_resolve_max_per_session` 1000,
+  `tier3_distinct_approver` false; `.bak` copies beside it). **Never commit these.**
+  To turn the gates back on: `git checkout -- .claude/settings.json plugins/evidence-sdlc/policy/default-policy.json`,
+  then start a new session and look for `Evidence Chain gates live` in its context.
+- **With the gates on:** branch `feature/PILOT-<n>-name` off `develop`, then
+  `evidence change start PILOT-<n> --tier <n> --kind feature|fix|chore`, write the
+  tier's artifacts, and a human approves with `/evidence-sdlc:approve PILOT-<n> <plan-sha>`.
+  Commits need the key and an `Agent-Session: <session id>` trailer. Engine changes are
+  Tier 3 and need the signing key or a raised `unsigned_max_tier`.
+- **Any plugin file change needs a version bump** in all five `plugin.json` files, the
+  marketplace and `ENGINE_VERSION`, plus a CHANGELOG entry (`check-version-bump.sh`).
+  The content suite checks they agree.
 
 ## What's in the box
 
@@ -59,64 +147,8 @@ Evals cost money. Run them per plugin with
 `claude plugin eval . --scaffold --allow-tools Write Edit` and regenerate the summary with
 `python3 scripts/ci/eval-summary.py <plugin> <results.json>`.
 
-## Working on this repo from now on
+## Parked backlog (reopen only on real need)
 
-This repo is meant to run under its own v2 rules. **It hasn't yet.** v2 was built in a
-session still running the v1 hooks, so there's no `.evidence/changes/` or audit trail
-for PILOT-53. The plan says so openly. Make the next change the first dogfooded one:
-
-1. Install the plugins from this repo, then start a **new** session. Hooks load at session start.
-   ```
-   /plugin marketplace add harshil-1411/ai-sdlc
-   /plugin install evidence-discovery@evidence-chain   (and the other four)
-   ```
-2. Create a branch that carries a tracker key, e.g. `feature/PILOT-54-short-name`. The next free key is PILOT-54.
-3. Run `evidence change start PILOT-54 --tier <n> --kind feature|fix|chore`, then write the artifacts the tier requires.
-4. A human approves by sending `/evidence-sdlc:approve PILOT-54 <plan-sha>` in the chat.
-5. Commits need `PILOT-54` in the message, an `Agent-Session: <session id>` trailer, and the change's `.evidence/` files staged.
-
-**Unsigned mode:** without `EVIDENCE_SIGNING_KEY`, agents may only work on **Tier 1**
-changes. Engine changes are Tier 3 by the framework's own rules. Before that work you need either:
-- the key deployed (`docs/managed-settings.md`, "Signing key"), or
-- an org policy that raises `unsigned_max_tier`, which accepts forgeable records.
-
-## Open work
-
-### Code, in priority order
-0. **After PILOT-58 (2.1.0):**
-   - **PILOT-62, local layer advisory: implemented in 2.2.0 (ADR-0005), not yet merged.** A verified restore is closed at birth (capped per session, shown by `verify-range` rule 5); `settings.local.json`, root-owned system config and `~/.claude.json` edits are judged by effect; Tier 3 in `acceptEdits`/`auto` is allowed when `verify-range` is read from GitHub as required and pinned to GitHub Actions; `check-forgery` denies posting statuses or check runs. **Owner actions after merge:** pin `verify-range` to GitHub Actions in branch protection, set `approval.github_repo` in the org policy, keep the org policy root-owned, and remove the machine-local permission-mode loosening once MAN-LLA-01 passes. The gate-detection fixtures were built from GitHub's documented shapes, not captured [NEEDS VERIFICATION].
-   - **Proposed `verify-range.yml` hardening (PILOT-62 review H4, for a human to apply; the agent does not edit `.github/workflows/`).** A GitHub Actions check run named `verify-range` is not proof by itself: `gh workflow run verify-range.yml --ref <branch>` runs that branch's workflow and CLI and attaches the result to the branch head. Proposed diff:
-     ```diff
-     @@ jobs:
-        verify-range:
-          runs-on: ubuntu-latest
-          timeout-minutes: 15
-     +    # a dispatch runs the dispatched ref's copy of this file: only main's copy may judge a PR
-     +    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
-          steps:
-     +      - name: Refuse a dispatch from any ref but main
-     +        if: github.event_name == 'workflow_dispatch'
-     +        env:
-     +          REF: ${{ github.ref }}
-     +        run: test "$REF" = "refs/heads/main" || { echo "verify-range may only be dispatched from main"; exit 1; }
-     +
-            - name: Check out the base only (the trusted CLI)
-              uses: actions/checkout@v4
-              with:
-     -          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-     +          # always the base's evidence CLI: the PR's base for pull_request_target, main otherwise
-     +          ref: ${{ github.event.pull_request.base.sha || 'refs/heads/main' }}
-                fetch-depth: 0
-                persist-credentials: false
-     ```
-     Keep `.github/**` under code-owner review: a PR that edits this file, or adds a `pull_request` workflow with a job named `verify-range`, can still produce a GitHub Actions check under that name, and only the code owner's review stops it.
-   - **`ci_gate_gh_path` is trusted as set** (PILOT-62 re-review item 4, not done): applying the not-user-writable check to it would need a root-owned fake gh in the hook-level tests (ownership, not mode, is what the check tests), so it is left for PILOT-61 (not in PILOT-60's scope). Until then the org must point it at a root-owned gh.
-   - **PILOT-63, release automation (deferred from PILOT-62):** `verify-range --push-report` records "merged" in a signed CI artifact that the release command reads. Writing a signed `released` state from CI needs a commit on protected `main` and a human-authored workflow, so it is its own change.
-   - **PILOT-59, concurrency and monitor gaps:** attested writes, a signed lease, chained snapshots, a pre-call `tool-start` audit entry (review A4), FIFO/device hashing in `_dirty` (B1), snapshot root mismatch (B2), snapshot directory 0700 plus an owner check (B3) (REQ-CON-01..13, part 2, not started).
-   - **PILOT-59 part 1 (the deferrals, REQ-CON-14..23), done on `fix/PILOT-59-concurrency-and-deferrals`, not merged, no version yet:** the `cmdparse` shell scanner (newlines, heredoc operator lines, comments, process substitution), the PILOT-60 review items (C2, P1-P5, `file://`, logical `cd`), the GitHub creator rule (`approval.github_identities`), the eight `verify-range` review items, and the fail-open sweep. See CHANGELOG "Unreleased (PILOT-59, part 1)". **Owner action:** set `approval.github_identities` in the org policy for every Tier 3 change creator; until then a Tier 3 GitHub approval is refused.
-   - **PILOT-60, usability:** done in 2.3.0 (CHANGELOG). Owner actions are under "PILOT-60 owner actions" below. Review fixes M1, M2, L1-L3 are in; one deviation from the approved spec: its REQ-USA-07 cases with the literal `$TMPDIR` (`curl -o $TMPDIR/x.json`, `cp src/app.py $TMPDIR/app.bak`) and `sort /tmp/a > /tmp/b` stay denied (the hook cannot know the shell's `TMPDIR`; `curl` and `sort` can run code). Use an expanded path. The review's `cmdparse` findings (process substitution, argv[0], environment injection, bundled `cp -t`) are listed for PILOT-59 in CHANGELOG 2.3.0.
-   - **PILOT-64 (proposed, key not yet allocated):** a plan re-approval missing from `state.json`'s history, and watching `CLAUDE_CONFIG_DIR`. Both touch `lifecycle.py` / `integrity.py`.
-   - **PILOT-61, key isolation:** a signer that never runs git or exposes the key, which retires ADR-0003 §4.
 1. **Inline interpreter code** (`python -c`, `node -e`) is judged by a keyword denylist
    (`cmdparse._WRITE_HINTS`), so string tricks get past the pre-check. Replace it with an
    allowlist of read-only forms, or make strict mode the default.
@@ -129,25 +161,7 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
 5. **Stale `REQ-GATE-*` rows** in `validation/traceability.csv` are kept deliberately:
    they're evidence of a 2026-09-12 run, and rows are never rewritten. `export --conflicts-only`
    flags them. Supersede them with new rows rather than editing them.
-
-### Owner actions (no code can do these)
-- [x] Replace the organisation placeholders with `harshil-1411/ai-sdlc` (2026-09-24, PILOT-54; the maintainer edited `managed-settings.json`).
-- [x] Branch protection on `main`: `checks` and `sign-and-gate` required, code-owner review, no force pushes (2026-09-24).
-- [x] `.github/CODEOWNERS` with a real handle (2026-09-24, PILOT-54).
-- [x] `EVIDENCE_SIGNING_KEY` Actions secret: `sign-and-gate` passed on PR #1 (2026-09-24).
-- [ ] Confirm the Actions variable `EVIDENCE_REQUIRE_SIGNED=true` is set (not verified).
-- [ ] After PILOT-58 merges: add `verify-range` as a required status check on `main`, and confirm "Require review from Code Owners" is on. Then run MAN-IMH-01 on the next PR: a deliberately bad branch must fail `verify-range`, and pass after a code-owner approval and a re-run.
-- [ ] A second person for code-owner review. The owner in CODEOWNERS can't approve their own PRs, so until a second reviewer exists, merges need the admin override.
-- [ ] Set up GitHub approval mode in an org policy:
-  - `approval.mode: "github"`
-  - `github_repo`
-  - `github_allowed_approvers`
-- [x] Deploy `managed-settings.json` with the signing key and sandbox, on the maintainer's machine (2026-09-24). The first key was read through the Read tool because of the single-`/` defect, and has been rotated. The env probe and the Read of the managed directory are now both denied. Run the canary (docs/managed-settings.md) on every other machine.
-- [ ] Run the evals that weren't run for budget:
-  - compliance
-  - the rest of sdlc and discovery, at 3 or more runs per arm
-  - the live scenarios
-- [ ] Pilot with one team for 60–90 days, commission an external red team, then re-score.
+6. **PILOT-59's 21 bypasses, review H1 and M1:** CHANGELOG 2.4.0, Known issues.
 
 ## Decisions worth knowing (and why)
 
@@ -157,19 +171,59 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
 - **Versions are back, guarded by `check-version-bump.sh`.** The two earlier reverts happened because a static version made `/plugin update` skip real changes; the check makes a missed bump unmergeable.
 - **Background execution is denied.** Work that runs after a command returns escapes both the pre-check and the integrity monitor.
 - **Approvals go through UserPromptSubmit.** The model can't author a user prompt. Nested or unattended sessions are refused, and a Tier 3 plan needs a second person.
+- **Hardening frozen at 2.4.0 (2026-09-26).** See "The decision to know first".
 
 ## Gotchas
 
 - **Hooks load at session start.** Editing `hooks.json` mid-session doesn't change that session's gates, but script *content* is read live.
-- **GitHub history:** `main` on GitHub was force-replaced once on 2026-09-24. It had only GitHub's "Initial commit" README.
-- **Local branches:** `master` is the old v1 line, and `hardening/v2` has the same head as `main`. Both are local only.
-- **Windows:** native Windows is unsupported; use WSL.
+- **Run agents one at a time.** The monitor is not concurrency-safe (PILOT-59 part 2 is parked).
+- **The agent sandbox:** `gh` fails TLS verification (the agent pushes; a human runs `gh pr create`/`merge` and `gh api`); `.git/config` is not writable (`checkout -b`, `push -u` and `branch -D` half-fail: create branches with `git branch X; git symbolic-ref HEAD refs/heads/X; git reset -q`, and set upstreams yourself); `git push` prints `failed to store: 100001` but works (check with `git ls-remote`).
+- **Never run `gh auth token`** in an agent session: it prints the real token. The token was rotated on 2026-09-26 after one leaked into a transcript.
+- **The literal `$TMPDIR`** in a command stays denied (the hook cannot know the shell's value). Use an expanded path.
 - **Absolute paths in permission rules need `//`.** `Read(/Library/…)` is project-relative; `Read(//Library/…)` is the real path. This is how the first signing key leaked (PILOT-54).
-- **Run review agents one at a time.** Parallel subagents made the integrity monitor attribute one agent's writes to another, restore over a real violation record, and fork the audit log (PILOT-57). Monitor concurrency is PILOT-58.
-- **Human terminal actions need the key for that one command:** `EVIDENCE_SIGNING_KEY="$(…)" evidence …` (docs/managed-settings.md). Plan approval goes through the prompt and needs no key.
-- **Test results are CI artifacts (2.3.0, ADR-0002).** Nobody commits result files. `bash scripts/ci/run-tests.sh` writes to `EVIDENCE_RESULTS_DIR` (default outside the repo, printed), ends with the self-check that proves REQ-V2C-09, and leaves `git status` clean, so an agent may run it too. One run is enough. `validation/results/` is historical.
-- **The agent sandbox can't open PRs:** `gh` fails TLS verification there. The agent pushes, and a human runs `gh pr create`/`merge`.
+- **Human terminal actions need the key for that one command,** run from inside the repo: `EVIDENCE_SIGNING_KEY="$(…)" evidence …` (docs/managed-settings.md). Plan approval goes through the prompt and needs no key.
+- **Test results are CI artifacts (ADR-0002).** Nobody commits result files; `validation/results/` is historical.
+- **Windows:** native Windows is unsupported; use WSL.
 - **Personal files** moved out of the repo are in `~/Desktop/evidence-chain-extras/` on the maintainer's machine.
+
+## PILOT-62 owner actions
+
+Pin `verify-range` to GitHub Actions in branch protection, set `approval.github_repo`
+in the org policy, keep the org policy root-owned, and remove the machine-local
+permission-mode loosening once MAN-LLA-01 passes.
+
+**`verify-range.yml` hardening (review H4; a human applies it, the agent does not edit
+`.github/workflows/`).** A GitHub Actions check run named `verify-range` is not proof by
+itself: `gh workflow run verify-range.yml --ref <branch>` runs that branch's workflow
+and CLI and attaches the result to the branch head. Proposed diff:
+
+```diff
+@@ jobs:
+   verify-range:
+     runs-on: ubuntu-latest
+     timeout-minutes: 15
++    # a dispatch runs the dispatched ref's copy of this file: only main's copy may judge a PR
++    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
+     steps:
++      - name: Refuse a dispatch from any ref but main
++        if: github.event_name == 'workflow_dispatch'
++        env:
++          REF: ${{ github.ref }}
++        run: test "$REF" = "refs/heads/main" || { echo "verify-range may only be dispatched from main"; exit 1; }
++
+       - name: Check out the base only (the trusted CLI)
+         uses: actions/checkout@v4
+         with:
+-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
++          # always the base's evidence CLI: the PR's base for pull_request_target, main otherwise
++          ref: ${{ github.event.pull_request.base.sha || 'refs/heads/main' }}
+           fetch-depth: 0
+           persist-credentials: false
+```
+
+Keep `.github/**` under code-owner review: a PR that edits this file, or adds a
+`pull_request` workflow with a job named `verify-range`, can still produce a GitHub
+Actions check under that name, and only the code owner's review stops it.
 
 ## PILOT-60 owner actions
 

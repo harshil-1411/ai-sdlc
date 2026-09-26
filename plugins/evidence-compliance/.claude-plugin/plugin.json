@@ -1,6 +1,6 @@
 {
   "name": "evidence-compliance",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Regulatory controls for regulated records and the derivation of validation deliverables from the artifact chain.",
   "author": {
     "name": "Suparn Bector",

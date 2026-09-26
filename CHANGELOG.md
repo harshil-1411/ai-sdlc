@@ -3,10 +3,11 @@
 All five plugins are versioned together. Every change to a plugin's files needs a
 version bump (enforced in CI by `scripts/ci/check-version-bump.sh`) and an entry here.
 
-## Unreleased — PILOT-59, part 1: the review deferrals (REQ-CON-14..23)
+## 2.4.0 — 2026-09-26 (PILOT-59, part 1: the review deferrals, REQ-CON-14..23)
 
-The deferrals half of PILOT-59 (spec and plan: `intent/2026-09-25-concurrency-and-deferrals/`). The
-concurrency half (REQ-CON-01..13, `monitor.py`) and the version number follow in part 2, on the same branch.
+The deferrals half of PILOT-59 (spec and plan: `intent/2026-09-25-concurrency-and-deferrals/`). It is released
+on its own as 2.4.0. The concurrency half (REQ-CON-01..13, `monitor.py`) is **parked** (see HANDOFF.md), along
+with the command-parser rework its review asked for. The gaps that leaves are listed under Known issues.
 
 **Owner action:** set `approval.github_identities` in the org policy (git email → GitHub login) for everyone
 who starts Tier 3 changes. Until then, a Tier 3 GitHub approval is refused (see REQ-CON-16).
@@ -48,7 +49,23 @@ who starts Tier 3 changes. Until then, a Tier 3 GitHub approval is refused (see 
 ### Known issues
 - `sed`'s own `w file` command is not reported as a write; a `sed` whose script has a `w`, `W` or `e` is only judged through its path arguments (the file name inside the script is one word with the command, so it is not seen). The monitor records the write after the call.
 - The possible-write rule judges claims only once a change with a plan exists; before that, only the control plane.
-- The ADR-0006 concurrency design, docs for it, and the version bump are part 2.
+- The ADR-0006 concurrency design (REQ-CON-01..13) is parked, not implemented. Run agents one at a time.
+- The PILOT-59 review asked for the Bash parser to be rebuilt as a fail-closed grammar. That rework is parked, and
+  the review's 21 confirmed bypasses stay open (grouped below; the reproductions were in the review's scratch corpus, which is not kept). The gates are guardrails against agent mistakes, not a security
+  boundary against a hostile agent: `verify-range`, branch protection, code-owner review and the Claude Code
+  sandbox are the controls to rely on. The open bypasses:
+  - **Scanner:** the `#` comment rule after `\ `, `\;` or `$(…)`; `$'…'` strings re-lexed by shlex; `$[ … ]`
+    arithmetic; a `((` subshell.
+  - **Write detection:** `sed w` and `s///w`; awk `| "cmd"`; perl `open F,">…"`; `ex` fed a heredoc;
+    `git archive -o`; `git bundle create`; `curl -w %output`.
+  - **Environment variables:** `GIT_EXTERNAL_DIFF`, `GIT_SSH_COMMAND`, `LESSOPEN`, `BASH_FUNC_*`, and
+    `BASH_ENV` set through `export`, `set -a` or `env -S`.
+- Review High H1: a post-hook flood of about 6,000 files times out the monitor and leaves nothing that blocks push.
+- Review Medium M1: the possible-write rule denies `go test ./...` and linters run on unclaimed files. Claim the
+  files, or run the tool yourself.
+- Released without a pull request, review or CI run: it was pushed straight to `main` on 2026-09-26 with branch
+  protection bypassed, and the commits carry no `Agent-Session` trailer (the gates were off), so `verify-range`
+  rejects them. HANDOFF.md lists the after-the-fact checks.
 
 ## 2.3.0 — 2026-09-26 (PILOT-60)
 
