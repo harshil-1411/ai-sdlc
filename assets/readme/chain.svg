@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="360" viewBox="0 0 1200 360" role="img" aria-labelledby="title desc">
+  <title id="title">One change, six committed artifacts</title>
+  <desc id="desc">The lifecycle of one change: intent.md, spec.md and plan.md written by the agent; a human approves the plan; the agent edits only claimed files; review agents run and a human merges; a human signs the release. Every tool call lands in a hash-chained audit log.</desc>
+
+  <rect width="1200" height="360" rx="24" fill="#0E1116"/>
+  <text x="56" y="70" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="40" font-weight="700" fill="#EDE8DC">One change, six committed artifacts</text>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="18">
+    <g stroke="#3A424D" stroke-width="2">
+      <line x1="217" y1="178" x2="241" y2="178"/><line x1="402" y1="178" x2="426" y2="178"/>
+      <line x1="587" y1="178" x2="611" y2="178"/><line x1="772" y1="178" x2="796" y2="178"/>
+      <line x1="957" y1="178" x2="981" y2="178"/>
+    </g>
+
+    <g transform="translate(56 100)">
+      <rect width="161" height="156" rx="12" fill="#161B22" stroke="#3A424D" stroke-width="2"/>
+      <text x="16" y="34" fill="#7D8590">01</text>
+      <text x="16" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#EDE8DC">Intent</text>
+      <text x="16" y="104" fill="#EDE8DC">intent.md</text>
+      <text x="16" y="136" fill="#7D8590">agent</text>
+    </g>
+    <g transform="translate(241 100)">
+      <rect width="161" height="156" rx="12" fill="#161B22" stroke="#3A424D" stroke-width="2"/>
+      <text x="16" y="34" fill="#7D8590">02</text>
+      <text x="16" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#EDE8DC">Spec</text>
+      <text x="16" y="104" fill="#EDE8DC">spec.md</text>
+      <text x="16" y="136" fill="#7D8590">agent</text>
+    </g>
+    <g transform="translate(426 100)">
+      <rect width="161" height="156" rx="12" fill="#161B22" stroke="#D9A441" stroke-width="2"/>
+      <text x="16" y="34" fill="#7D8590">03</text>
+      <text x="16" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#EDE8DC">Plan</text>
+      <text x="16" y="104" fill="#EDE8DC">plan.md</text>
+      <text x="16" y="136" fill="#D9A441">human signs</text>
+    </g>
+    <g transform="translate(611 100)">
+      <rect width="161" height="156" rx="12" fill="#161B22" stroke="#3A424D" stroke-width="2"/>
+      <text x="16" y="34" fill="#7D8590">04</text>
+      <text x="16" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#EDE8DC">Build</text>
+      <text x="16" y="104" fill="#EDE8DC">diff + tests</text>
+      <text x="16" y="136" fill="#7D8590">claims only</text>
+    </g>
+    <g transform="translate(796 100)">
+      <rect width="161" height="156" rx="12" fill="#161B22" stroke="#D9A441" stroke-width="2"/>
+      <text x="16" y="34" fill="#7D8590">05</text>
+      <text x="16" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#EDE8DC">Review</text>
+      <text x="16" y="104" fill="#EDE8DC">PR + reviews</text>
+      <text x="16" y="136" fill="#D9A441">human merges</text>
+    </g>
+    <g transform="translate(981 100)">
+      <rect width="163" height="156" rx="12" fill="#161B22" stroke="#D9A441" stroke-width="2"/>
+      <text x="16" y="34" fill="#7D8590">06</text>
+      <text x="16" y="72" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="26" font-weight="700" fill="#EDE8DC">Release</text>
+      <text x="16" y="104" fill="#EDE8DC">evidence</text>
+      <text x="16" y="136" fill="#D9A441">human ships</text>
+    </g>
+
+    <rect x="56" y="280" width="1088" height="48" rx="10" fill="#161B22" stroke="#2A313A" stroke-width="2"/>
+    <text x="76" y="311" font-size="20" fill="#9AA3AD">every tool call → <tspan fill="#EDE8DC">.evidence/audit/*.jsonl</tspan> · hash-chained · <tspan fill="#E0645A">fail-closed</tspan> gate engine</text>
+  </g>
+</svg>

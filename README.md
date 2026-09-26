@@ -1,34 +1,79 @@
-# Evidence Chain
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Evidence Chain: AI agents write the code, and every change still proves itself. Real hook output shows a write denied until a human approves the exact plan, then allowed.">
+</p>
 
-> **Picking this up?** Start with [HANDOFF.md](HANDOFF.md): current state, how to verify, open work and owner actions.
+<p align="center">
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-D9A441?style=flat-square&labelColor=0E1116"></a>
+  <img alt="Version 2.3.0" src="https://img.shields.io/badge/plugins-2.3.0-EDE8DC?style=flat-square&labelColor=0E1116">
+  <img alt="Python 3.8+" src="https://img.shields.io/badge/python-3.8%2B-EDE8DC?style=flat-square&labelColor=0E1116">
+  <img alt="macOS or Linux" src="https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20WSL-EDE8DC?style=flat-square&labelColor=0E1116">
+  <img alt="Fail-closed" src="https://img.shields.io/badge/gates-fail--closed-E0645A?style=flat-square&labelColor=0E1116">
+</p>
 
-**An AI-native SDLC control plane for teams that have to prove what they shipped.**
+<p align="center">
+  <b>An AI-native SDLC control plane for teams that have to prove what they shipped.</b><br>
+  <a href="#install">Install</a> · <a href="#one-change-in-60-seconds">One change in 60 seconds</a> · <a href="#the-gates">The gates</a> · <a href="docs/getting-started.md">Getting started</a> · <a href="CHANGELOG.md">Changelog</a>
+</p>
 
+> [!IMPORTANT]
 > **This is not regulatory, legal or compliance advice.** Read [DISCLAIMER.md](DISCLAIMER.md)
 > before using any of it. Nothing here makes anything compliant; every gate ends at a
 > named human, deliberately.
 
-Evidence Chain is a set of five Claude Code plugins (skills, agents, slash commands and
-hooks) that put an agent inside the whole development lifecycle while keeping the
-controls an audited product needs. Every stage ends with a committed artifact the next
-stage reads: `intent.md` → `spec.md` → `plan.md` → diff and tests → PR and review
-findings → release evidence. The chain of commits is the audit trail. Nobody has to
-rebuild it by hand at release time.
+## What the agent actually hits
 
-Skills make the standards likely. One fail-closed gate engine, a Python hook that sees
-every Edit, Write and Bash call, makes the non-negotiable ones certain. No source edit
-happens without a human-approved plan for an active change. Only files the plan claims
-can be edited. Commits carry the tracker key and the agent session. Nothing reaches a
-protected branch or production without a human. The agent cannot approve its own plan
-or edit the configuration that governs it. The `evidence` CLI then derives the
-traceability matrix from what the repository actually contains.
+Real output from the gate engine on a Tier 3 auth change
+([full walkthrough](examples/scenarios/v2-gates-in-action/README.md)). The agent tries
+to write code before anyone approved the plan:
+
+> Writing src/auth/mfa.py: the plan for AUTH-7 has not been approved. Ask a human to
+> review intent/2026-09-24-mfa-login/plan.md and send
+> `/evidence-sdlc:approve AUTH-7 69710aaf135c` … An agent cannot approve its own plan.
+
+After the human approves that exact plan text, it wanders outside the plan:
+
+> Writing src/users/profile.py: src/users/profile.py is not in the approved plan's
+> "Files claimed" for AUTH-7. Add it to the plan (which voids the approval) and ask for
+> re-approval, or leave the file alone.
+
+And tries to sneak a write past the Edit tool:
+
+> This command modifies files in a way the gates cannot inspect (python3 inline code
+> that writes files). Use the Edit or Write tools for file changes so the plan, claims,
+> test-protection and secret checks can run.
+
+## What it is
+
+Five Claude Code plugins (skills, agents, slash commands and hooks) that put an agent
+inside the whole development lifecycle while keeping the controls an audited product
+needs. **Skills make the standards likely. One fail-closed gate engine makes the
+non-negotiable ones certain.** It is a Python hook that sees every Edit, Write and Bash
+call.
 
 **Who it's for:** teams shipping software an outside party can ask them to justify.
 That includes regulated industries (medical devices, pharma, financial services,
 payments) and any team that has decided "an AI wrote it" must never become "nobody can
 explain why it's correct."
 
-## The five plugins
+## How it works
+
+<p align="center">
+  <img src="./assets/readme/chain.svg" width="100%" alt="One change, six committed artifacts: intent, spec and plan by the agent; a human approves the plan; the agent builds only claimed files; review agents run and a human merges; a human signs the release. Every tool call is recorded in a hash-chained audit log.">
+</p>
+
+Every stage ends with a committed artifact the next stage reads: `intent.md` →
+`spec.md` → `plan.md` → diff and tests → PR and review findings → release evidence.
+The chain of commits is the audit trail, so nobody has to rebuild it by hand at release
+time. Along the way:
+
+- No source edit happens without a human-approved plan for an active change.
+- Only files the plan claims can be edited.
+- Commits carry the tracker key and the agent session.
+- Nothing reaches a protected branch or production without a human.
+- The agent cannot approve its own plan or edit the configuration that governs it.
+- The `evidence` CLI derives the traceability matrix from what the repository actually contains.
+
+### The five plugins
 
 | Plugin | What it does | Contents |
 | --- | --- | --- |
@@ -77,7 +122,7 @@ plugin, and `evidence doctor` reports which siblings are installed. Install all 
 ```
 
 **3. Check it's live.** Start a new session. Its context must include
-`Evidence Chain gates live (engine 2.0.0; …)`. If it doesn't, the gates aren't
+`Evidence Chain gates live (engine …; policy: …)`. If it doesn't, the gates aren't
 running. See [docs/managed-settings.md](docs/managed-settings.md) for the canary test.
 
 **Updating.** Every plugin has a semver `version`, and CI refuses a plugin change that
@@ -116,7 +161,7 @@ A Tier 2 feature, `PAY-142`, in a repository that has already run discovery.
    go through once the review agents have run. A human code owner merges. The agent
    cannot push to `main` or merge.
 
-## The gates (v2)
+## The gates
 
 A single engine (`plugins/evidence-sdlc/scripts/engine/`) makes every decision, driven
 by [policy](docs/policy-reference.md). Full rules, deny messages and tests are in
@@ -156,7 +201,8 @@ evidence doctor | scan | gaps | export              # traceability: preflight, g
 
 See [cli/README.md](cli/README.md) for gap categories and exit codes.
 
-## Documentation
+<details>
+<summary><b>Documentation</b>: getting started, concepts, every gate, every policy key</summary>
 
 | Doc | For |
 | --- | --- |
@@ -171,7 +217,10 @@ See [cli/README.md](cli/README.md) for gap categories and exit codes.
 | [docs/external-review-packet.md](docs/external-review-packet.md) | The traceability export, explained for a QA/RA lead |
 | [governance/](governance/) | What an auditor asks for |
 
-## Examples
+</details>
+
+<details>
+<summary><b>Worked examples</b>: ten scenarios, from a Tier 1 story to a 21 CFR Part 11 change</summary>
 
 Worked scenarios in [examples/scenarios/](examples/scenarios/). Each shows which skill
 fires, what it produces and which gate checks it. Full index:
@@ -190,6 +239,8 @@ fires, what it produces and which gate checks it. Full index:
 | [test-strategy-and-release-cycle](examples/scenarios/test-strategy-and-release-cycle/README.md) | The testing side end to end, to a human-signed go/no-go |
 | [sensor-and-learning-loop](examples/scenarios/sensor-and-learning-loop/README.md) | Advisory sensors and turning corrections into `CLAUDE.md` rules |
 
+</details>
+
 ## Limits, stated plainly
 
 - In local mode, the approver is whoever holds the machine's `git user.email`. That
@@ -204,6 +255,10 @@ fires, what it produces and which gate checks it. Full index:
 ## Contributing, prior art, licence
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). The most valuable contributions are reports
-from real rollouts and gates that failed open. This project was shaped by Anthropic's
-AI-native SDLC playbook, AWS's AI-DLC methodology and Andrej Karpathy's LLM Council
-pattern. MIT licence; see [LICENSE](LICENSE).
+from real rollouts and gates that failed open. Maintainers picking up in-flight work
+should start with [HANDOFF.md](HANDOFF.md): current state, how to verify, open work and
+owner actions.
+
+This project was shaped by Anthropic's AI-native SDLC playbook, AWS's AI-DLC
+methodology and Andrej Karpathy's LLM Council pattern. MIT licence; see
+[LICENSE](LICENSE). Security reports: [SECURITY.md](SECURITY.md).
