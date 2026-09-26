@@ -1277,11 +1277,11 @@ def _check_script(ctx, script, cwd):
     if real and real.startswith(plugin_root + os.sep):
         return None
     if rel is None:
-        tmp = tuple(os.path.realpath(d) + "/" for d in _TMP_DIRS if os.path.isdir(d))
-        if real and (real.startswith(_TMP_DIRS) or real.startswith(tmp) or real.startswith(os.path.realpath(os.environ.get("TMPDIR", "/tmp")) + "/")):
+        if real and real.startswith(_temp_prefixes()):
             return deny("opaque-write",
                         f"Running {script} from a temporary directory executes code the gates never saw written. Put the "
-                        "script in the repository under the approved plan's claims, or ask the human to run it.")
+                        "script in the repository under the approved plan's claims, or ask the human to run it. (To read "
+                        "or list a temp file, use cat, ls or the Read tool.)")
         return None
     if st.glob_match(rel, pol.get("ungated", [])):
         return deny("opaque-write",
@@ -1362,12 +1362,18 @@ def check_bash(ctx, command):
             continue
         d = _check_script(ctx, cmdparse.script_execution(s), cwd)
         if d is None:
-            for a in s.argv[1:]:
-                # `make -f /tmp/x`, `xcrun swift /tmp/x`, `go run /tmp/x.go`: a program from a temp directory
-                if a.startswith(tuple(_TMP_DIRS)) or a.startswith(os.path.realpath(os.environ.get("TMPDIR", "/tmp"))):
+            tmp = _temp_prefixes()
+            for k, a in enumerate(s.argv[1:], 1):
+                # `make -f /tmp/x`, `xcrun swift /tmp/x`, `go run /tmp/x.go`: a program from a temp directory.
+                # A temp path given to a data program (cat, ls, cp out of the repository) is judged as a path,
+                # unless it is the value of one of that program's code-running options (REQ-USA-07, 08).
+                opt_val = _temp_exec_value(s.prog, a)
+                if opt_val is not None and opt_val.startswith(tmp):
+                    d = _check_script(ctx, opt_val, cwd)
+                elif a.startswith(tmp) and not _temp_arg_is_data(ctx, s, k, cwd):
                     d = _check_script(ctx, a, cwd)
-                    if d is not None:
-                        break
+                if d is not None:
+                    break
         if d is not None:
             return d
         if _is_evidence_cli(s):

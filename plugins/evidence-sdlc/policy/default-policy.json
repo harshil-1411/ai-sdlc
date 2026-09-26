@@ -268,6 +268,15 @@
     "lfs.standalonetransferagent",
     "url.*.pushInsteadOf"
   ],
+  "git_config_engine_ignored": [
+    "alias.*",
+    "core.editor",
+    "core.pager",
+    "pager.*",
+    "sequence.editor",
+    "interactive.diffFilter",
+    "*tool.*.cmd"
+  ],
   "git_allowed_config": [
     "filter.lfs.clean=git-lfs clean -- %f",
     "filter.lfs.smudge=git-lfs smudge -- %f",

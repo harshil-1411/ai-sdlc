@@ -12,7 +12,7 @@ import re
 import subprocess
 import sys
 
-ENGINE_VERSION = "2.2.0"
+ENGINE_VERSION = "2.3.0"
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_POLICY = os.path.join(HERE, "..", "..", "policy", "default-policy.json")
 ORG_POLICY_PATHS = [
@@ -159,9 +159,11 @@ def _engine_ignored(key, policy):
 def check_git_config(cwd, policy=None):
     """ADR-0003 §2. None if the configuration git would apply here is acceptable, otherwise
     the reason it is refused. A key in the deny set is refused at every scope except
-    `command` (the engine's own -c), except `credential.*` at global or system scope; an
-    exact key=value from the org's git_allowed_config passes when it has no newline or CR.
-    Checked once per process; the race with a concurrent change is ADR-0003 §4."""
+    `command` (the engine's own -c), except `credential.*` at global or system scope, and
+    (PILOT-60 REQ-USA-10) a key in git_config_engine_ignored that matches no
+    ENGINE_ALWAYS_REFUSED pattern at global or system scope; an exact key=value from the
+    org's git_allowed_config passes when it has no newline or CR. Checked once per process;
+    the race with a concurrent change is ADR-0003 §4."""
     key = os.path.realpath(cwd)
     if key in _CONFIG_REFUSAL:
         return _CONFIG_REFUSAL[key]
@@ -183,6 +185,8 @@ def check_git_config(cwd, policy=None):
                 continue
             if kl.startswith("credential.") and scope in ("global", "system"):
                 continue
+            if scope in ("global", "system") and _engine_ignored(kl, policy):
+                continue  # read only by interactive git (aliases, editors, pagers); never by the engine's calls
             if (kl, v) in allowed and "\n" not in v and "\r" not in v:
                 continue
             reason = (f"git config {k} ({scope}, {origin}) can make git run a command, and the gate engine runs git "
@@ -321,6 +325,9 @@ def _merge(base, over, tighten_only):
             out[k] = list(dict.fromkeys(list(base.get(k, [])) + v))
         elif tighten_only and k in TIGHTEN_OR and isinstance(v, bool):
             out[k] = bool(base.get(k, False)) or v
+        elif tighten_only and k == "git_config_engine_ignored" and isinstance(v, list):
+            # a repository may only remove keys the engine ignores, never add one (REQ-USA-11)
+            out[k] = [g for g in v if g in base.get(k, [])]
         elif tighten_only and k == "ungated":
             # A repository may narrow what is ungated, never widen it, unless the
             # organisation policy explicitly allows repo additions.
