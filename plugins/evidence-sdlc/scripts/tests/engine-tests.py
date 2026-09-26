@@ -3284,6 +3284,14 @@ def suite_pilot59():
         t, i = bash(c)
         case(f"REQ-CON-15 P2 temp programs and temp working directories are judged: {c[:60]}", r, t, i, "deny",
              rule_hint="temporary")
+    # P3: cp/mv -t DIR in any form: every operand is a source that lands in DIR
+    for c in ("cp -rt src tests/test_app.py", "cp -t .git/hooks src/app.py",
+              "cp --target-directory=src tests/test_app.py", "mv -vt src tests/test_app.py", "cp -tsrc tests/test_app.py"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P3 cp/mv -t is parsed: {c[:60]}", r, t, i, "deny")
+    t, i = bash("cp -t src/ /tmp/app.py")
+    case("REQ-CON-15 P3 cp -t into a claimed file's directory under its own name is judged as that file", r, t, i,
+         "deny", rule_hint="temporary")
     for c in ("cd /tmp && echo x > y.txt", "cd /tmp && ls", "cd /tmp && cat a.log", "./src/app.py"):
         t, i = bash(c)
         case(f"REQ-CON-15 P2 data in a temp directory stays allowed: {c[:60]}", r, t, i, "allow")

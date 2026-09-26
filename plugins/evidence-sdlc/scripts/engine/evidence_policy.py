@@ -1356,11 +1356,13 @@ def _cwd_plan(ctx, command, simples):
         if kind == "back":
             return set(seen) | {root, home}, False
         t = os.path.expanduser(t)
+        # bash's cd is logical (`..` undoes the last component, even through a symlink); the engine's
+        # paths are physical. Both are candidates (PILOT-60 review: `cd tests/L/.. && … ../.git/…`).
         if os.path.isabs(t):
-            return {os.path.realpath(t)}, False
+            return {os.path.realpath(t), os.path.normpath(t)}, False
         if cdpath and not t.startswith(("./", "../")) and t not in (".", ".."):
             return set(cur), True
-        return {os.path.realpath(os.path.join(b, t)) for b in cur}, False
+        return {p for b in cur for p in (os.path.realpath(os.path.join(b, t)), os.path.normpath(os.path.join(b, t)))}, False
 
     cur, seen, unknown, plan = {os.path.realpath(ctx.cwd)}, {os.path.realpath(ctx.cwd)}, False, []
     if chain:
@@ -1481,6 +1483,46 @@ def _check_script(ctx, script, cwd):
         return deny("opaque-write",
                     f"{rel} is an ungated file type (documentation), so running it as a program would execute code the "
                     "gates never checked. Scripts must be source files written under an approved plan.")
+    return None
+
+
+_NO_FILE_PROGS = frozenset({"true", "false", "sleep", "pwd", "date", "which", "type", "exit", "set", "unset", "export",
+                            "wait", "cd", "pushd", "popd"})
+
+
+def _temp_dir_outside(ctx, c):
+    real = os.path.realpath(c)
+    return (real + "/").startswith(_temp_prefixes()) and st.normalize(real, real, ctx.root)[0] is None
+
+
+def _temp_cwd_denial(ctx, s, cwds):
+    """PILOT-60 review P2: a program other than a data program, run with a temporary directory as a
+    candidate working directory, can load code from it (a Makefile, package.json, pyproject, a
+    config), none of which the gates saw written."""
+    if not s.argv or s.prog in _TEMP_DATA_PROGS or s.prog in _NO_FILE_PROGS or _is_evidence_cli(s):
+        return None  # (the evidence CLI is the engine's own code, judged by its own rules)
+    for c in sorted(cwds):
+        if _temp_dir_outside(ctx, c):
+            return deny("opaque-write",
+                        f"`{s.prog}` would run in a temporary directory ({c}), where it can load code or configuration "
+                        "(a Makefile, package.json, a config file) the gates never saw written. Run it in the "
+                        "repository, or ask the human to run it.")
+    return None
+
+
+def _temp_word(ctx, a, cwds):
+    """The temp-directory path an argument names: an absolute one as written, or a relative one
+    resolved from a candidate working directory that is a temporary directory; else None."""
+    if not a or a.startswith("-"):
+        return None
+    if a.startswith(_temp_prefixes()):
+        return a
+    p = os.path.expanduser(a)
+    if os.path.isabs(p) or "$" in a or "`" in a:
+        return None
+    for c in sorted(cwds):
+        if _temp_dir_outside(ctx, c):
+            return os.path.join(os.path.realpath(c), p)
     return None
 
 
@@ -1729,6 +1771,10 @@ def check_bash(ctx, command):
         if s.prog in _CD_PROGS:
             continue  # its effect is in the candidate working directories (_cwd_plan)
         d = _check_script_any(ctx, cmdparse.script_execution(s), cwds, cwd_unknown)
+        if d is None and s.argv and "/" in s.argv[0]:
+            d = _check_script_any(ctx, s.argv[0], cwds, cwd_unknown)  # P2: the program itself (`/tmp/x`)
+        if d is None:
+            d = _temp_cwd_denial(ctx, s, cwds)
         if d is None:
             tmp = _temp_prefixes()
             for k, a in enumerate(s.argv[1:], 1):
@@ -1736,19 +1782,22 @@ def check_bash(ctx, command):
                 # A temp path given to a data program (cat, ls, cp out of the repository) is judged as a path,
                 # unless it is the value of one of that program's code-running options (REQ-USA-07, 08), or the
                 # command as a whole could run code or carry temp content into the repository (review M1).
+                # P2: a relative path from a temporary working directory is a temp path too.
                 opt_val = _temp_exec_value(s.prog, a)
+                # echo/printf words are text, and the evidence CLI's are its own subcommands and keys
+                ta = _temp_word(ctx, a, cwds if s.prog not in ("echo", "printf") and not _is_evidence_cli(s) else ())
                 if opt_val is not None and opt_val.startswith(tmp):
                     d = _check_script(ctx, opt_val, cwd)
-                elif a.startswith(tmp) and not _temp_arg_is_data(ctx, s, k, cwd):
-                    d = _check_script(ctx, a, cwd)
-                elif a.startswith(tmp) and relax_why is not None:
+                elif ta and not _temp_arg_is_data(ctx, s, k, cwd):
+                    d = _check_script(ctx, ta, cwd)
+                elif ta and relax_why is not None:
                     # data, but the command could carry it into the repository, or cannot be judged
-                    d = _temp_content_denial(a, relax_why) if relax_why else _check_script(ctx, a, cwd)
+                    d = _temp_content_denial(a, relax_why) if relax_why else _check_script(ctx, ta, cwd)
                 if d is not None:
                     break
             # verification: a stdin source (`< /tmp/x`, `0< /tmp/x`, `<> /tmp/x`) is judged like a temp operand
             for src in ([s.stdin_file] if s.stdin_file else []) + [t for op, t in s.redirects if op == "<>"]:
-                if d is None and src.startswith(tmp):
+                if d is None and _temp_word(ctx, src, cwds):
                     why = relax_why if relax_why is not None else (
                         "sets environment variables a program could load code from" if s.env else None)
                     if why is not None:

@@ -850,6 +850,36 @@ def script_execution(s):
     return None
 
 
+def _target_directory(prog, args):
+    """(DIR, source operands) when cp/mv/install/ln is given -t DIR in any form (`-t DIR`, `-tDIR`,
+    a cluster ending in t such as `-rt DIR`, `--target-directory[=]DIR` or an abbreviation of it),
+    else (None, [])."""
+    if prog not in ("cp", "mv", "install", "ln"):
+        return None, []
+    tdir, rest, i = None, [], 0
+    while i < len(args):
+        a = args[i]
+        nxt = args[i + 1] if i + 1 < len(args) else None
+        if a == "--":
+            rest.extend(args[i + 1:])
+            break
+        if a.startswith("--t") and "--target-directory".startswith(a.split("=", 1)[0]):
+            if "=" in a:
+                tdir = a.split("=", 1)[1]
+            else:
+                tdir, i = nxt, i + 1
+        elif re.fullmatch(r"-[A-Za-z]*t.*", a) and not a.startswith("--"):
+            k = a.index("t")
+            if a[k + 1:]:
+                tdir = a[k + 1:]
+            else:
+                tdir, i = nxt, i + 1
+        elif not a.startswith("-") or a == "-":
+            rest.append(a)
+        i += 1
+    return (tdir, rest) if tdir else (None, [])
+
+
 # curl: options whose value is a file curl writes, options that make it write where something else
 # says (a config file, the URL's own name), and the short options that take a value (so a cluster
 # such as `-sKcfg` or `-osrc/x` is read as the shell hands it to curl). PILOT-60 review P5.
@@ -1026,7 +1056,15 @@ def _writes_of(s):
             w.append(Write(db[0], "write", prog))
     elif prog == "osascript" and re.search(r"do shell script|write|delete", " ".join(args), re.I):
         w.append(Write(None, "opaque", "osascript that runs shell commands or writes files"))
-    if prog in ("cp", "install", "ln", "rsync", "scp"):
+    target_dir, srcs = _target_directory(prog, args)
+    if target_dir is not None:
+        # `cp -t DIR a b`, `mv --target-directory=DIR a`, `cp -rt DIR a` (PILOT-60 review P3): every operand
+        # is a source, and each lands in DIR under its own name
+        for p in srcs:
+            w.append(Write(os.path.join(target_dir, os.path.basename(p.rstrip("/")) or p), "write", f"{prog} -t"))
+            if prog == "mv":
+                w.append(Write(p, "delete", "mv"))
+    elif prog in ("cp", "install", "ln", "rsync", "scp"):
         paths = _nonopts(args)
         if len(paths) >= 2:
             w.append(Write(paths[-1], "write", prog))
