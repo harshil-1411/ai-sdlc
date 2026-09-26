@@ -79,6 +79,12 @@ _APPROVAL_LINE = re.compile(
     re.I | re.M)
 
 
+def _git_meta(rel):
+    """True for .git and anything under it (any case: macOS and Windows file systems ignore it)."""
+    low = (rel or "").lower()
+    return low == ".git" or low.startswith(".git/")
+
+
 def check_write(ctx, raw_path, content=None, kind="write", detail=""):
     pol = ctx.policy
     rel, real = st.normalize(raw_path, ctx.cwd, ctx.root)
@@ -88,6 +94,10 @@ def check_write(ctx, raw_path, content=None, kind="write", detail=""):
                     "An agent session may not change the configuration that governs it. A human edits this file directly.")
     if rel is None:
         return ALLOW  # outside the repository: not this framework's concern
+    if _git_meta(rel):
+        return deny("control-plane",
+                    f"{rel} is git's own metadata (hooks, config, refs, index), part of the control plane: a hook "
+                    "or config written there runs code on the next git command. An agent may not write it.")
     if st.glob_match(rel, pol.get("control_plane", [])):
         return deny("control-plane",
                     f"{rel} is part of the control plane (settings, policy, approvals, change state or audit log). "
@@ -1194,6 +1204,8 @@ def _dir_problem(ctx, rel):
     """A write or delete aimed at a whole directory."""
     if rel == "":
         return deny("bulk-write", "This command targets the whole repository. Name the files instead.")
+    if _git_meta(rel):
+        return deny("control-plane", f"{rel}/ is git's own metadata; an agent may not remove or overwrite it.")
     for pat in ctx.policy.get("control_plane", []):
         prefix = re.split(r"[*?\[]", pat, 1)[0].rstrip("/")
         if prefix == rel or prefix.startswith(rel + "/"):
@@ -1504,6 +1516,156 @@ def _background(command):
     return bool(_BG.search(stripped))
 
 
+def _in_temp(ctx, real):
+    """True when a real path is in a temporary directory and not inside the repository."""
+    return bool(real) and (real + "/").startswith(_temp_prefixes()) and st.normalize(real, real, ctx.root)[0] is None
+
+
+def _plan_claims(ctx):
+    """The active change's plan claims, or None when there is no change with a plan (nothing is claimed yet)."""
+    try:
+        key, state = ctx.change()
+        plan = st.find_artifact(ctx.root, key, "plan", state) if key and state else None
+        if not plan or not ctx.policy.get("enforce_claims", True):
+            return None
+        return st.plan_claims(open(plan, encoding="utf-8", errors="replace").read())
+    except (OSError, ValueError):
+        return None
+
+
+def _possible_write_denial(ctx, s, cwds, unknown):
+    """PILOT-60 review C2 (structural): a program that is not known to leave its arguments alone
+    (cmdparse.may_write_args) may write any path it is given. Each path argument (and `--opt=value`
+    value) is judged as a possible write from every candidate working directory: one in the
+    control plane (the policy's globs, .git/**, Claude Code's user configuration) is denied, and so
+    is an existing or clearly named (`dir/file`) file outside the active plan's claims. A directory
+    counts only when it holds control-plane files. The script an interpreter runs is judged by
+    _check_script instead, and mkdir only against the control plane (a directory carries no content).
+    With no change started nothing is claimed yet, so only the control plane is judged."""
+    if not s.argv or not cmdparse.may_write_args(s) or _is_evidence_cli(s):
+        return None
+    pol = ctx.policy
+    script = cmdparse.script_execution(s)
+    claims = _plan_claims(ctx)
+    for a in s.argv[1:]:
+        word = a
+        if a.startswith("-"):
+            if not (a.startswith("--") and "=" in a):
+                continue
+            word = a.split("=", 1)[1]
+        elif "=" in a:
+            continue  # VAR=value, make X=y: not a path
+        if (not word or word == script or "://" in word or word.startswith(("<(", ">(")) or "$" in word
+                or "`" in word or _dirstack_tilde(word)):
+            continue
+        p = os.path.expanduser(word)
+        if unknown and not os.path.isabs(p):
+            continue  # the relative write, if any, is judged by the monitor after the call
+        for c in sorted(cwds):
+            for target in _expand(p, c):
+                full = target if os.path.isabs(target) else os.path.join(c, target)
+                rel, real = st.normalize(full, c, ctx.root)
+                what = f"[via Bash: `{s.prog}` may write its argument {rel if rel is not None else word}] "
+                if rel is None:
+                    if real and _user_control_plane(real, pol):
+                        d = check_write(ctx, full)
+                        d.reason = what + d.reason
+                        return d
+                    continue
+                if rel == "":
+                    continue
+                if _git_meta(rel) or st.glob_match(rel, pol.get("control_plane", [])):
+                    d = check_write(ctx, full) if not os.path.isdir(full) else _dir_problem(ctx, rel)
+                    if d is not None and not d.allow:
+                        d.reason = what + d.reason
+                        return d
+                if os.path.isdir(full):
+                    d = _dir_problem(ctx, rel)
+                    if d is not None and d.rule == "control-plane":
+                        d.reason = what + d.reason
+                        return d
+                    continue
+                if s.prog == "mkdir" or claims is None:
+                    continue
+                named = os.path.lexists(full) or ("/" in word and os.path.isdir(os.path.dirname(full)))
+                if not named or (st.glob_match(rel, pol.get("ungated", []))
+                                 and not st.glob_match(rel, pol.get("always_gated", []))):
+                    continue
+                if not st.claim_matches(rel, claims):
+                    return deny("outside-claims",
+                                what + f"{rel} is not in the approved plan's \"Files claimed\", and `{s.prog}` is not a "
+                                "program the gates know leaves its arguments unchanged. Add the file to the plan (which "
+                                "voids the approval), or use a read-only command (cat, grep, sed -n) to look at it.")
+    return None
+
+
+# PILOT-60 review P4: environment variables through which a program loads code or a config that
+# can run code. The dynamic loader's are refused outright; the others are judged by their value.
+_LOADER_ENV = re.compile(r"^(LD_PRELOAD|LD_LIBRARY_PATH|LD_AUDIT|DYLD_[A-Z0-9_]*)$")
+_CODE_ENV = re.compile(r"^(LD_[A-Z0-9_]+|[A-Z0-9_]*_CONFIG_PATH|[A-Z0-9_]*_CONFIG_FILE|PYTHONPATH|PYTHONSTARTUP|"
+                       r"PYTHONHOME|PYTHONUSERBASE|NODE_OPTIONS|NODE_PATH|PERL5LIB|PERL5OPT|PERLLIB|RUBYOPT|RUBYLIB|"
+                       r"BASH_ENV|ENV|ZDOTDIR|CURL_HOME|WGETRC|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|JAVA_TOOL_OPTIONS|"
+                       r"_JAVA_OPTIONS|CLASSPATH|GEM_PATH|GEM_HOME|NPM_CONFIG_[A-Z0-9_]+|npm_config_[a-z0-9_]+|"
+                       r"XDG_CONFIG_HOME|XDG_CONFIG_DIRS|HOME|EDITOR|VISUAL|PAGER|GIT_PAGER|GIT_EDITOR|GIT_SSH|"
+                       r"SSH_ASKPASS|GIT_ASKPASS|SUDO_ASKPASS|PROMPT_COMMAND|RIPGREP_CONFIG_PATH)$")
+
+
+def _env_code_denial(ctx, s, cwds):
+    pol = ctx.policy
+    claims = _plan_claims(ctx)
+    for var, val in s.env.items():
+        if _LOADER_ENV.match(var):
+            return deny("env-code-load",
+                        f"Setting {var} makes every program in this command load a library it names, which is code the "
+                        "gates never saw. It is not available to an agent session.")
+        if not _CODE_ENV.match(var):
+            continue
+        if "$" in val or "`" in val:
+            return deny("env-code-load", f"{var} is computed at run time ({val[:80]}), and a program loads code or "
+                                         "configuration from it, so it cannot be judged. Write it out literally.")
+        for piece in re.split(r"[\s:=,]+", val):
+            if not piece or "/" not in piece and not piece.startswith((".", "~")):
+                continue
+            p = os.path.expanduser(piece)
+            for c in sorted(cwds):
+                full = p if os.path.isabs(p) else os.path.join(c, p)
+                rel, real = st.normalize(full, c, ctx.root)
+                if rel is None and _in_temp(ctx, real):
+                    return deny("env-code-load",
+                                f"{var} points into a temporary directory ({piece}), so the program would load code or "
+                                "configuration the gates never saw written. Point it at a file in the repository.")
+                if rel is None or rel == "" or os.path.isdir(full):
+                    continue
+                if _git_meta(rel) or st.glob_match(rel, pol.get("control_plane", [])) or (
+                        claims is not None and not st.claim_matches(rel, claims)
+                        and not st.glob_match(rel, pol.get("ungated", []))):
+                    return deny("env-code-load",
+                                f"{var} points at {rel}, which is control plane or outside the approved plan's claims, "
+                                "so the program would load code or configuration from a file this change does not own.")
+    return None
+
+
+_FILE_URL = re.compile(r"(?i)^(?:--[a-z-]+=)?file:(?://([^/]*))?(/.*)$")
+
+
+def _file_url_denial(ctx, s):
+    """PILOT-60 review: a file:// URL reads a local file (curl -o src/app.py file:///tmp/x copies it). One
+    whose path is a temporary file or control plane is denied."""
+    import urllib.parse
+    for a in s.argv[1:]:
+        m = _FILE_URL.match(a)
+        if not m:
+            continue
+        path = urllib.parse.unquote(m.group(2))
+        rel, real = st.normalize(path, ctx.cwd, ctx.root)
+        if rel is None and _in_temp(ctx, real):
+            return _temp_content_denial(a, "reads it through a file:// URL")
+        if rel is not None and (_git_meta(rel) or st.glob_match(rel, ctx.policy.get("control_plane", []))):
+            return deny("control-plane", f"{a} reads the control plane ({rel}) through a file:// URL; not available "
+                                         "to an agent session.")
+    return None
+
+
 def check_bash(ctx, command):
     pol = ctx.policy
     if re.search(r"EVIDENCE_SIGNING_KEY|/proc/[^\s]*/environ|\bps\b[^|;&]*\be(ww|w|e)\b|\bprintenv\b|^\s*env\s*$|os\.environ\b|process\.env\b|ENV\[|managed-settings\.json|ClaudeCode/", command):
@@ -1557,6 +1719,9 @@ def check_bash(ctx, command):
             return deny("identity",
                         f"Setting {', '.join(sorted(spoof)[:3])} on a command changes your git identity (who git and the "
                         "approval records think you are) or which repository is used. Not available to an agent session.")
+        d = _env_code_denial(ctx, s, cwds) or _file_url_denial(ctx, s)
+        if d is not None:
+            return d
         if _launches_claude(s):
             return deny("nested-agent",
                         "Starting another Claude Code session from an agent session is not allowed: it would run outside "
@@ -1651,6 +1816,9 @@ def check_bash(ctx, command):
                 if w.path is not None:
                     d.reason = f"[via Bash: {w.detail}] " + d.reason
                 return d
+        d = _possible_write_denial(ctx, s, cwds, cwd_unknown)
+        if d is not None:
+            return d
     return ALLOW
 
 

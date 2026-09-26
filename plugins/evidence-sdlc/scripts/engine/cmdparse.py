@@ -850,6 +850,149 @@ def script_execution(s):
     return None
 
 
+# curl: options whose value is a file curl writes, options that make it write where something else
+# says (a config file, the URL's own name), and the short options that take a value (so a cluster
+# such as `-sKcfg` or `-osrc/x` is read as the shell hands it to curl). PILOT-60 review P5.
+_CURL_WRITE_OPTS = {"-o": "--output", "-c": "--cookie-jar", "-D": "--dump-header"}
+_CURL_WRITE_LONG = ("--output", "--cookie-jar", "--dump-header", "--trace", "--trace-ascii", "--stderr", "--libcurl",
+                    "--etag-save", "--hsts", "--alt-svc")
+_CURL_OPAQUE_LONG = ("--config", "--remote-name", "--remote-name-all", "--output-dir", "--create-dirs")
+_CURL_VALUE_SHORT = set("oKcDdHuXeAbTwxrmECFYyzQtPU")
+
+
+def _long_opt(arg, names):
+    """The option in `names` that `arg` (`--name` or `--name=value`) spells, allowing a unique-looking
+    prefix of at least four letters (`--conf` for --config), or None."""
+    name = arg.split("=", 1)[0]
+    if name in names:
+        return name
+    hits = [n for n in names if len(name) >= 6 and n.startswith(name)]
+    return hits[0] if hits else None
+
+
+def _curl_writes(args):
+    w, i = [], 0
+    while i < len(args):
+        a = args[i]
+        nxt = args[i + 1] if i + 1 < len(args) else None
+        if a.startswith("--"):
+            wl, ol = _long_opt(a, _CURL_WRITE_LONG), _long_opt(a, _CURL_OPAQUE_LONG)
+            val = a.split("=", 1)[1] if "=" in a else nxt
+            if ol:
+                w.append(Write(None, "opaque", f"curl {ol}"))
+            elif wl and val:
+                w.append(Write(val, "write", f"curl {wl}"))
+            if (wl or ol in ("--config", "--output-dir")) and "=" not in a:
+                i += 1
+        elif a.startswith("-") and len(a) > 1:
+            for j, ch in enumerate(a[1:], 1):
+                if ch == "O":
+                    w.append(Write(None, "opaque", "curl -O"))
+                    continue
+                if ch in _CURL_VALUE_SHORT:
+                    val = a[j + 1:] or nxt
+                    if ch == "K":
+                        w.append(Write(None, "opaque", "curl -K (a config file can name any output)"))
+                    elif "-" + ch in _CURL_WRITE_OPTS and val:
+                        w.append(Write(val, "write", f"curl -{ch}"))
+                    if not a[j + 1:]:
+                        i += 1
+                    break
+        i += 1
+    return w
+
+
+def _wget_writes(args):
+    """wget writes the URL's own name unless -O names the file; -e/--execute, -i/--input-file, --config
+    and -P make what it writes, or where, come from somewhere else."""
+    w, out, i = [], None, 0
+    while i < len(args):
+        a = args[i]
+        nxt = args[i + 1] if i + 1 < len(args) else None
+        if a.startswith("--"):
+            name = a.split("=", 1)[0]
+            val = a.split("=", 1)[1] if "=" in a else nxt
+            if _long_opt(a, ("--execute", "--input-file", "--config", "--directory-prefix")):
+                w.append(Write(None, "opaque", f"wget {name}"))
+            elif _long_opt(a, ("--output-document",)):
+                out = val
+            elif _long_opt(a, ("--output-file", "--append-output")) and val:
+                w.append(Write(val, "write", f"wget {name}"))
+            if "=" not in a and _long_opt(a, ("--execute", "--input-file", "--config", "--directory-prefix",
+                                                "--output-document", "--output-file", "--append-output")):
+                i += 1
+        elif a.startswith("-") and len(a) > 1:
+            for j, ch in enumerate(a[1:], 1):
+                if ch in "eiP":
+                    w.append(Write(None, "opaque", f"wget -{ch}"))
+                if ch in "eiPOoa":
+                    val = a[j + 1:] or nxt
+                    if ch == "O":
+                        out = val
+                    elif ch in "oa" and val:
+                        w.append(Write(val, "write", f"wget -{ch}"))
+                    if not a[j + 1:]:
+                        i += 1
+                    break
+        i += 1
+    w.append(Write(out, "write", "wget") if out else Write(None, "opaque", "wget"))
+    return w
+
+
+# Programs that never write a file named by one of their arguments: their only writes are
+# redirects, judged on their own. Any other program's path arguments are possible writes
+# (PILOT-60 review C2), judged by evidence_policy against the control plane and the claims.
+PURE_READERS = frozenset({
+    "cat", "head", "tail", "wc", "ls", "stat", "file", "echo", "printf", "test", "[", "[[", "basename", "dirname",
+    "realpath", "readlink", "md5sum", "md5", "sha1sum", "sha256sum", "sha512sum", "shasum", "b2sum", "cksum", "diff",
+    "cmp", "comm", "cut", "paste", "nl", "column", "grep", "egrep", "fgrep", "rg", "jq", "true", "false", "pwd", "which",
+    "type", "sleep", "date", "whoami", "id", "uname", "hostname", "tree", "du", "df", "less", "more", "od", "hexdump",
+    "strings", "tr", "expr", "seq", "cd", "pushd", "popd", "git", "gh", "evidence", "mktemp", "exit", "return", "wait",
+    "unset", "read", "shift", "local", "set", "export", "declare", "typeset", "readonly", "alias", "hash", "fold",
+    "wait", "tput", "clear"})
+_SED_S_BODY = re.compile(r"s/(?:[^/\\\n]|\\.)*/(?:[^/\\\n]|\\.)*/")
+_SED_ADDR = re.compile(r"/(?:[^/\\\n]|\\.)*/")
+
+
+def may_write_args(s):
+    """False when s cannot write a file named by one of its arguments (C2): a pure reader, a sed
+    without -i, -f or a w/W/e command, an awk with no -f and nothing writes_of flags, a find with
+    no -delete, -exec*, -ok*, -fprint* or -fls."""
+    prog, args = s.prog, s.argv[1:]
+    if prog in PURE_READERS:
+        return False
+    if prog in ("sed", "gsed"):
+        scripts, has_e, skip = [], False, False
+        for k, a in enumerate(args):
+            if skip:
+                skip = False
+                continue
+            if a in ("-e", "--expression"):
+                if k + 1 < len(args):
+                    scripts.append(args[k + 1])
+                has_e, skip = True, True
+            elif a.startswith("--expression="):
+                scripts.append(a.split("=", 1)[1])
+                has_e = True
+            elif a.startswith(("-i", "--in-place", "-f", "--file")) or (
+                    re.fullmatch(r"-[A-Za-z]+", a) and set(a[1:]) & set("if")):
+                return True
+        if not has_e:
+            ops = [a for a in args if not a.startswith("-")]
+            scripts = ops[:1]
+        for sc in scripts:
+            body = _SED_ADDR.sub("//", _SED_S_BODY.sub("s///", sc))
+            if re.search(r"[wWe]", body):
+                return True
+        return False
+    if prog in ("awk", "gawk", "mawk", "nawk"):
+        return any(a == "-f" or a.startswith("--file") for a in args) or bool(_writes_of(s))
+    if prog == "find":
+        return any(a in ("-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls")
+                   for a in args)
+    return True
+
+
 def writes_of(s):
     """File-system writes performed by one simple command. A process substitution operand
     (`tee >(sh)`, `> >(sh)`) is a pipe, not a file: its command is parsed and judged on its own."""
@@ -951,15 +1094,37 @@ def _writes_of(s):
     elif prog in ("patch",):
         w.append(Write(None, "opaque", "patch"))
     elif prog in ("curl",):
-        for flag in ("-o", "--output"):
-            v = _flag_value(args, {flag})
-            if v:
-                w.append(Write(v, "write", "curl -o"))
-        if "-O" in args or "--remote-name" in args:
-            w.append(Write(None, "opaque", "curl -O"))
+        w.extend(_curl_writes(args))
     elif prog in ("wget",):
-        v = _flag_value(args, {"-O", "--output-document"})
-        w.append(Write(v, "write", "wget") if v else Write(None, "opaque", "wget"))
+        w.extend(_wget_writes(args))
+    elif prog == "uniq":
+        # uniq [opts] [input [output]]: the second operand is written (PILOT-60 review C2)
+        ops, skip = [], False
+        for a in args:
+            if skip:
+                skip = False
+                continue
+            if a in ("-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars"):
+                skip = True
+                continue
+            if a.startswith("-") and a != "-":
+                continue
+            ops.append(a)
+        if len(ops) >= 2 and ops[1] != "-":
+            w.append(Write(ops[1], "write", "uniq output"))
+    elif prog == "sponge":
+        for p in _nonopts(args):
+            w.append(Write(p, "write", "sponge"))
+    elif prog in ("sort", "gsort"):
+        for k, a in enumerate(args):
+            if a in ("-o", "--output") and k + 1 < len(args):
+                w.append(Write(args[k + 1], "write", "sort -o"))
+            elif a.startswith("--output="):
+                w.append(Write(a.split("=", 1)[1], "write", "sort -o"))
+            elif re.fullmatch(r"-[A-Za-z]*o.+", a) and not a.startswith("--"):
+                w.append(Write(a[a.index("o") + 1:], "write", "sort -o"))
+            elif re.fullmatch(r"-[A-Za-z]*o", a) and k + 1 < len(args):
+                w.append(Write(args[k + 1], "write", "sort -o"))
     elif prog == "tar":
         first = args[0] if args else ""
         if "--extract" in args or "--get" in args or (first and not first.startswith("--") and "x" in first.lstrip("-")):
