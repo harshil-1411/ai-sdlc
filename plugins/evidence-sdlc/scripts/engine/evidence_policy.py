@@ -1255,6 +1255,18 @@ _CD_PROGS = ("cd", "pushd", "popd")
 _ENV_SETTERS = ("export", "declare", "typeset", "readonly", "set", "source", ".")
 
 
+def _dirstack_tilde(p):
+    """True for bash's `~+`, `~-`, `~+N`, `~-N` (the current, previous or a stacked directory),
+    which Python's expanduser leaves as a literal relative name (final verification, C1)."""
+    return bool(re.match(r"~[+-]\d*(/|$)", p or ""))
+
+
+# A program whose inner commands cmdparse appends out of order, or that runs a shell: a && chain
+# holding one is not followed exactly (final verification, C1).
+_CHAIN_OPAQUE_PROGS = ("eval", "sh", "bash", "zsh", "dash", "ksh", "source", ".", "exec", "env",
+                       "builtin", "command", "xargs", "sudo", "nohup", "time", "nice")
+
+
 def _cd_target(s):
     """What a cd/pushd/popd does: ("path", target), ("back", None) for `cd -`, popd, a bare cd or
     pushd and `pushd +N` (a directory the command did not name), or ("unknown", target) for a
@@ -1272,9 +1284,9 @@ def _cd_target(s):
             continue  # -L, -P, -e, -@, pushd -n
         target = a
         break
-    if target is None:
-        return "back", None
-    if "$" in target or "`" in target or re.search(r"[*?\[]", target):
+    if target is None or target == "-" or re.fullmatch(r"[+-]\d+", target):
+        return "back", None  # `cd -- -` goes back as `cd -` does
+    if "$" in target or "`" in target or re.search(r"[*?\[]", target) or _dirstack_tilde(target):
         return "unknown", target
     return "path", target
 
@@ -1290,17 +1302,25 @@ def _and_chain(command, simples):
     toks, ok = cmdparse._tokenize(stripped)
     if not ok:
         return False
-    segs, cur = 0, False
+    if any(s.prog in _CHAIN_OPAQUE_PROGS for s in simples):
+        return False
+    # each segment must name exactly the program of the simple command at its position: a segment
+    # that is only an assignment (`X=1`) or hides inner commands would shift them out of line
+    firsts, cur = [], None
     for t in toks:
         if t == "&&":
-            if not cur:
+            if cur is None:
                 return False
-            segs, cur = segs + 1, False
+            firsts.append(cur)
+            cur = None
         elif t in cmdparse.CONTROL_OPS or re.fullmatch(r"[;&|()]+", t) or t in cmdparse.SHELL_KEYWORDS or t == "time":
             return False
-        else:
-            cur = True
-    return segs + (1 if cur else 0) == len(simples)
+        elif cur is None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", t, re.S):
+            cur = os.path.basename(t)
+    if cur is None:
+        return False
+    firsts.append(cur)
+    return firsts == [s.prog for s in simples]
 
 
 def _cwd_plan(ctx, command, simples):
@@ -1379,7 +1399,7 @@ def _temp_relax_why_not(ctx, simples, plan):
                 continue
             if w.path is None or not w.path:
                 return f"writes in a way the gates cannot inspect ({w.detail})"
-            if w.path.startswith(("$", "`")) or "$(" in w.path:
+            if w.path.startswith(("$", "`")) or "$(" in w.path or _dirstack_tilde(w.path):
                 return f"writes to a path computed at run time ({w.path}), which cannot be judged"
             p = os.path.expanduser(w.path)
             if unknown and not os.path.isabs(p):
@@ -1604,7 +1624,7 @@ def check_bash(ctx, command):
             if w.path is None:
                 d = _check_opaque(ctx, w)
             else:
-                if w.path.startswith(("$", "`")) or "$(" in w.path:
+                if w.path.startswith(("$", "`")) or "$(" in w.path or _dirstack_tilde(w.path):
                     d = deny("opaque-write",
                              f"This command writes to a path computed at run time ({w.path}), which the gates cannot "
                              "check. Write to a literal path, or use the Edit/Write tools.")

@@ -2984,6 +2984,20 @@ def suite_pilot60():
               "cd /tmp && echo x > y.txt", "cd src && cd .. && echo x > src/app.py"):
         t, i = bash(c)
         case(f"REQ-V2G-02 verification C1 a plain && chain still resolves exactly: {c[:60]}", r, t, i, "allow")
+    # final verification: an assignment segment plus eval's out-of-order inner cd, `cd -- -`, and bash's
+    # `~-`/`~+` directory-stack tildes must not put the tracked directory somewhere the shell is not
+    for c in ("cd /tmp && X=1 && eval \"cd -\" && echo x > .git/hooks/pre-commit",
+              "cd /tmp && X=1 && eval \"cd -\" && cp src/app.py .git/hooks/pre-commit",
+              "cd /tmp && env cd - && echo x > .git/hooks/pre-commit",
+              "cd /tmp && cd -- - && echo x > .git/hooks/pre-commit",
+              "cd /tmp && cd ~- && echo x > .git/hooks/pre-commit",
+              "cd /tmp && echo x > ~-/.git/hooks/pre-commit",
+              "cd /tmp && echo x > ~+/y.txt"):
+        t, i = bash(c)
+        case(f"REQ-V2G-02 final verification C1 hidden or stacked cd is judged: {c[:60]}", r, t, i, "deny")
+    for c in ("X=1 cd src && echo x > app.py", "cd src && FOO=1 true && echo x > app.py"):
+        t, i = bash(c)
+        case(f"REQ-V2G-02 final verification C1 assignments do not break an exact chain: {c[:60]}", r, t, i, "allow")
     shutil.rmtree(r)
 
     # ---------------- REQ-USA-09: -k selects without changing outcomes; --suite; no match; unknown suite
