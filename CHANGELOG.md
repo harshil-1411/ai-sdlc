@@ -84,6 +84,20 @@ edit in `auto` mode is allowed without it (MAN-LLA-01).
   --ref x` are caught; `-Fquery=@file` is caught.
 - Not done: the not-user-writable check on `ci_gate_gh_path` (see HANDOFF).
 
+### Structural fixes (third review)
+- Gate detection never reads the user's gh configuration: the token comes from
+  `gh auth token --hostname github.com`, and every `gh api` call runs with a fresh empty 0700
+  `GH_CONFIG_DIR`, `GH_TOKEN`, `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*`. This replaces
+  the `http_unix_socket` / `hosts.yml` parsing. No token means not confirmed.
+- New org-only key `approval.github_repo_roots`: the gate is confirmed only for a listed checkout
+  (by real path) whose `origin` matches; unset or empty denies. `origin` is also refused when any
+  `include.path`/`includeIf.*` is set, or `remote.pushDefault`/`branch.*.pushRemote` names
+  another remote.
+- `git config --rename-section`, `--remove-section`, `--edit`/`-e` and the `rename-section`,
+  `remove-section` and `edit` subcommands are denied (`git-config-section`); a section rename
+  could turn allowed keys into `remote.origin` or `include`. `gh api graphql -F=query=@file` is
+  denied.
+
 ### Known issues and verification
 - **[NEEDS VERIFICATION]** The gate-detection fixtures (`plugins/evidence-sdlc/scripts/tests/fixtures/pilot62/`)
   were **built from GitHub's documented response shapes, not captured**: `gh api` failed in the

@@ -106,8 +106,11 @@ State these to anyone relying on the gates:
   commands (`hooks`, `statusLine`, `apiKeyHelper`, `env`, MCP servers) are always undone, and a
   system config file is exempt only when the session's user could not have written it. Tier 3
   in `acceptEdits`/`auto` depends on GitHub reporting `verify-range` as required and pinned to
-  GitHub Actions, for a repository whose `origin` is `approval.github_repo`, read with a `gh`
-  the session's user cannot replace; creating commit statuses or check runs and re-running
+  GitHub Actions, for a checkout listed in the org policy's `approval.github_repo_roots` whose
+  `origin` is `approval.github_repo` (no include or push-remote redirection), read with a `gh`
+  the session's user cannot replace. Gate detection never reads the user's gh configuration: it
+  takes the token from `gh auth token` and runs every `gh api` call with an empty engine-created
+  `GH_CONFIG_DIR`; creating commit statuses or check runs and re-running
   workflows from a session is denied (`check-forgery`). The local layer gains no authority:
   `verify-range` and code-owner review decide what merges.
 - **What the GitHub Actions pin does not prove.** A check run from the GitHub Actions app only

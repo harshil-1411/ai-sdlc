@@ -311,12 +311,14 @@ are not the agent's doing or that it has already undone.
   and case ignored), read from the repository's own config only: exactly one local
   `remote.origin.url`, `remote.origin.pushurl` absent or equal to it, no `remote.origin.url` or
   `pushurl` at global or system scope, and no `url.*.insteadOf` / `pushInsteadOf` rewrite (setting
-  any of these keys with `git config` or `git -c`, at any scope, is denied as `remote-change`); `gh` is the org policy's `ci_gate_gh_path` or the first `gh` on PATH that the
+  any of these keys with `git config` or `git -c`, at any scope, is denied as `remote-change`, and `git config --rename-section`/`--remove-section`/`--edit` as `git-config-section`); `gh` is the org policy's `ci_gate_gh_path` or the first `gh` on PATH that the
   session's user could not have written (neither it nor its directory writable by the user), and
-  runs with `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*` overrides; `config.yml` and
-  `hosts.yml` do not mention `http_unix_socket` anywhere (any spelling, even in a comment),
-  `hosts.yml` names no host but github.com, both are readable, and the gh configuration directory
-  is not a symlink leading outside `$HOME`. With
+  takes its token from `gh auth token --hostname github.com` (the only call made with the user's gh
+  configuration), then runs every `gh api` call with an empty engine-created `GH_CONFIG_DIR`,
+  `GH_TOKEN`, `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*`, so nothing in the user's gh
+  configuration applies; the checkout's real path is in the org policy's
+  `approval.github_repo_roots`; and no `include.path`/`includeIf.*` is set and
+  `remote.pushDefault`/`branch.*.pushRemote` name only `origin`. With
   `ci_gate_require_enforce_admins`, a check required only by a ruleset does not confirm, because
   the rules endpoint does not show a ruleset's bypass actors. The result is cached in
   a signed file in the temp directory (900 s for a confirmation, 60 s for a failure); an

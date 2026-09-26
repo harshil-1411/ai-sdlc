@@ -271,6 +271,9 @@ recorded with a name and a date.
       is refused, so without this Tier 3 auto modes stay denied.
 - [ ] **Set `approval.github_repo` in the org policy** (2.2.0). Gate detection reads GitHub only
       through `gh` pinned to that repository; an empty value means the gate is not confirmed.
+- [ ] **List the checkouts that may use the gate** (2.2.0): `approval.github_repo_roots` in the
+      org policy, each the checkout's real path (`realpath`, e.g. `["/Users/alice/src/payments-api"]`).
+      Unset or empty, Tier 3 auto modes stay denied. A repository policy cannot set it.
 - [ ] **Keep the org policy root-owned** (2.2.0). Create `evidence-policy.json` and
       `managed-settings.json` with `sudo`, owned by root and not writable by the developer's
       user. Only then is a human's edit to them during a call logged as `user-config-changed`
