@@ -109,8 +109,9 @@ State these to anyone relying on the gates:
   GitHub Actions, for a checkout listed in the org policy's `approval.github_repo_roots` whose
   `origin` is `approval.github_repo` (no include or push-remote redirection), read with a `gh`
   the session's user cannot replace. Gate detection never reads the user's gh configuration: it
-  takes the token from `gh auth token` and runs every `gh api` call with an empty engine-created
-  `GH_CONFIG_DIR`; creating commit statuses or check runs and re-running
+  takes the token from `gh auth token` and runs every `gh api` call with a root-owned empty
+  `GH_CONFIG_DIR` (`/var/empty`; a directory the session's user could write is never used, since a
+  gh config planted in it between calls would redirect gh); creating commit statuses or check runs and re-running
   workflows from a session is denied (`check-forgery`). The local layer gains no authority:
   `verify-range` and code-owner review decide what merges.
 - **What the GitHub Actions pin does not prove.** A check run from the GitHub Actions app only

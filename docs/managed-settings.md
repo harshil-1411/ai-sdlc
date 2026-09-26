@@ -274,6 +274,10 @@ recorded with a name and a date.
 - [ ] **List the checkouts that may use the gate** (2.2.0): `approval.github_repo_roots` in the
       org policy, each the checkout's real path (`realpath`, e.g. `["/Users/alice/src/payments-api"]`).
       Unset or empty, Tier 3 auto modes stay denied. A repository policy cannot set it.
+- [ ] **Check a root-owned empty directory exists** (2.2.0): `/var/empty`, `/usr/share/empty` or
+      `/var/lib/empty`, not writable by the developer's user and holding no gh `config.yml`/`hosts.yml`.
+      Gate detection runs `gh api` with it as `GH_CONFIG_DIR`; without one the gate is not confirmed.
+      macOS ships `/var/empty`; on Linux, `sudo install -d -o root -m 0755 /var/empty` if absent.
 - [ ] **Keep the org policy root-owned** (2.2.0). Create `evidence-policy.json` and
       `managed-settings.json` with `sudo`, owned by root and not writable by the developer's
       user. Only then is a human's edit to them during a call logged as `user-config-changed`

@@ -418,25 +418,22 @@ def _ci_gate_cache_write(ctx, bind, confirmed, why, evidence):
         pass
 
 
+GATE_EMPTY_DIRS = ("/var/empty", "/usr/share/empty", "/var/lib/empty")
+GH_CONFIG_FILES = ("config.yml", "hosts.yml", "state.yml")
+
+
 def _gate_config_dir():
-    """A fresh, empty directory only this user can enter, for GH_CONFIG_DIR on the gate's `gh api`
-    calls (structural fix 1). mkdtemp creates it with mode 0700 and never follows an existing name;
-    it is checked again with lstat. None if it cannot be made safely."""
-    import shutil
-    import stat as _stat
-    import tempfile
-    try:
-        d = tempfile.mkdtemp(prefix="evidence-gh-cfg-")
-    except OSError:
-        return None
-    try:
-        info = os.lstat(d)
-        if _stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and _stat.S_IMODE(info.st_mode) == 0o700 \
-                and not os.listdir(d):
-            return d
-    except OSError:
-        pass
-    shutil.rmtree(d, ignore_errors=True)
+    """An existing directory the session's user does not own and cannot write, holding no gh
+    configuration, for GH_CONFIG_DIR on the gate's `gh api` calls (structural fix 1). A directory the
+    engine created would be the agent's too (same user), and a config planted in it between calls
+    would redirect gh, so none is created. None when no such directory exists (not confirmed)."""
+    for d in GATE_EMPTY_DIRS:
+        try:
+            if os.path.isdir(d) and not os.path.islink(d) and _dir_not_user_writable(d) \
+                    and not any(os.path.lexists(os.path.join(d, f)) for f in GH_CONFIG_FILES):
+                return d
+        except OSError:
+            continue
     return None
 
 
@@ -517,7 +514,6 @@ def _ci_gate_read(ctx, bind, gh, gate, deadline):
 def _ci_gate_fetch(ctx, bind):
     """Read GitHub through the pinned gh: the default branch, then its classic protection and,
     if that does not confirm, its rulesets. Returns (confirmed, why, evidence); fails closed."""
-    import shutil
     import time
     repo = bind["repo"]
     gh, why_gh = _gate_gh(ctx.policy)
@@ -529,11 +525,9 @@ def _ci_gate_fetch(ctx, bind):
         return False, "gh reported no github.com token (`gh auth token --hostname github.com`), so GitHub cannot be read", {}
     cfg = _gate_config_dir()
     if cfg is None:
-        return False, "the engine could not create an empty gh configuration directory for reading GitHub", {}
-    try:
-        return _ci_gate_read(ctx, bind, gh, (cfg, token), deadline)
-    finally:
-        shutil.rmtree(cfg, ignore_errors=True)
+        return False, ("no empty gh configuration directory the session's user cannot write was found ("
+                       + ", ".join(GATE_EMPTY_DIRS) + "), so GitHub cannot be read safely"), {}
+    return _ci_gate_read(ctx, bind, gh, (cfg, token), deadline)
 
 
 TIER3_NEVER_GATE_MODES = ("bypassPermissions", "dontAsk")

@@ -2622,13 +2622,11 @@ def suite_pilot62():
         res = gate(root, gh, env=env)
         cfgs = gh_cfgs(os.path.join(root, "ghd"))
         api_dirs = [c for sub, c in cfgs if sub == "api"]
-        tmp = os.path.realpath(tempfile.gettempdir())
         ok = (res[0] is True and api_dirs and all(
-            os.path.realpath(os.path.dirname(c)) == tmp and os.path.basename(c).startswith("evidence-gh-cfg-")
-            and not os.path.exists(c) for c in api_dirs)
+            c in ep.GATE_EMPTY_DIRS and ep._dir_not_user_writable(c) for c in api_dirs)
             and [sub for sub, _ in cfgs][:1] == ["auth"] and cfgs[0][1] == env["GH_CONFIG_DIR"])
-        check(f"REQ-LLA-09 {label} is ignored: gate detection reaches gh, every api call with an empty engine "
-              "config directory (removed afterwards)", ok, (res, cfgs))
+        check(f"REQ-LLA-09 {label} is ignored: gate detection reaches gh, every api call with an empty "
+              "configuration directory the user cannot write", ok, (res, cfgs))
         shutil.rmtree(root)
     user_cfg_ignored("an http_unix_socket in the user's gh config.yml",
                      {"config.yml": 'version: "1"\n"\x68ttp_unix_socket": /nonexistent.sock\n'})
@@ -2642,6 +2640,23 @@ def suite_pilot62():
     user_cfg_ignored("a GH_CONFIG_DIR that is a symlink leading outside HOME",
                      {"config.yml": "http_unix_socket: /nonexistent.sock\n"}, env_of=linked)
     shutil.rmtree(home_b)
+    # the empty directory is never one the agent (same user) could plant a gh config in mid-gate
+    saved_dirs = ep.GATE_EMPTY_DIRS
+    for label, dirs in (("only a user-writable directory", None), ("no such directory", ("/nonexistent-evidence-empty",))):
+        root = gate_root()
+        gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+        if dirs is None:
+            os.makedirs(os.path.join(root, "userempty"))
+            dirs = (os.path.join(root, "userempty"),)
+        ep.GATE_EMPTY_DIRS = dirs
+        try:
+            res = gate(root, gh)
+        finally:
+            ep.GATE_EMPTY_DIRS = saved_dirs
+        api = [c for sub, c in gh_cfgs(os.path.join(root, "ghd")) if sub == "api"]
+        check(f"REQ-LLA-09 {label} for GH_CONFIG_DIR does not confirm, and no api call is made",
+              res[0] is False and "cannot write" in res[1] and api == [], (res, api))
+        shutil.rmtree(root)
     root = gate_root()
     gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
     res = gate(root, gh)

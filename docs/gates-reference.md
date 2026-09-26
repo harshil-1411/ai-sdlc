@@ -314,7 +314,7 @@ are not the agent's doing or that it has already undone.
   any of these keys with `git config` or `git -c`, at any scope, is denied as `remote-change`, and `git config --rename-section`/`--remove-section`/`--edit` as `git-config-section`); `gh` is the org policy's `ci_gate_gh_path` or the first `gh` on PATH that the
   session's user could not have written (neither it nor its directory writable by the user), and
   takes its token from `gh auth token --hostname github.com` (the only call made with the user's gh
-  configuration), then runs every `gh api` call with an empty engine-created `GH_CONFIG_DIR`,
+  configuration), then runs every `gh api` call with a root-owned empty `GH_CONFIG_DIR` (`/var/empty`),
   `GH_TOKEN`, `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*`, so nothing in the user's gh
   configuration applies; the checkout's real path is in the org policy's
   `approval.github_repo_roots`; and no `include.path`/`includeIf.*` is set and

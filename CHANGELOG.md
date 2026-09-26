@@ -86,7 +86,7 @@ edit in `auto` mode is allowed without it (MAN-LLA-01).
 
 ### Structural fixes (third review)
 - Gate detection never reads the user's gh configuration: the token comes from
-  `gh auth token --hostname github.com`, and every `gh api` call runs with a fresh empty 0700
+  `gh auth token --hostname github.com`, and every `gh api` call runs with a root-owned empty
   `GH_CONFIG_DIR`, `GH_TOKEN`, `GH_HOST=github.com` and no other `GH_*`/`GITHUB_*`. This replaces
   the `http_unix_socket` / `hosts.yml` parsing. No token means not confirmed.
 - New org-only key `approval.github_repo_roots`: the gate is confirmed only for a listed checkout
