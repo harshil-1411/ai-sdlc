@@ -5,7 +5,13 @@ Every probe from the v1 enterprise audit's security table is a case here, run
 exactly as Claude Code runs the hook: a JSON payload on stdin to hook.py, in a
 throwaway git repository. Cases are grouped by requirement ID. Run:
 
-    python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py [-v] [-k substring]
+    python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py [-v] [-k substring] [--suite NAME ...]
+
+-k SUBSTR reports only the cases whose label contains SUBSTR; every other case still runs
+its hook call, so the state later cases depend on is the same as in a full run. A filter
+that selects no case prints `0 cases matched` and exits 1.
+--suite NAME (repeatable) runs only the named suite functions, in this file's order; an
+unknown name exits 2 and lists the valid ones. Together they make a subset fast (PILOT-60).
 """
 import glob
 import hashlib
@@ -20,8 +26,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HOOK = os.path.join(HERE, "..", "engine", "hook.py")
 VERBOSE = "-v" in sys.argv
 FILTER = sys.argv[sys.argv.index("-k") + 1] if "-k" in sys.argv else None
+SUITE_ARGS = [sys.argv[i + 1] for i, a in enumerate(sys.argv[:-1]) if a == "--suite"]
 
-results = {"pass": 0, "fail": 0, "failures": [], "all": []}
+results = {"pass": 0, "fail": 0, "failures": [], "all": [], "selected": 0}
 BASE_ENV = {k: v for k, v in os.environ.items()
             if k not in ("EVIDENCE_ISSUE_KEY_PATTERN", "CHANGE_TICKET", "RELEASE_APPROVAL",
                          "EVIDENCE_ACTIVE_CHANGE", "EVIDENCE_ORG_POLICY", "FIX_TASK", "EVIDENCE_SIGNING_KEY",
@@ -84,14 +91,16 @@ def decision(obj):
 
 def case(label, repo, tool, tool_input, expect, env=None, perm="default", agent_type=None, session="s1",
          raw=None, rule_hint=None):
-    if FILTER and FILTER not in label:
-        return
+    selected = not FILTER or FILTER in label
     payload = {"session_id": session, "cwd": repo, "hook_event_name": "PreToolUse", "tool_name": tool,
                "tool_input": tool_input, "permission_mode": perm}
     if agent_type:
         payload["agent_type"] = agent_type
         payload["agent_id"] = "a1"
     obj, err = run_hook(repo, payload, env_extra=env, raw=raw)
+    if not selected:
+        return  # REQ-USA-09: the hook still ran, so later cases see the state a full run produces
+    results["selected"] += 1
     got, reason = decision(obj)
     ok = got == expect and (rule_hint is None or rule_hint.lower() in reason.lower())
     results["all"].append((label, ok, "" if ok else f"expected {expect}, got {got}: {reason[:300]}"))
@@ -109,6 +118,7 @@ def check(label, ok, detail=""):
     """Ad-hoc assertion with a REQ-labelled title (structural tag for `evidence gaps`)."""
     if FILTER and FILTER not in label:
         return
+    results["selected"] += 1
     results["pass" if ok else "fail"] += 1
     results["all"].append((label, bool(ok), "" if ok else str(detail)[:500]))
     if not ok:
@@ -2876,10 +2886,171 @@ def suite_pilot62():
     shutil.rmtree(ORG_DIR)
 
 
+def suite_pilot60():
+    """PILOT-60: temp-directory data commands (REQ-USA-07, 08), the -k/--suite harness (REQ-USA-09) and the
+    engine's git config split (REQ-USA-10, 11)."""
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import importlib
+    import state as st
+    importlib.reload(st)
+    T = os.path.realpath(tempfile.gettempdir())
+
+    # ---------------- REQ-USA-07: temp paths given to data programs are judged as paths
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    for c in (f"mkdir -p {T}/p60probe", "tail -5 /tmp/build.log", f"ls {T}/p60probe", "cat /private/tmp/x.txt",
+              f"curl -o {T}/x.json https://example.com", f"cp src/app.py {T}/app.bak", "sort /tmp/a > /tmp/b",
+              "rg foo /tmp/x", f"grep -n x {T}/a.log", f"wc -l {T}/a.log", f"cp {T}/a.txt {T}/b.txt",
+              f"mv {T}/a.txt /tmp/b.txt", f"diff /tmp/a {T}/b", "mktemp", "d=$(mktemp -d)",
+              f"mktemp {T}/x.XXXXXX"):
+        t, i = bash(c)
+        case(f"REQ-USA-07 temp path is data: {c[:60]}", r, t, i, "allow")
+
+    # ---------------- REQ-USA-08: temp execution, code-running options and copies into the repo stay denied
+    for c, hint in (("python3 /tmp/x.py", "temporary"), (f"python3 {T}/x.py", "temporary"),
+                    ("bash $TMPDIR/x.sh", "run time"), ("source /tmp/x", "temporary"),
+                    ("make -f /tmp/Makefile", "temporary"), ("go run /tmp/x.go", "temporary"),
+                    ("awk -f /tmp/x.awk f", "temporary"), ("sed -f /tmp/x.sed f", "temporary"),
+                    ("rg --pre /tmp/x foo", "temporary"), ("rg --pre=/tmp/x foo", "temporary"),
+                    ("sort --compress-program=/tmp/x a", "temporary"), ("curl -K /tmp/cfg https://example.com", "temporary"),
+                    ("curl -K/tmp/cfg https://example.com", "temporary"), ("curl --config /tmp/cfg https://example.com", "temporary"),
+                    ("wget -e /tmp/x https://example.com", "temporary"),
+                    ("cp /tmp/x src/app.py", "temporary"), ("mv /tmp/x src/other.py", "temporary"),
+                    (f"cp -t src {T}/x", "temporary"), (f"cp {T}/x src/", "temporary"),
+                    ("ditto /tmp/evil src/other", None), ("(sleep 1; cp /tmp/x src/other.py) &", None)):
+        t, i = bash(c)
+        case(f"REQ-USA-08 temp execution still denied: {c[:60]}", r, t, i, "deny", rule_hint=hint)
+    shutil.rmtree(r)
+
+    # ---------------- REQ-USA-09: -k selects without changing outcomes; --suite; no match; unknown suite
+    env = {k: v for k, v in BASE_ENV.items() if k != "JUNIT_OUT"}
+    me = os.path.abspath(__file__)
+    h = subprocess.run([sys.executable, me, "--suite", "suite_round4", "-k", "REQ-V2G-12 round4"], capture_output=True,
+                       text=True, env=env)
+    check("REQ-USA-09 --suite suite_round4 -k 'REQ-V2G-12 round4' runs the earlier hooks and passes its one case",
+          h.returncode == 0 and "1 passed, 0 failed" in h.stdout and "Traceback" not in h.stderr,
+          h.stdout[-400:] + h.stderr[-400:])
+    h = subprocess.run([sys.executable, me, "--suite", "suite_round4", "-k", "REQ-IMH"], capture_output=True, text=True,
+                       env=env)
+    check("REQ-USA-09 a filter that selects no case prints `0 cases matched`, exits 1, and does not crash",
+          h.returncode == 1 and "0 cases matched" in h.stdout and "Traceback" not in h.stderr,
+          h.stdout[-400:] + h.stderr[-400:])
+    h = subprocess.run([sys.executable, me, "--suite", "nope"], capture_output=True, text=True, env=env)
+    check("REQ-USA-09 an unknown --suite exits 2 and lists the valid names",
+          h.returncode == 2 and "suite_round4" in (h.stdout + h.stderr), h.stdout[-300:] + h.stderr[-300:])
+
+    # ---------------- REQ-USA-10 / 11: the engine's own config check
+    org_dir = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p60-org-"))
+
+    def org(extra):
+        p = os.path.join(org_dir, f"org-{len(os.listdir(org_dir))}.json")
+        json.dump(dict({"unsigned_max_tier": 3}, **extra), open(p, "w"))
+        return p
+
+    def cfg_edit(label, gitconfig, expect, local=None, org_policy=None, repo_policy=None, hint=None):
+        r = make_repo()
+        start_change(r, claims=("src/app.py", "tests/**"))
+        home = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p60-home-"))
+        open(os.path.join(home, ".gitconfig"), "w").write(gitconfig)
+        for k, v in (local or {}).items():
+            sh(f"git config {k} '{v}'", r)
+        if repo_policy is not None:
+            json.dump(repo_policy, open(os.path.join(r, ".evidence", "policy.json"), "w"))
+        env = {"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, ".config")}
+        if org_policy is not None:
+            env["EVIDENCE_ORG_POLICY"] = org(org_policy)
+        t, i = edit("src/app.py")
+        case(label, r, t, i, expect, env=env, rule_hint=hint)
+        shutil.rmtree(home)
+        shutil.rmtree(r)
+
+    for key, text in (("alias.st", "[alias]\n\tst = status\n"), ("core.editor", "[core]\n\teditor = vim\n"),
+                      ("core.pager", "[core]\n\tpager = less\n"), ("pager.log", "[pager]\n\tlog = less\n"),
+                      ("sequence.editor", "[sequence]\n\teditor = vim\n"),
+                      ("interactive.diffFilter", "[interactive]\n\tdiffFilter = cat\n"),
+                      ("difftool.x.cmd", "[difftool \"x\"]\n\tcmd = echo\n"),
+                      ("mergetool.y.cmd", "[mergetool \"y\"]\n\tcmd = echo\n")):
+        cfg_edit(f"REQ-USA-10 global {key} is not refused", text, "allow")
+    cfg_edit("REQ-USA-10 global credential.helper is not refused (2.1.0)", "[credential]\n\thelper = osxkeychain\n", "allow")
+
+    for key, text in (("core.fsmonitor", "[core]\n\tfsmonitor = /bin/false\n"),
+                      ("core.hooksPath", "[core]\n\thooksPath = /tmp/h\n"),
+                      ("core.sshCommand", "[core]\n\tsshCommand = ssh -v\n"),
+                      ("filter.x.clean", "[filter \"x\"]\n\tclean = cat\n"),
+                      ("diff.x.textconv", "[diff \"x\"]\n\ttextconv = cat\n"),
+                      ("gpg.program", "[gpg]\n\tprogram = /bin/false\n"),
+                      ("include.path", "[include]\n\tpath = /nonexistent-p60\n")):
+        cfg_edit(f"REQ-USA-11 global {key} is refused", text, "deny", hint="git config")
+    for key, v in (("alias.st", "status"), ("core.editor", "vim"), ("credential.helper", "store")):
+        cfg_edit(f"REQ-USA-11 local {key} is refused", "", "deny", local={key: v}, hint="git config")
+    cfg_edit("REQ-USA-11 an org policy ignoring core.* still refuses a global core.fsmonitor",
+             "[core]\n\tfsmonitor = /bin/false\n", "deny", org_policy={"git_config_engine_ignored": ["core.*"]},
+             hint="git config")
+    cfg_edit("REQ-USA-11 an org policy ignoring core.* ignores a global core.editor", "[core]\n\teditor = vim\n", "allow",
+             org_policy={"git_config_engine_ignored": ["core.*"]})
+    cfg_edit("REQ-USA-11 a repository policy adding core.fsmonitor to git_config_engine_ignored is dropped",
+             "[core]\n\tfsmonitor = /bin/false\n", "deny",
+             repo_policy={"git_config_engine_ignored": ["alias.*", "core.fsmonitor"]}, hint="git config")
+    merged = st._merge({"git_config_engine_ignored": ["alias.*", "core.editor"]},
+                       {"git_config_engine_ignored": ["alias.*", "core.fsmonitor", "foo.*"]}, tighten_only=True)
+    check("REQ-USA-11 a repository policy may only remove git_config_engine_ignored entries (intersection)",
+          merged.get("git_config_engine_ignored") == ["alias.*"], merged.get("git_config_engine_ignored"))
+    # PILOT-62's remote and URL-rewrite keys are always refused, whatever the policy ignores
+    wide = {"git_config_engine_ignored": ["remote.*", "url.*", "*"]}
+    for name, key in (("remote.*.url", "remote.origin.url"), ("remote.*.pushurl", "remote.origin.pushurl"),
+                      ("url.*.insteadOf", "url.https://evil.example/.insteadof"),
+                      ("url.*.pushInsteadOf", "url.https://evil.example/.pushinsteadof")):
+        check(f"REQ-USA-11 {name} is always refused: no git_config_engine_ignored entry exempts it",
+              hasattr(st, "_engine_ignored") and not st._engine_ignored(key, wide), key)
+    cfg_edit("REQ-USA-11 global url.*.insteadOf is refused even when the org ignores url.*",
+             "[url \"https://evil.example/\"]\n\tinsteadOf = https://github.com/\n", "deny",
+             org_policy=wide, hint="git config")
+    cfg_edit("REQ-USA-11 global url.*.pushInsteadOf is refused even when the org ignores url.*",
+             "[url \"https://evil.example/\"]\n\tpushInsteadOf = https://github.com/\n", "deny",
+             org_policy=wide, hint="git config")
+    deny_keys = json.load(open(st.DEFAULT_POLICY))["deny_git_config_keys"] + ["remote.*.url", "remote.*.pushurl"]
+    cfg_edit("REQ-USA-11 global remote.*.url is refused even when the org ignores remote.*",
+             "[remote \"origin\"]\n\turl = https://evil.example/r.git\n", "deny",
+             org_policy=dict(wide, deny_git_config_keys=deny_keys), hint="git config")
+    cfg_edit("REQ-USA-11 global remote.*.pushurl is refused even when the org ignores remote.*",
+             "[remote \"origin\"]\n\tpushurl = https://evil.example/r.git\n", "deny",
+             org_policy=dict(wide, deny_git_config_keys=deny_keys), hint="git config")
+    shutil.rmtree(org_dir)
+
+    # what an agent may set is unchanged
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    for c in ("git config alias.x '!rm -rf .'", "git -c core.editor=vim commit -m 'ABC-1: x'",
+              "git config --global core.editor vim", "git config --global alias.st status"):
+        t, i = bash(c)
+        case(f"REQ-USA-11 the agent may still not set: {c[:50]}", r, t, i, "deny", rule_hint="arbitrary programs")
+    for c in ("git config --global remote.origin.url https://evil.example/r.git",
+              "git config --global remote.origin.pushurl https://evil.example/r.git",
+              "git config --global url.https://evil.example/.insteadOf https://github.com/",
+              "git config --global url.https://evil.example/.pushInsteadOf https://github.com/"):
+        t, i = bash(c)
+        case(f"REQ-USA-11 the agent may still not set: {c[:60]}", r, t, i, "deny", rule_hint="remote")
+    shutil.rmtree(r)
+
+
+SUITES = [suite_pilot60, suite_pilot62, suite_pilot58, suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle,
+          suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation,
+          suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules,
+          suite_fix_mode, suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]
+
+
 if __name__ == "__main__":
-    for fn in [suite_pilot62, suite_pilot58,suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle, suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation, suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules, suite_fix_mode,
-               suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]:
-        fn()
+    names = [fn.__name__ for fn in SUITES]
+    unknown = [n for n in SUITE_ARGS if n not in names]
+    if unknown:
+        print(f"unknown suite(s): {', '.join(unknown)}. Valid: {', '.join(names)}", file=sys.stderr)
+        sys.exit(2)
+    for fn in SUITES:
+        if not SUITE_ARGS or fn.__name__ in SUITE_ARGS:
+            fn()
+    if FILTER and not results["selected"]:
+        print(f"0 cases matched -k {FILTER!r}")
+        sys.exit(1)
     print(f"\n{results['pass']} passed, {results['fail']} failed")
     if os.environ.get("JUNIT_OUT"):
         write_junit(os.environ["JUNIT_OUT"], "evidence-sdlc gate engine")

@@ -135,6 +135,26 @@ def git(args, cwd, timeout=10):
 
 _CONFIG_REFUSAL = {}
 
+# REQ-USA-11 (ADR-0003 §2, PILOT-60): keys that can make the engine's own git run a program, or
+# repoint where it talks to (PILOT-62: remote.*.url, remote.*.pushurl, url.*.insteadOf,
+# url.*.pushInsteadOf). In code, not policy: no git_config_engine_ignored entry, org or repository,
+# can exempt one at any scope. credential.* keeps its 2.1.0 rule (passes at global and system scope).
+ENGINE_ALWAYS_REFUSED = (
+    "core.fsmonitor", "core.hookspath", "core.sshcommand", "core.askpass", "core.gitproxy", "core.worktree",
+    "core.attributesfile", "include.path", "includeif.*", "filter.*", "diff.*.textconv", "diff.*.command",
+    "merge.*.driver", "gpg.program", "gpg.*program", "ssh.variant", "remote.*.uploadpack", "remote.*.receivepack",
+    "uploadpack.*", "url.*.insteadof", "url.*.pushinsteadof", "remote.*.url", "remote.*.pushurl",
+    "submodule.*.update", "lfs.extension.*", "lfs.customtransfer.*", "lfs.standalonetransferagent", "credential.*")
+
+
+def _engine_ignored(key, policy):
+    """REQ-USA-10: True when a lower-cased config key matches git_config_engine_ignored (keys git reads
+    only interactively: aliases, editors, pagers, difftool/mergetool commands) and no
+    ENGINE_ALWAYS_REFUSED pattern. The caller applies it at global and system scope only."""
+    if any(fnmatch.fnmatch(key, p) for p in ENGINE_ALWAYS_REFUSED):
+        return False
+    return any(fnmatch.fnmatch(key, str(p).lower()) for p in policy.get("git_config_engine_ignored", []))
+
 
 def check_git_config(cwd, policy=None):
     """ADR-0003 §2. None if the configuration git would apply here is acceptable, otherwise

@@ -1203,6 +1203,67 @@ def _dir_problem(ctx, rel):
 
 
 _TMP_DIRS = ("/tmp/", "/private/tmp/", "/var/tmp/", "/var/folders/")
+# REQ-USA-07: programs that do not execute their file arguments. A temp-directory path given
+# to one of them is judged as a path (its writes still go through writes_of, the claims and the
+# control plane), except as the value of one of its code-running options (_TEMP_EXEC_OPTS).
+_TEMP_DATA_PROGS = frozenset({
+    "cat", "head", "tail", "wc", "ls", "stat", "file", "du", "mkdir", "rmdir", "rm", "touch", "chmod", "tee",
+    "mktemp", "grep", "egrep", "fgrep", "rg", "sort", "uniq", "cut", "tr", "diff", "cmp", "md5sum", "sha256sum",
+    "shasum", "jq", "basename", "dirname", "realpath", "readlink", "echo", "printf", "test", "[", "curl", "wget",
+    "cp", "mv"})
+# REQ-USA-08: the options through which a data program runs a program or reads a config that can
+# (`--opt value`, `--opt=value`, and a short option's glued `-Kvalue`).
+_TEMP_EXEC_OPTS = {"rg": ("--pre",), "sort": ("--compress-program",), "curl": ("-K", "--config"),
+                   "wget": ("-e", "--execute", "--config")}
+
+
+def _temp_prefixes():
+    """The temp directories, their real paths and realpath($TMPDIR), each ending in `/`
+    (a bare $TMPDIR prefix matched /tmp/claude-5040 for TMPDIR=/tmp/claude-504)."""
+    out = list(_TMP_DIRS)
+    out += [os.path.realpath(d).rstrip("/") + "/" for d in _TMP_DIRS if os.path.isdir(d)]
+    tmpdir = os.environ.get("TMPDIR", "/tmp")
+    out += [tmpdir.rstrip("/") + "/", os.path.realpath(tmpdir).rstrip("/") + "/"]
+    return tuple(dict.fromkeys(p for p in out if p != "/"))
+
+
+def _temp_exec_value(prog, arg):
+    """The value `arg` hands to one of prog's code-running options in `--opt=value` or glued
+    `-Kvalue` form, or None."""
+    for o in _TEMP_EXEC_OPTS.get(prog, ()):
+        if arg.startswith(o + "="):
+            return arg[len(o) + 1:]
+        if not o.startswith("--") and arg.startswith(o) and arg != o:
+            return arg[len(o):]
+    return None
+
+
+def _temp_arg_is_data(ctx, s, i, cwd):
+    """REQ-USA-07: s.argv[i], a temp-directory path, is data rather than code: the program is in
+    _TEMP_DATA_PROGS, the argument is not the value of one of its _TEMP_EXEC_OPTS, and for cp/mv
+    no destination (including -t/--target-directory) is inside the repository."""
+    if s.prog not in _TEMP_DATA_PROGS or i < 1:
+        return False
+    if s.argv[i - 1] in _TEMP_EXEC_OPTS.get(s.prog, ()):
+        return False
+    if s.prog in ("cp", "mv"):
+        dests = [w.path for w in cmdparse.writes_of(s) if w.kind == "write"]
+        for k, a in enumerate(s.argv[1:], 1):
+            if a in ("-t", "--target-directory") and k + 1 < len(s.argv):
+                dests.append(s.argv[k + 1])
+            elif a.startswith("--target-directory="):
+                dests.append(a.split("=", 1)[1])
+            elif a.startswith("-t") and len(a) > 2:
+                dests.append(a[2:])
+        if not dests:
+            return False
+        for dest in dests:
+            if not dest or dest.startswith(("$", "`")) or "$(" in dest:
+                return False
+            rel, _real = st.normalize(dest, cwd, ctx.root)
+            if rel is not None:
+                return False
+    return True
 
 
 def _check_script(ctx, script, cwd):
