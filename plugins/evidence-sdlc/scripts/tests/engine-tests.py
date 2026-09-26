@@ -2987,6 +2987,44 @@ def suite_pilot60():
         cfg_edit(f"REQ-USA-10 global {key} is not refused", text, "allow")
     cfg_edit("REQ-USA-10 global credential.helper is not refused (2.1.0)", "[credential]\n\thelper = osxkeychain\n", "allow")
 
+    # review M2: an ignored key is exempt only from a file the integrity monitor watches, or a system file the
+    # user cannot write
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    home = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p60-home-"))
+    xdg = os.path.join(home, "xdg")
+    os.makedirs(os.path.join(xdg, "git"))
+    open(os.path.join(xdg, "git", "config"), "w").write("[alias]\n\tst = status\n")
+    t, i = edit("src/app.py")
+    case("REQ-USA-10 review M2 an ignored alias in an unwatched $XDG_CONFIG_HOME/git/config is refused", r, t, i, "deny",
+         env={"HOME": home, "XDG_CONFIG_HOME": xdg}, rule_hint="git config")
+    shim = os.path.join(home, "shim")
+    os.makedirs(shim)
+    sysfile = os.path.join(home, "sysgitconfig")
+    open(sysfile, "w").write("[alias]\n\tst = status\n")
+    real_git = shutil.which("git")
+    open(os.path.join(shim, "git"), "w").write(f'#!/bin/sh\nGIT_CONFIG_SYSTEM={sysfile} exec {real_git} "$@"\n')
+    os.chmod(os.path.join(shim, "git"), 0o755)
+    case("REQ-USA-10 review M2 an ignored alias in a user-writable system gitconfig is refused", r, t, i, "deny",
+         env={"HOME": home, "XDG_CONFIG_HOME": os.path.join(home, ".config"),
+              "PATH": shim + os.pathsep + os.environ.get("PATH", "")}, rule_hint="git config")
+    shutil.rmtree(home)
+    shutil.rmtree(r)
+    watched_ok = hasattr(st, "_engine_ignored_origin")
+    check("REQ-USA-10 review M2 origin rule: ~/.gitconfig and ~/.config/git/config exempt; an unwatched global file, a "
+          "user-writable system file and a local file are not; a root-owned system file is",
+          watched_ok and st._engine_ignored_origin("global", "file:" + os.path.expanduser("~/.gitconfig"))
+          and st._engine_ignored_origin("global", "file:" + os.path.expanduser("~/.config/git/config"))
+          and not st._engine_ignored_origin("global", "file:" + os.path.join(T, "p60-other-gitconfig"))
+          and not st._engine_ignored_origin("system", "file:" + os.path.join(T, "p60-sys-gitconfig"))
+          and not st._engine_ignored_origin("local", "file:.git/config")
+          and st._engine_ignored_origin("system", "file:/etc/hosts"), watched_ok)
+    import re as _re
+    integ_src = open(os.path.join(HERE, "..", "engine", "integrity.py")).read()
+    integ_git = _re.findall(r'"(~/[^"]*git[^"]*)"', integ_src)
+    check("REQ-USA-10 review M2 state.INTEGRITY_WATCHED_GITCONFIG equals the git config files integrity.py watches",
+          tuple(getattr(st, "INTEGRITY_WATCHED_GITCONFIG", ())) == tuple(integ_git) and len(integ_git) == 2,
+          (getattr(st, "INTEGRITY_WATCHED_GITCONFIG", None), integ_git))
     dflt = json.load(open(st.DEFAULT_POLICY))
     check("REQ-USA-10 the default git_config_engine_ignored is the spec's set, each key still in deny_git_config_keys, "
           "and none always refused",

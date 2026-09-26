@@ -156,12 +156,51 @@ def _engine_ignored(key, policy):
     return any(fnmatch.fnmatch(key, str(p).lower()) for p in policy.get("git_config_engine_ignored", []))
 
 
+# Review M2: the git config files integrity.py's expected-state snapshot hashes (kept equal to the
+# list there by an engine test; state.py cannot import integrity, which imports it). An ignored key
+# in any other user-writable file (an unwatched $XDG_CONFIG_HOME/git/config, a user-owned system
+# gitconfig) would be planted with no record, so it is not exempt.
+INTEGRITY_WATCHED_GITCONFIG = ("~/.gitconfig", "~/.config/git/config")
+
+
+def _file_not_user_writable(path):
+    """True when the session's user could not have written `path`: it is not a link, not owned by
+    this uid, not writable, and its parent directory is neither owned by nor writable by this uid.
+    Any error: False."""
+    try:
+        uid = os.getuid()
+        parent = os.path.dirname(path) or "/"
+        ps = os.stat(parent)
+        if ps.st_uid == uid or os.access(parent, os.W_OK):
+            return False
+        s = os.lstat(path)
+        return not (os.path.islink(path) or s.st_uid == uid or os.access(path, os.W_OK))
+    except (OSError, AttributeError):
+        return False
+
+
+def _engine_ignored_origin(scope, origin):
+    """Review M2: whether an ignored key from `origin` (git's --show-origin, `file:<path>`) at `scope`
+    may be exempt: global or system scope, and the file is one the integrity monitor watches, or a
+    system-scope file the user cannot write."""
+    if scope not in ("global", "system") or not origin.startswith("file:"):
+        return False
+    path = origin[len("file:"):]
+    if not os.path.isabs(path):
+        return False
+    real = os.path.realpath(path)
+    if any(real == os.path.realpath(os.path.expanduser(w)) for w in INTEGRITY_WATCHED_GITCONFIG):
+        return True
+    return scope == "system" and _file_not_user_writable(path)
+
+
 def check_git_config(cwd, policy=None):
     """ADR-0003 §2. None if the configuration git would apply here is acceptable, otherwise
     the reason it is refused. A key in the deny set is refused at every scope except
     `command` (the engine's own -c), except `credential.*` at global or system scope, and
     (PILOT-60 REQ-USA-10) a key in git_config_engine_ignored that matches no
-    ENGINE_ALWAYS_REFUSED pattern at global or system scope; an exact key=value from the
+    ENGINE_ALWAYS_REFUSED pattern at global or system scope, read from a file the integrity monitor
+    watches or a system file the user cannot write (review M2); an exact key=value from the
     org's git_allowed_config passes when it has no newline or CR. Checked once per process;
     the race with a concurrent change is ADR-0003 §4."""
     key = os.path.realpath(cwd)
@@ -185,8 +224,8 @@ def check_git_config(cwd, policy=None):
                 continue
             if kl.startswith("credential.") and scope in ("global", "system"):
                 continue
-            if scope in ("global", "system") and _engine_ignored(kl, policy):
-                continue  # read only by interactive git (aliases, editors, pagers); never by the engine's calls
+            if scope in ("global", "system") and _engine_ignored(kl, policy) and _engine_ignored_origin(scope, origin):
+                continue  # read only by interactive git (aliases, editors, pagers), from a watched file (review M2)
             if (kl, v) in allowed and "\n" not in v and "\r" not in v:
                 continue
             reason = (f"git config {k} ({scope}, {origin}) can make git run a command, and the gate engine runs git "
