@@ -1219,7 +1219,7 @@ _TEMP_DATA_PROGS = frozenset({
 # option inside a cluster (`-qK/tmp/cfg`).
 _TEMP_EXEC_OPTS = {"rg": ("--pre",), "sort": ("--compress-program",), "curl": ("-K", "--config"),
                    "wget": ("-e", "--execute", "--config")}
-# Review M1(b): programs whose temp-directory argument is relaxed only as the writes_of destination.
+# Review M1(b): programs whose -t / --target-directory (in any form) turns the relaxation off.
 # install and ln are not data programs at all, so their temp arguments are never relaxed.
 _TEMP_DEST_ONLY = ("cp", "mv")
 
@@ -1251,37 +1251,164 @@ def _temp_exec_value(prog, arg):
     return None
 
 
-def _temp_relax_allowed(ctx, simples):
-    """Review M1(c, d): whether the REQ-USA-07 relaxation may apply to this command at all. It may
-    not when any word is a process substitution (`<(…)`, `>(…)`: code runs inside it), or when any
-    write of the whole command (redirects, a pipe into tee, cp's destination) is opaque, computed at
-    run time or inside the repository, so temp content cannot reach the repository through it."""
+_CD_PROGS = ("cd", "pushd", "popd")
+_ENV_SETTERS = ("export", "declare", "typeset", "readonly", "set", "source", ".")
+
+
+def _cd_target(s):
+    """What a cd/pushd/popd does: ("path", target), ("back", None) for `cd -`, popd, a bare cd or
+    pushd and `pushd +N` (a directory the command did not name), or ("unknown", target) for a
+    target computed at run time or a glob."""
+    if s.prog == "popd":
+        return "back", None
+    args, target = s.argv[1:], None
+    for k, a in enumerate(args):
+        if a == "--":
+            target = args[k + 1] if k + 1 < len(args) else None
+            break
+        if a == "-" or re.fullmatch(r"[+-]\d+", a):
+            return "back", None
+        if a.startswith("-"):
+            continue  # -L, -P, -e, -@, pushd -n
+        target = a
+        break
+    if target is None:
+        return "back", None
+    if "$" in target or "`" in target or re.search(r"[*?\[]", target):
+        return "unknown", target
+    return "path", target
+
+
+def _and_chain(command, simples):
+    """True when the command is one plain `a && b && c` chain whose segments are exactly
+    `simples`: then a failed cd stops the chain and each command's working directory is exact.
+    Anything else (`;`, `||`, `|`, a group, a subshell, `!`, a keyword, a substitution, a
+    heredoc, several lines) is judged against every candidate directory."""
+    stripped, bodies = cmdparse._strip_heredocs(command)
+    if bodies or "\n" in stripped.strip() or "$(" in stripped or "`" in stripped:
+        return False
+    toks, ok = cmdparse._tokenize(stripped)
+    if not ok:
+        return False
+    segs, cur = 0, False
+    for t in toks:
+        if t == "&&":
+            if not cur:
+                return False
+            segs, cur = segs + 1, False
+        elif t in cmdparse.CONTROL_OPS or re.fullmatch(r"[;&|()]+", t) or t in cmdparse.SHELL_KEYWORDS or t == "time":
+            return False
+        else:
+            cur = True
+    return segs + (1 if cur else 0) == len(simples)
+
+
+def _cwd_plan(ctx, command, simples):
+    """Verification C1: for each simple command, (candidate working directories, unknown). The
+    shell's single working directory cannot be known from the text once `cd` sits in a subshell,
+    after `||` or `;`, or goes back (`cd -`, `popd`), so every directory it could be is a
+    candidate: the session's cwd, every cd/pushd target resolved against every candidate, and for
+    `cd -`, popd or a bare cd the repository root and HOME. A plain && chain is exact. A target
+    computed at run time (or a relative one while CDPATH may apply) makes the directory unknown."""
+    if not any(s.prog in _CD_PROGS for s in simples):
+        return [(frozenset([ctx.cwd]), False)] * len(simples)
+    root, home = os.path.realpath(ctx.root), os.path.realpath(os.path.expanduser("~"))
+    cdpath = "CDPATH" in command or bool(os.environ.get("CDPATH"))
+    chain = _and_chain(command, simples)
+    loops = any(w in ("do", "done") for s in simples for w in s.argv) or re.search(r"\b(do|done)\b", command)
+
+    def step(cur, seen, s):
+        kind, t = _cd_target(s)
+        if kind == "unknown":
+            return set(cur), True
+        if kind == "back":
+            return set(seen) | {root, home}, False
+        t = os.path.expanduser(t)
+        if os.path.isabs(t):
+            return {os.path.realpath(t)}, False
+        if cdpath and not t.startswith(("./", "../")) and t not in (".", ".."):
+            return set(cur), True
+        return {os.path.realpath(os.path.join(b, t)) for b in cur}, False
+
+    cur, seen, unknown, plan = {os.path.realpath(ctx.cwd)}, {os.path.realpath(ctx.cwd)}, False, []
+    if chain:
+        for s in simples:
+            plan.append((frozenset(cur), unknown))
+            if s.prog in _CD_PROGS:
+                cur, unk = step(cur, seen, s)
+                unknown = unknown or unk
+                seen |= cur
+        return plan
+    for _round in range(8 if loops else 1):
+        before = set(cur)
+        for s in simples:
+            if s.prog in _CD_PROGS:
+                new, unk = step(cur, seen, s)
+                unknown = unknown or unk
+                cur |= new
+                seen |= new
+        if cur == before and _round:
+            break
+    else:
+        if loops:
+            unknown = True  # a cd inside a loop that never settles
+    if len(cur) > 64:
+        unknown = True
+    return [(frozenset(cur), unknown)] * len(simples)
+
+
+def _temp_relax_why_not(ctx, simples, plan):
+    """Review M1(c, d) and verification: None when the REQ-USA-07 relaxation may apply to this
+    command, otherwise why not, as a phrase ("writes inside the repository (src/app.py)"), or ""
+    when code runs (a process substitution). It may not apply when any word is a process
+    substitution, when a command sets environment variables a program could load code from
+    (export, declare, set), or when any write of the whole command (redirects, a pipe into tee,
+    cp's destination), from any candidate working directory, is opaque, computed at run time, or
+    inside the repository. A delete (mv's source) carries no content and does not count."""
     for s in simples:
         words = list(s.argv) + [t for _op, t in s.redirects] + ([s.stdin_file] if s.stdin_file else [])
         if any(str(w).startswith(("<(", ">(")) for w in words):
-            return False
-    cwd = ctx.cwd
-    for s in simples:
-        if s.prog in ("cd", "pushd") and len(s.argv) > 1 and not s.argv[1].startswith("-"):
-            nxt = os.path.expanduser(s.argv[1])
-            cwd = os.path.realpath(nxt if os.path.isabs(nxt) else os.path.join(cwd, nxt))
+            return ""
+    if any(s.prog in _ENV_SETTERS for s in simples):
+        return "sets environment variables a program could load code from"
+    for s, (cwds, unknown) in zip(simples, plan):
+        if s.prog in _CD_PROGS:
             continue
         for w in cmdparse.writes_of(s):
-            if w.path is None or not w.path or w.path.startswith(("$", "`", "~")) or "$(" in w.path:
-                return False
-            rel, _real = st.normalize(w.path, cwd, ctx.root)
-            if rel is not None:
-                return False
-    return True
+            if w.kind == "delete":
+                continue
+            if w.path is None or not w.path:
+                return f"writes in a way the gates cannot inspect ({w.detail})"
+            if w.path.startswith(("$", "`")) or "$(" in w.path:
+                return f"writes to a path computed at run time ({w.path}), which cannot be judged"
+            p = os.path.expanduser(w.path)
+            if unknown and not os.path.isabs(p):
+                return f"writes to {w.path} from a working directory that cannot be determined"
+            for c in sorted(cwds):
+                rel, _real = st.normalize(p, c, ctx.root)
+                if rel is not None:
+                    return f"writes inside the repository ({rel or '.'})"
+    return None
+
+
+def _rg_pre(a):
+    """rg's --pre or --pre-glob in any spelling (`--pre=x`, `--pre x`, an abbreviation such as
+    `--pr` or `--pre-g`): each makes rg run a program on its inputs (verification H1)."""
+    name = a.split("=", 1)[0]
+    return len(name) >= 4 and "--pre-glob".startswith(name)
 
 
 def _temp_arg_is_data(ctx, s, i, cwd):
     """REQ-USA-07: s.argv[i], a temp-directory path, is data rather than code: the program is in
-    _TEMP_DATA_PROGS and the argument is not the value of one of its _TEMP_EXEC_OPTS. For cp/mv
-    (review M1(b)) the argument must be the destination: the last operand, with no -t /
-    --target-directory in any form (a bundled `-rt`, an abbreviated `--target`), so a temp source is
-    never relaxed. The caller has already required _temp_relax_allowed for the whole command."""
-    if s.prog not in _TEMP_DATA_PROGS or i < 1:
+    _TEMP_DATA_PROGS, the simple command sets no environment variable (RIPGREP_CONFIG_PATH,
+    LD_PRELOAD and the like can load code), rg has no --pre/--pre-glob in any spelling, and the
+    argument is not the value of one of its _TEMP_EXEC_OPTS. For cp/mv there is no -t /
+    --target-directory in any form (a bundled `-rt`, an abbreviated `--target`), whose parse would
+    misplace the destination. The caller has already required that the whole command's writes all
+    fall outside the repository (_temp_relax_why_not), so a cp/mv temp source cannot reach it."""
+    if s.prog not in _TEMP_DATA_PROGS or i < 1 or s.env:
+        return False
+    if s.prog == "rg" and any(_rg_pre(a) for a in s.argv[1:]):
         return False
     if s.argv[i - 1] in _TEMP_EXEC_OPTS.get(s.prog, ()):
         return False
@@ -1291,9 +1418,14 @@ def _temp_arg_is_data(ctx, s, i, cwd):
                 break
             if a.startswith("--t") or (a.startswith("-") and not a.startswith("--") and "t" in a[1:]):
                 return False
-        operands = [k for k, a in enumerate(s.argv) if k >= 1 and not a.startswith("-")]
-        return len(operands) >= 2 and operands[-1] == i
     return True
+
+
+def _temp_content_denial(path, why):
+    return deny("opaque-write",
+                f"{path} is in a temporary directory, and this command {why}, so content the gates never saw "
+                "could reach the repository or cannot be judged. Split the command (read or copy the temp file on "
+                "its own), or use the Edit/Write tools for the repository change.")
 
 
 def _check_script(ctx, script, cwd):
@@ -1317,6 +1449,27 @@ def _check_script(ctx, script, cwd):
         return deny("opaque-write",
                     f"{rel} is an ungated file type (documentation), so running it as a program would execute code the "
                     "gates never checked. Scripts must be source files written under an approved plan.")
+    return None
+
+
+def _unknown_cwd_denial(path):
+    return deny("opaque-write",
+                f"This command changes directory to a place computed at run time (or in a loop, or through CDPATH), so the working "
+                f"directory cannot be determined and the relative path {path} cannot be judged. Use a literal `cd`, or "
+                "absolute paths.")
+
+
+def _check_script_any(ctx, script, cwds, unknown):
+    """_check_script from every candidate working directory (verification C1)."""
+    if not script:
+        return None
+    p = os.path.expanduser(script)
+    if unknown and not os.path.isabs(p) and "$" not in p and "`" not in p:
+        return _unknown_cwd_denial(script)
+    for c in sorted(cwds):
+        d = _check_script(ctx, script, c)
+        if d is not None:
+            return d
     return None
 
 
@@ -1358,9 +1511,10 @@ def check_bash(ctx, command):
                     "Run `git commit` as its own command: combined with "
                     f"`git {next(g for g in git_subs if g in _INDEX_CHANGING)}` it would commit an index the gates never "
                     "saw. Stage first, then commit in a separate call.")
-    cwd = ctx.cwd
-    relax_ok = _temp_relax_allowed(ctx, simples)
-    for s in simples:
+    plan = _cwd_plan(ctx, command, simples)
+    relax_why = _temp_relax_why_not(ctx, simples, plan)
+    for s, (cwds, cwd_unknown) in zip(simples, plan):
+        cwd = min(cwds)
         if pol.get("deny_persistence", True) and (set(s.wrappers) - {s.prog}) & cmdparse.PERSISTENCE or (
                 s.prog in cmdparse.PERSISTENCE and not (s.prog == "crontab" and "-l" in s.argv)):
             return deny("persistence",
@@ -1387,11 +1541,9 @@ def check_bash(ctx, command):
             return deny("nested-agent",
                         "Starting another Claude Code session from an agent session is not allowed: it would run outside "
                         "this session's audit trail and its prompt would look like a human's. Use a subagent instead.")
-        if s.prog in ("cd", "pushd") and len(s.argv) > 1 and not s.argv[1].startswith("-"):
-            nxt = os.path.expanduser(s.argv[1])
-            cwd = os.path.realpath(nxt if os.path.isabs(nxt) else os.path.join(cwd, nxt))
-            continue
-        d = _check_script(ctx, cmdparse.script_execution(s), cwd)
+        if s.prog in _CD_PROGS:
+            continue  # its effect is in the candidate working directories (_cwd_plan)
+        d = _check_script_any(ctx, cmdparse.script_execution(s), cwds, cwd_unknown)
         if d is None:
             tmp = _temp_prefixes()
             for k, a in enumerate(s.argv[1:], 1):
@@ -1402,10 +1554,20 @@ def check_bash(ctx, command):
                 opt_val = _temp_exec_value(s.prog, a)
                 if opt_val is not None and opt_val.startswith(tmp):
                     d = _check_script(ctx, opt_val, cwd)
-                elif a.startswith(tmp) and not (relax_ok and _temp_arg_is_data(ctx, s, k, cwd)):
+                elif a.startswith(tmp) and not _temp_arg_is_data(ctx, s, k, cwd):
                     d = _check_script(ctx, a, cwd)
+                elif a.startswith(tmp) and relax_why is not None:
+                    # data, but the command could carry it into the repository, or cannot be judged
+                    d = _temp_content_denial(a, relax_why) if relax_why else _check_script(ctx, a, cwd)
                 if d is not None:
                     break
+            # verification: a stdin source (`< /tmp/x`, `0< /tmp/x`, `<> /tmp/x`) is judged like a temp operand
+            for src in ([s.stdin_file] if s.stdin_file else []) + [t for op, t in s.redirects if op == "<>"]:
+                if d is None and src.startswith(tmp):
+                    why = relax_why if relax_why is not None else (
+                        "sets environment variables a program could load code from" if s.env else None)
+                    if why is not None:
+                        d = _temp_content_denial(src, why) if why else _check_script(ctx, src, cwd)
         if d is not None:
             return d
         if _is_evidence_cli(s):
@@ -1446,17 +1608,23 @@ def check_bash(ctx, command):
                     d = deny("opaque-write",
                              f"This command writes to a path computed at run time ({w.path}), which the gates cannot "
                              "check. Write to a literal path, or use the Edit/Write tools.")
+                elif cwd_unknown and not os.path.isabs(os.path.expanduser(w.path)):
+                    d = _unknown_cwd_denial(w.path)
                 else:
                     content = "\n".join(bodies) if w.detail == "redirect" else None
                     d = None
-                    for target in _expand(w.path, cwd):
-                        full = os.path.join(cwd, os.path.expanduser(target)) if not os.path.isabs(os.path.expanduser(target)) else target
-                        rel, _real = st.normalize(full, cwd, ctx.root)
-                        if rel is not None and (rel == "" or os.path.isdir(full)):
-                            d = _dir_problem(ctx, rel)
-                            if d is not None:
+                    # verification C1: a relative target is judged from every candidate working directory
+                    for c in sorted(cwds):
+                        for target in _expand(w.path, c):
+                            full = os.path.join(c, os.path.expanduser(target)) if not os.path.isabs(os.path.expanduser(target)) else target
+                            rel, _real = st.normalize(full, c, ctx.root)
+                            if rel is not None and (rel == "" or os.path.isdir(full)):
+                                d = _dir_problem(ctx, rel)
+                                if d is not None:
+                                    break
+                            d = check_write(ctx, full, content=content, kind=w.kind, detail=w.detail)
+                            if d is not None and not d.allow:
                                 break
-                        d = check_write(ctx, full, content=content, kind=w.kind, detail=w.detail)
                         if d is not None and not d.allow:
                             break
             if d is not None and not d.allow:

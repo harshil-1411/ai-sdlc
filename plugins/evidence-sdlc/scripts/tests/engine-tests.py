@@ -2927,13 +2927,63 @@ def suite_pilot60():
               "curl -sK /tmp/cfg https://e.com", "curl -qK/tmp/cfg https://e.com",               # (a) curl
               f"curl -o {T}/x.json https://example.com", "wget -O /tmp/y https://e.com",         # (a) curl, wget
               "cp -rt src /tmp/x", "cp -vt src /tmp/x", "cp -rvt src /tmp/x", "cp --target src /tmp/x",  # (b) -t
-              f"cp /tmp/x /tmp/../{r}/src/app.py", f"cp {T}/a.txt {T}/b.txt", f"mv {T}/a.txt /tmp/b.txt",  # (b) source
+              "cp /tmp/x /tmp/../" + os.path.relpath(os.path.join(r, "src", "app.py"), os.path.realpath("/tmp/..")),  # (b)
               "cat <(sh /tmp/x)", "wc -l <(bash /tmp/x)", "diff <(sh /tmp/x) f",                   # (c)
               "cat /tmp/x > src/app.py", "cat /tmp/x >> src/app.py", "cat /tmp/x | tee -a src/app.py",  # (d)
               "head -n 100000 /tmp/x > src/app.py", "grep -h . /tmp/x | tee src/app.py",
               "chmod +x /tmp/x", "chmod +x /tmp/x && /tmp/x"):                                     # (e)
         t, i = bash(c)
         case(f"REQ-USA-08 review M1 temp relaxation bypass denied: {c[:60]}", r, t, i, "deny", rule_hint="temporary")
+    # verification H1: rg with any --pre / --pre-glob (any spelling), or any env prefix, is never relaxed
+    for c in ("rg --pre=bash foo /tmp/x", "rg --pre bash foo /tmp/x", "rg --pre sh foo /tmp/x",
+              "rg --pre /bin/sh foo /tmp/x", "rg --pre-glob '*' --pre=sh foo /tmp/x",
+              "rg --pre-glob='*' --pre sh foo /tmp/x", "rg --pre-g '*' --pre=sh foo /tmp/x", "rg --pr=sh foo /tmp/x",
+              "RIPGREP_CONFIG_PATH=/tmp/rgrc rg foo /tmp/x", "LC_ALL=C grep x /tmp/a",
+              "env RIPGREP_CONFIG_PATH=/tmp/rgrc rg foo /tmp/x", "FOO=1 cat /tmp/x"):
+        t, i = bash(c)
+        case(f"REQ-USA-08 verification H1 rg --pre / env prefix not relaxed: {c[:60]}", r, t, i, "deny",
+             rule_hint="temporary")
+    # verification stdin: a temp stdin source is data only when no write of the command is in the repository
+    for c in ("tee src/app.py < /tmp/x", "tee -a src/app.py < /tmp/x.sh", "cat < /tmp/x > src/app.py",
+              "cat 0< /tmp/x > src/app.py", "wc -l < /tmp/x > src/app.py"):
+        t, i = bash(c)
+        case(f"REQ-USA-08 verification temp stdin into the repository denied: {c[:60]}", r, t, i, "deny",
+             rule_hint="temporary")
+    # verification item 4: a temp path that is only data or only a destination is allowed; otherwise the
+    # reason is accurate (not "executes code")
+    for c in ("mv src/app.py /tmp/y", "cp /tmp/x /tmp/y", f"cp {T}/a.txt {T}/b.txt", f"mv {T}/a.txt /tmp/b.txt",
+              "wc -l < /tmp/x", "grep x < /tmp/a > /tmp/b"):
+        t, i = bash(c)
+        case(f"REQ-USA-07 verification temp data or destination allowed: {c[:60]}", r, t, i, "allow")
+    t, i = bash("cat /tmp/x | tee $TMPDIR/y")
+    case("REQ-USA-08 verification a computed destination gives an accurate reason: cat /tmp/x | tee $TMPDIR/y", r, t, i,
+         "deny", rule_hint="computed at run time")
+    t, i = bash("cat /tmp/x > src/app.py")
+    case("REQ-USA-08 verification temp content into the repository gives an accurate reason", r, t, i, "deny",
+         rule_hint="could reach the repository")
+    shutil.rmtree(r)
+
+    # ---------------- verification C1: the working directory is a set of candidates, not one guess
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    for c, hint in (("(cd /tmp); echo x > .git/hooks/pre-commit", None),
+                    ("(cd /tmp) && echo x > .claude/settings.json", None),
+                    ("true || cd /tmp; echo x > .git/hooks/pre-commit", None),
+                    ("cd /tmp && cd - && cp src/app.py .git/hooks/pre-commit", None),
+                    ("(cd /tmp) && echo x > src/other.py", None),
+                    ("cd -P src && echo x > ../.git/hooks/pre-commit", None),
+                    ("pushd /tmp && popd && echo x > .git/hooks/pre-commit", None),
+                    ("cd /tmp && popd && echo x > src/other.py", None),
+                    ("(cd /tmp) && cat /tmp/x > src/app.py", "temporary"),
+                    ("cd \"$D\" && echo x > other.py", "working directory cannot be determined"),
+                    ("cd /tmp; cd $(pwd) && echo x > other.py", "working directory cannot be determined")):
+        t, i = bash(c)
+        case(f"REQ-V2G-02 verification C1 every candidate working directory is judged: {c[:60]}", r, t, i, "deny",
+             rule_hint=hint)
+    for c in ("cd src && echo x > app.py", "cd -P src && echo x > app.py", "pushd src && echo x > app.py",
+              "cd /tmp && echo x > y.txt", "cd src && cd .. && echo x > src/app.py"):
+        t, i = bash(c)
+        case(f"REQ-V2G-02 verification C1 a plain && chain still resolves exactly: {c[:60]}", r, t, i, "allow")
     shutil.rmtree(r)
 
     # ---------------- REQ-USA-09: -k selects without changing outcomes; --suite; no match; unknown suite
@@ -3019,6 +3069,15 @@ def suite_pilot60():
           and not st._engine_ignored_origin("system", "file:" + os.path.join(T, "p60-sys-gitconfig"))
           and not st._engine_ignored_origin("local", "file:.git/config")
           and st._engine_ignored_origin("system", "file:/etc/hosts"), watched_ok)
+    import integrity as _integ
+    _sample = os.path.join(T, f"p60-owned-{os.getpid()}")
+    open(_sample, "w").write("x")
+    _paths = (_sample, "/etc/hosts", "/usr/bin/true")
+    _got = [(st._file_not_user_writable(q), _integ._not_user_writable(q)) for q in _paths]
+    os.unlink(_sample)
+    check("REQ-USA-10 verification state._file_not_user_writable agrees with integrity._not_user_writable on a "
+          "user-owned file, /etc/hosts and /usr/bin/true (state cannot import integrity: integrity imports state)",
+          all(a == b for a, b in _got) and [a for a, _b in _got] == [False, True, True], _got)
     import re as _re
     integ_src = open(os.path.join(HERE, "..", "engine", "integrity.py")).read()
     integ_git = _re.findall(r'"(~/[^"]*git[^"]*)"', integ_src)
