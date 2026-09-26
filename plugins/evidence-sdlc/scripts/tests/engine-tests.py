@@ -3167,7 +3167,252 @@ def suite_pilot60():
     shutil.rmtree(r)
 
 
-SUITES = [suite_pilot60, suite_pilot62, suite_pilot58, suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle,
+def suite_pilot59():
+    """PILOT-59, part 1 (the deferrals, REQ-CON-14..23) and the PILOT-60 review items routed here."""
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import importlib
+    import cmdparse
+    importlib.reload(cmdparse)
+
+    # ---------------- REQ-CON-15: every command on every line; a heredoc's operator line is kept
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    for c, hint in (("echo hi\ntouch src/auth/login.py", "tier"),
+                    ("cat <<EOF | sh\ntouch src/auth/login.py\nEOF", None),
+                    ("cat <<EOF && touch src/auth/login.py\nhi\nEOF", "tier"),
+                    ("cat <<'A' <<'B' && touch src/auth/login.py\na\nA\nb\nB", "tier"),
+                    ("cat <<<\"x\"\nrm src/other.py", None),
+                    ("echo a#b; touch src/auth/login.py", "tier"),
+                    ("cat <<EOF\n$(touch src/auth/login.py)\nEOF", "tier"),
+                    ("bash <<'EOF'\ntouch src/auth/login.py\nEOF", "tier"),
+                    ("cat <<EOF |\nx\nEOF\nsh", None),
+                    ("echo x &&\ntouch src/auth/login.py", "tier"),
+                    ("echo \"$(cat <<'EOF'\nx\nEOF\n)\"\ntouch src/auth/login.py", "tier")):
+        t, i = bash(c)
+        case(f"REQ-CON-15 a command on another line is judged: {c[:50]!r}", r, t, i, "deny", rule_hint=hint)
+    for c in ("cat <<'EOF'\nhi\nEOF\ngit status", "cat <<EOF\ntouch src/auth/login.py\nEOF",
+              "echo a \\\nb", "echo hi\ngit status", "bash <<'EOF'\ngit status\nEOF",
+              "echo 'x\ntouch src/auth/login.py'", "echo $((1 << 2))\ngit status"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 data and plain lines stay allowed: {c[:50]!r}", r, t, i, "allow")
+    t, i = bash("git commit -F - <<'EOF'\nABC-1: stdin message\n\nAgent-Session: s1\nEOF\ngit status")
+    sh("git add -A .evidence", r)  # a real session stages its evidence with the change
+    case("REQ-CON-15 a heredoc commit message then git status on the next line (PILOT-58 case) is allowed", r, t, i,
+         "allow")
+    s, ok, _ = cmdparse.split_simple("echo a \\\nb")
+    check("REQ-CON-15 a backslash-newline joins the lines into one echo",
+          ok and [x.argv for x in s] == [["echo", "a", "b"]], [x.argv for x in s])
+    s, ok, _ = cmdparse.split_simple("cat <<<\"x\"\nrm src/app.py")
+    check("REQ-CON-15 a here-string is not a heredoc: rm on the next line is seen",
+          ok and ["rm", "src/app.py"] in [x.argv for x in s], [x.argv for x in s])
+    s, ok, b = cmdparse.split_simple("cat <<A && echo mid && cat <<'B'\none\nA\ntwo\nB\necho end")
+    check("REQ-CON-15 two heredocs on one line are read in order and the rest of the line is kept",
+          ok and b == ["one", "two"] and [x.prog for x in s] == ["cat", "echo", "cat", "echo"], ([x.argv for x in s], b))
+    s, ok, _ = cmdparse.split_simple("echo 'unterminated")
+    check("REQ-CON-15 an unbalanced quote is not ok", not ok, ok)
+    s, ok, _ = cmdparse.split_simple("echo $(echo x")
+    check("REQ-CON-15 an unterminated command substitution is not ok", not ok, ok)
+
+    # ---------------- P1 (PILOT-60 review): process substitution is parsed like $( )
+    for c in ("cat <(bash -c 'echo evil > .git/hooks/pre-commit')",
+              "cat <(python3 -c \"open('src/other.py','w').write('x')\")",
+              "diff <(touch src/auth/login.py) src/app.py", "tee >(sh) < src/app.py",
+              "echo x > >(sh)", "source <(echo git status)"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P1 process substitution is judged: {c[:60]}", r, t, i, "deny")
+    for c in ("diff <(git show HEAD:src/app.py) src/app.py", "cat <(echo hi)"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P1 a harmless process substitution is allowed: {c[:60]}", r, t, i, "allow")
+    shutil.rmtree(r)
+
+    # ---------------- C2 (PILOT-60 review, Critical): output operands, and any path given to a program that may write
+    T = os.path.realpath(tempfile.gettempdir())
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    for c in ("uniq src/app.py .git/hooks/pre-commit", "uniq /tmp/x src/other.py", "uniq -f 1 src/app.py src/other.py",
+              "echo x | sponge .git/hooks/pre-commit", "echo x | sponge -a src/other.py",
+              "sort -o src/other.py src/app.py", "sort -osrc/other.py src/app.py", "sort --output src/other.py src/app.py",
+              "xxd -r src/app.py .git/hooks/pre-commit", "mystery-tool .mcp.json", "mystery-tool src/other.py",
+              "mystery-tool --out=.claude/settings.json", "node tests/x.js .evidence/changes/ABC-1/state.json",
+              "find .git -name x -fprint .git/hooks/pre-commit"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 C2 a possible write to the control plane or an unclaimed file is judged: {c[:60]}", r, t, i,
+             "deny")
+    for c in ("uniq src/app.py", "sort src/app.py", f"uniq src/app.py {T}/p59-out", "cat .claude/settings.json",
+              "grep -n x .git/config", "ls .git/hooks", "sed -n 1,5p src/other.py", "find . -name '*.py'",
+              "pytest tests/test_app.py", "mystery-tool src/app.py", "npm run build", "make test",
+              "jq . .evidence/changes/ABC-1/state.json", "wc -l src/other.py README.md", "mystery-tool docs/guide.md"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 C2 a read or a claimed path stays allowed: {c[:60]}", r, t, i, "allow")
+    t, i = write(".git/hooks/pre-commit")
+    case("REQ-CON-15 C2 .git/** is control plane for the Write tool too", r, t, i, "deny", rule_hint="control plane")
+
+    # ---------------- P4 (PILOT-60 review): code loaded through environment variables
+    for c in ("LD_PRELOAD=/tmp/x.so ls", "DYLD_INSERT_LIBRARIES=/tmp/x.dylib ls", "export LD_PRELOAD=/tmp/x.so",
+              "env LD_LIBRARY_PATH=/tmp ls", "LD_AUDIT=src/app.py ls", "DYLD_LIBRARY_PATH=src ls",
+              "RIPGREP_CONFIG_PATH=/tmp/rc rg foo src", "NODE_OPTIONS='--require /tmp/x.js' node -v",
+              "PYTHONPATH=/tmp python3 -m pytest", "RIPGREP_CONFIG_PATH=src/other.py rg foo src",
+              "PYTHONSTARTUP=$HOME/x python3 -V", "declare -x LD_PRELOAD=x.so"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P4 a code-loading environment variable is judged: {c[:60]}", r, t, i, "deny")
+    for c in ("FOO=1 ls", "PYTHONPATH=src python3 -m pytest tests", "LANG=C sort src/app.py",
+              "RIPGREP_CONFIG_PATH=src/app.py rg foo src"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P4 an ordinary environment prefix stays allowed: {c[:60]}", r, t, i, "allow")
+
+    # ---------------- P5 (PILOT-60 review): curl -K and wget -e/-i can write anywhere
+    for c in ("curl -K cfg https://e.com", "curl --config=cfg https://e.com", "curl -sKcfg https://e.com",
+              "curl --conf cfg https://e.com", "wget -e robots=off -O /dev/null https://e.com", "wget -i list.txt -O /dev/null",
+              "wget --execute=x -O /dev/null https://e.com", "curl -osrc/other.py https://e.com",
+              "curl -c src/other.py https://e.com", "curl --dump-header .git/hooks/pre-commit https://e.com"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P5 curl/wget config and output options are judged: {c[:60]}", r, t, i, "deny")
+    for c in ("curl -s https://example.com", "curl -o src/app.py https://example.com"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P5 plain curl stays allowed: {c[:60]}", r, t, i, "allow")
+
+    # ---------------- stdin and file:// (PILOT-60 review): temp content into a claimed file
+    for c in ("tee src/app.py < /tmp/x", "curl -o src/app.py file:///tmp/x", f"curl -o src/app.py file://{T}/x",
+              f"curl file://{r}/.git/config", "curl -o src/app.py FILE:///private/tmp/x",
+              f"curl -o src/app.py file://localhost{T}/x"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 file:// and stdin temp sources into the repository are denied: {c[:60]}", r, t, i, "deny")
+
+    # ---------------- P2 (PILOT-60 review): argv[0], and relative paths from every candidate working directory
+    for c in ("/tmp/x", f"{T}/x arg", "cd /tmp && make -f Makefile", "cd /tmp && make", "cd /tmp && ./x",
+              f"cd /tmp && cp x {r}/src/app.py", "(cd /tmp); ./run.sh", f"cd {T} && python3 -m x"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P2 temp programs and temp working directories are judged: {c[:60]}", r, t, i, "deny",
+             rule_hint="temporary")
+    for c in ("cd /tmp && echo x > y.txt", "cd /tmp && ls", "cd /tmp && cat a.log", "./src/app.py"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 P2 data in a temp directory stays allowed: {c[:60]}", r, t, i, "allow")
+
+    # ---------------- logical cd through a symlink (PILOT-60 review): bash's cd is logical, realpath is physical
+    outside = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p59-out-"))
+    os.makedirs(os.path.join(outside, "deep"))
+    os.symlink(os.path.join(outside, "deep"), os.path.join(r, "tests", "L"))
+    for c in ("cd tests/L/.. && echo x > ../.git/hooks/pre-commit", "cd tests/L && cd .. && echo x > ../src/other.py",
+              "cd tests/L/.. && cp ../src/app.py ../src/other.py"):
+        t, i = bash(c)
+        case(f"REQ-CON-15 logical and physical cd are both candidates: {c[:60]}", r, t, i, "deny")
+    shutil.rmtree(outside)
+    shutil.rmtree(r)
+
+    # ---------------- REQ-CON-14: after a post-hook timeout the watchdog is re-armed
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    hdir = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p59-hook-"))
+    harness = os.path.join(hdir, "slow_post.py")
+    open(harness, "w").write(
+        "import sys, time\n"
+        f"sys.path.insert(0, {os.path.realpath(os.path.join(HERE, '..', 'engine'))!r})\n"
+        "import hook, integrity, state as st\n"
+        "hook.HOOK_BUDGET_SECONDS = hook.HOOK_BUDGET_SECONDS_POST = 2\n"
+        "hook.HOOK_BUDGET_SECONDS_RECORD = 1\n"
+        "def slow(*a, **k):\n    time.sleep(40)\n"
+        "integrity.check = slow\nst.record_violations = slow\n"
+        "sys.argv = ['hook.py', 'post']\nsys.exit(hook.main())\n")
+    env = dict(BASE_ENV, CLAUDE_PROJECT_DIR=r)
+    import time as _time
+    t0 = _time.time()
+    p = subprocess.run([sys.executable, harness], input=json.dumps(
+        {"session_id": "s59t", "cwd": r, "hook_event_name": "PostToolUse", "tool_name": "Bash",
+         "tool_input": {"command": "./build.sh"}, "tool_use_id": "t1"}), cwd=r, capture_output=True, text=True,
+        env=env, timeout=120)
+    took = _time.time() - t0
+    log = os.path.join(r, ".evidence", "audit", "s59t.jsonl")
+    entries = [json.loads(l) for l in open(log)] if os.path.isfile(log) else []
+    check("REQ-CON-14 a slow check and a slow record: the hook returns well within 30 s, with the integrity-timeout "
+          "audit entry", took < 12 and any(e.get("rule") == "integrity-timeout" for e in entries),
+          (round(took, 1), [e.get("event") for e in entries], p.stderr[-300:]))
+    shutil.rmtree(hdir)
+    shutil.rmtree(r)
+
+    # ---------------- REQ-CON-16: tier3-same-person also covers GitHub approvals (org map email -> login)
+    org_dir = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p59-org-"))
+
+    def org(extra):
+        p = os.path.join(org_dir, f"org-{len(os.listdir(org_dir))}.json")
+        json.dump(dict({"unsigned_max_tier": 3}, **extra), open(p, "w"))
+        return p
+
+    def gh_approved(r, approver, created_by="dev@x.com"):
+        sp = os.path.join(r, ".evidence", "changes", "ABC-1", "state.json")
+        s = json.load(open(sp))
+        s["created_by"] = created_by
+        json.dump(s, open(sp, "w"))
+        ap = os.path.join(r, ".evidence", "changes", "ABC-1", "approval.json")
+        a = json.load(open(ap))
+        a.update(method="github", approver=approver, pr_number=5)
+        json.dump(a, open(ap, "w"))
+
+    r = make_repo()
+    start_change(r, tier=3, claims=("src/app.py", "tests/**"))
+    ids = {"approval": {"github_identities": {"dev@x.com": "alice"}}}
+    for approver, pol, expect, label in (
+            ("alice", ids, "deny", "the creator's own GitHub login is refused"),
+            ("ALICE", ids, "deny", "the creator's login in another case is refused"),
+            ("bob", ids, "allow", "another GitHub approver is accepted"),
+            ("bob", {}, "deny", "no creator login in the org policy: refused for Tier 3"),
+            ("alice", dict(ids, tier3_distinct_approver=False), "allow", "tier3_distinct_approver false switches it off")):
+        gh_approved(r, approver)
+        t, i = edit("src/app.py")
+        case(f"REQ-CON-16 tier3-same-person github: {label}", r, t, i, expect, env={"EVIDENCE_ORG_POLICY": org(pol)},
+             rule_hint="tier3" if expect == "deny" else None)
+    shutil.rmtree(r)
+    shutil.rmtree(org_dir)
+
+    # ---------------- REQ-CON-20: .evidence/context and decisions outside claims: allowed locally, with a note
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**", ".evidence/decisions/0010-*.md"))
+    for rel, want in ((".evidence/decisions/0009-x.md", True), (".evidence/context/stack.md", True),
+                      (".evidence/decisions/0010-y.md", False)):
+        obj, _ = run_hook(r, {"session_id": "s1", "cwd": r, "hook_event_name": "PreToolUse", "tool_name": "Write",
+                              "tool_input": {"file_path": rel, "content": "# x\n"}, "permission_mode": "default"})
+        got, _reason = decision(obj)
+        note = obj.get("hookSpecificOutput", {}).get("additionalContext", "")
+        check(f"REQ-CON-20 {rel} is allowed {'with' if want else 'without'} the verify-range claims note",
+              got == "allow" and (("verify-range" in note and "claimed" in note) == want), (got, note))
+    shutil.rmtree(r)
+
+    # ---------------- REQ-CON-22: abbreviated long options of git commit are resolved as git does
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    for c in ("git commit --o -m 'ABC-1: x' src/app.py", "git commit --onl -m 'ABC-1: x' src/app.py",
+              "git commit --inc -m 'ABC-1: x' src/app.py", "git commit --in -m 'ABC-1: x'",
+              "git commit --pa -m 'ABC-1: x'", "git commit --interact -m 'ABC-1: x'"):
+        t, i = bash(c)
+        case(f"REQ-CON-22 an abbreviated bypass option is denied: {c}", r, t, i, "deny", rule_hint="staged index")
+    import evidence_policy as _ep
+    for args, want in ((["--o", "-m", "x", "src/app.py"], "--only"), (["--mess", "ABC-1 x"], None),
+                       (["-m", "ABC-1 x"], None), (["--no-only", "-m", "x"], None), (["--inc", "-m", "x"], "--include"),
+                       (["--me=ABC-1 x", "--all"], None), (["--pathspec-f", "f"], "--pathspec-from-file")):
+        got = _ep._commit_bypass(args)
+        check(f"REQ-CON-22 _commit_bypass({' '.join(args)}) -> {want or 'nothing'}",
+              (want in got) if want else not got, got)
+    shutil.rmtree(r)
+
+    # ---------------- REQ-CON-23: git failures fail closed
+    import integrity as _integ
+    import state as _st
+    nd = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p59-nogit-"))
+    open(os.path.join(nd, "config"), "w").write("[core]\n")
+    ex = _integ._extras(nd, json.load(open(_st.DEFAULT_POLICY)))
+    check("REQ-CON-23 _extras with git failing records git-unavailable and never hashes <root>/config",
+          ex.get("(git dir)") == "git-unavailable" and ".git/config" not in ex, ex)
+    check("REQ-CON-23 _attr_source with git failing still pins an empty tree (never the worktree's attributes)",
+          _st._attr_source(nd) == _st._EMPTY_TREE["sha1"], _st._attr_source(nd))
+    shutil.rmtree(nd)
+    r = make_repo()
+    start_change(r, claims=("src/app.py", "tests/**"))
+    sh("git config core.fsmonitor /bin/false", r)
+    t, i = bash("git push")
+    case("REQ-CON-23 a push whose current branch the engine cannot read is denied", r, t, i, "deny")
+    shutil.rmtree(r)
+
+
+SUITES = [suite_pilot59, suite_pilot60, suite_pilot62, suite_pilot58, suite_audit_concurrency_and_hook_scope, suite_signed_lifecycle,
           suite_round5, suite_round4, suite_reaudit_fixes, suite_integrity, suite_gate_true_positives, suite_mutation,
           suite_self_review, suite_historic, suite_fail_closed, suite_no_change, suite_control_plane, suite_change_rules,
           suite_fix_mode, suite_push_merge, suite_commit, suite_deploy, suite_policy_merge, suite_audit_and_session]

@@ -600,6 +600,108 @@ def verify_range_tests():
     check("REQ-IMH-19 push mode skips an all-zero `before` with a note",
           r.returncode == 0 and "skip" in (r.stdout + r.stderr).lower(), r.stdout[-300:] + r.stderr[-300:])
     shutil.rmtree(d)
+    verify_range_59_tests()
+
+
+def verify_range_59_tests():
+    """PILOT-59 REQ-CON-17, 18, 19, 21: the verify-range review items (CHANGELOG 2.1.0)."""
+    def w(d, rel, text):
+        os.makedirs(os.path.dirname(os.path.join(d, rel)) or d, exist_ok=True)
+        open(os.path.join(d, rel), "w").write(text)
+
+    def expect(label, r, rule, word=None):
+        out = (r.stdout + r.stderr).lower()
+        ok = r.returncode == 0 if rule is None else (r.returncode != 0 and f"rule {rule}" in out)
+        ok = ok and "traceback" not in out and (word is None or word in out)
+        check(label, ok, (r.returncode, r.stdout[-700:] + r.stderr[-300:]))
+
+    def main_appends(d, name, session, n=1):
+        """main gains `n` lines on .evidence/audit/<name>.jsonl; returns the new base."""
+        vr_git(d, "git checkout -q main")
+        with Signed() as s:
+            for k in range(n):
+                s.st.audit_append(d, session, {"event": "tool", "key": "ABC-3", "n": k})
+        vr_git(d, f"git add -A && git commit -q -m 'ABC-3: main appends to {name}' -m 'Agent-Session: {session}'")
+        nb = vr_git(d, "git rev-parse HEAD")
+        vr_git(d, "git checkout -q feature/ABC-7-login")
+        return nb
+
+    def merge_with(d, rel, lines, msg):
+        subprocess.run("git merge -q --no-ff --no-commit main", shell=True, cwd=d, env=ENV, capture_output=True)
+        w(d, rel, "".join(l + "\n" for l in lines))
+        return vr_commit(d, msg, audit=False)
+
+    def lines_at(d, rev, rel):
+        return vr_git(d, f"git show {rev}:{rel}").splitlines()
+
+    def old_log(d):
+        with Signed() as s:
+            s.st.audit_append(d, "old", {"event": "tool", "key": "ABC-0"})
+
+    # REQ-CON-17: containment is ordered, for the whole range and a merge's other parents
+    d, b, h = vr_fixture(base_extra=old_log)
+    rel = ".evidence/audit/old.jsonl"
+    nb = main_appends(d, "old", "old", n=2)
+    theirs = lines_at(d, nb, rel)
+    head = merge_with(d, rel, [theirs[0], theirs[2], theirs[1]], "ABC-7: merge main, log lines reordered")
+    expect("REQ-CON-17 a log whose lines are reordered by a merge fails rule 4", vr_run(d, nb, head), 4)
+    shutil.rmtree(d)
+    d, b, h = vr_fixture(base_extra=old_log)
+    nb = main_appends(d, "old", "old", n=2)
+    vr_git(d, "git merge -q --no-ff -m \"Merge branch 'main' into feature/ABC-7-login\" main")
+    expect("REQ-CON-17 an append-only range with an update merge passes", vr_run(d, nb, vr_git(d, "git rev-parse HEAD")),
+           None)
+    shutil.rmtree(d)
+
+    # REQ-CON-18: a shared log merged with the base's lines first passes; a line from neither parent fails
+    for label, forge, rule in (("the base's lines first passes", False, None),
+                               ("a merged line from neither parent fails rule 4", True, 4)):
+        d, b, h = vr_fixture(base_extra=_vr_shared_log)
+        rel = ".evidence/audit/clear-violations.jsonl"
+        with Signed() as s:
+            s.st.audit_append(d, "clear-violations", {"event": "violations-cleared", "key": "ABC-7"})
+        vr_commit(d, "ABC-7: clear")
+        nb = main_appends(d, "clear-violations", "clear-violations")
+        ours, theirs = lines_at(d, "HEAD", rel), lines_at(d, nb, rel)
+        merged = theirs + [l for l in ours if l not in theirs] + (['{"event": "forged"}'] if forge else [])
+        head = merge_with(d, rel, merged, "ABC-7: merge main (base's lines first)")
+        expect(f"REQ-CON-18 shared log merge: {label}", vr_run(d, nb, head), rule)
+        shutil.rmtree(d)
+    # REQ-CON-18: one session's log appended on both sides fails, and the message says to rebase
+    def s1_at_base(d):
+        with Signed() as s:
+            s.st.audit_append(d, "s1", {"event": "tool", "key": "ABC-0"})
+    d, b, h = vr_fixture(base_extra=s1_at_base)
+    rel = ".evidence/audit/s1.jsonl"
+    nb = main_appends(d, "s1", "s1")
+    ours, theirs = lines_at(d, "HEAD", rel), lines_at(d, nb, rel)
+    head = merge_with(d, rel, ours + [l for l in theirs if l not in ours], "ABC-7: merge main (s1 on both sides)")
+    expect("REQ-CON-18 one session's log appended on both sides of a merge fails rule 4 and says to rebase",
+           vr_run(d, nb, head), 4, word="rebase")
+    shutil.rmtree(d)
+
+    # REQ-CON-19: only real records and session logs are exempt from claims
+    for rel in (".evidence/changes/ABC-7/run.sh", ".evidence/audit/notes.txt", ".evidence/violations/notes.md",
+                ".evidence/audit/sub/x.jsonl"):
+        d, b, h = vr_fixture()
+        w(d, rel, "x\n")
+        expect(f"REQ-CON-19 an unclaimed non-record file under .evidence fails rule 2: {rel}",
+               vr_run(d, b, vr_commit(d, "ABC-7: extra file")), 2)
+        shutil.rmtree(d)
+    d, b, h = vr_fixture()
+    expect("REQ-CON-19 state.json, approval.json and a session .jsonl stay exempt", vr_run(d, b, h), None)
+    shutil.rmtree(d)
+
+    # REQ-CON-21: CODEOWNERS patterns without a slash match at any depth
+    sys.path.insert(0, os.path.join(HERE, "..", "engine"))
+    import lifecycle
+    for pats, path, owned in (("docs @o", "a/b/docs/x.md", True), ("docs/ @o", "a/docs/x.md", True),
+                              ("/docs @o", "a/docs/x.md", False), ("/docs @o", "docs/x.md", True),
+                              ("src/app.py @o", "x/src/app.py", False), ("src/app.py @o", "src/app.py", True),
+                              ("*.js @o", "a/b/c.js", True), ("docs/*.md @o", "a/docs/x.md", False)):
+        rules = [(l.split()[0], l.split()[1:]) for l in [pats]]
+        got = lifecycle._owners_of(rules, path)
+        check(f"REQ-CON-21 CODEOWNERS `{pats}` {'owns' if owned else 'does not own'} {path}", bool(got) == owned, got)
 
 
 FIX60 = os.path.join(HERE, "fixtures", "pilot60")
@@ -765,6 +867,91 @@ def gaps_tests():
     shutil.rmtree(d)
 
 
+def approve_github_59_tests():
+    """PILOT-59 REQ-CON-16: a GitHub approval must not come from the change's creator. The creator's
+    login comes from the org policy's approval.github_identities (email -> login or [logins])."""
+    def setup(tier, identities, repo_policy=None, author="bot"):
+        d = repo()
+        subprocess.run("git config user.email dev@x.com", shell=True, cwd=d, env=ENV, check=True)
+        org = {"unsigned_max_tier": 3, "approval": {"github_repo": "o/r"}}
+        if identities is not None:
+            org["approval"]["github_identities"] = identities
+        org_path = os.path.join(d, ".git", "org.json")
+        json.dump(org, open(org_path, "w"))
+        env = {"EVIDENCE_ORG_POLICY": org_path}
+        os.makedirs(os.path.join(d, "plan"))
+        os.makedirs(os.path.join(d, "intent", "ABC-7"))
+        open(os.path.join(d, "plan", "ABC-7.md"), "w").write(PLAN.replace("Risk tier: 1", f"Risk tier: {tier}"))
+        open(os.path.join(d, "intent", "ABC-7", "intent.md"), "w").write("# Intent\nTracker: ABC-7\n")
+        open(os.path.join(d, "intent", "ABC-7", "spec.md"), "w").write("# Spec\nTracker: ABC-7\n")
+        extra = ["--intent", "intent/ABC-7/intent.md", "--spec", "intent/ABC-7/spec.md"] if tier >= 2 else []
+        r = run(["change", "start", "ABC-7", "--tier", str(tier), "--kind", "feature", "--plan", "plan/ABC-7.md"] + extra,
+                d, env=env)
+        assert r.returncode == 0, r.stderr
+        if repo_policy is not None:
+            json.dump(repo_policy, open(os.path.join(d, ".evidence", "policy.json"), "w"))
+        return d, env
+
+    def approve(d, env, reviewer, author="bot"):
+        fake = os.path.join(d, ".git", "fake-gh")
+        plan_b64 = __import__("base64").b64encode(open(os.path.join(d, "plan", "ABC-7.md"), "rb").read()).decode()
+        open(fake, "w").write("#!/bin/bash\n"
+                              "case \"$*\" in\n"
+                              "  'pr view 5 '*) echo '{\"number\":5,\"headRefName\":\"feature/ABC-7-x\",\"headRefOid\":\"abc\","
+                              f"\"url\":\"u\",\"author\":{{\"login\":\"{author}\"}},"
+                              f"\"reviews\":[{{\"author\":{{\"login\":\"{reviewer}\"}},\"state\":\"APPROVED\"}}],\"comments\":[]}}';;\n"
+                              f"  'api repos/o/r/contents/plan/ABC-7.md?ref=abc') echo '{{\"content\":\"{plan_b64}\"}}';;\n"
+                              "  *) exit 1;;\n"
+                              "esac\n")
+        os.chmod(fake, 0o755)
+        return run(["approve", "ABC-7", "--github-pr", "5"], d, env=dict(env, EVIDENCE_GH=fake))
+
+    ap = lambda d: os.path.join(d, ".evidence", "changes", "ABC-7", "approval.json")
+    d, env = setup(3, {"dev@x.com": "alice"})
+    r = approve(d, env, "alice")
+    check("REQ-CON-16 a GitHub approval by the change's creator (org map) is refused",
+          r.returncode != 0 and not os.path.isfile(ap(d)) and "creat" in (r.stdout + r.stderr).lower(), r.stdout + r.stderr)
+    r = approve(d, env, "Bob")
+    rec = json.load(open(ap(d))) if os.path.isfile(ap(d)) else {}
+    check("REQ-CON-16 another approver is accepted and creator_login is recorded",
+          r.returncode == 0 and rec.get("approver") == "Bob" and rec.get("creator_login") == "alice",
+          (r.stdout + r.stderr, rec))
+    shutil.rmtree(d)
+    d, env = setup(3, {"dev@x.com": ["alice", "alice-work"]})
+    r = approve(d, env, "ALICE-work")
+    check("REQ-CON-16 any of the creator's logins (case-insensitive) is refused",
+          r.returncode != 0 and not os.path.isfile(ap(d)), r.stdout + r.stderr)
+    shutil.rmtree(d)
+    d, env = setup(3, None, repo_policy={"approval": {"github_identities": {"dev@x.com": "zed"}}})
+    r = approve(d, env, "bob")
+    check("REQ-CON-16 Tier 3 with no creator login in the org policy is refused (a repository policy cannot supply one)",
+          r.returncode != 0 and not os.path.isfile(ap(d)) and "github_identities" in (r.stdout + r.stderr), r.stdout + r.stderr)
+    shutil.rmtree(d)
+    d, env = setup(1, None)
+    r = approve(d, env, "bob")
+    check("REQ-CON-16 Tier 1 with no creator login is accepted, with a note",
+          r.returncode == 0 and os.path.isfile(ap(d)) and "github_identities" in (r.stdout + r.stderr), r.stdout + r.stderr)
+    shutil.rmtree(d)
+
+
+def fix_base_59_test():
+    """PILOT-59 REQ-CON-23: a fix_base git could not read is refused, never recorded empty (which would switch
+    test-weakening protection off)."""
+    d = os.path.realpath(tempfile.mkdtemp(prefix="evidence-life-"))
+    subprocess.run("git init -q -b feature/ABC-9-fix", shell=True, cwd=d, env=ENV, check=True)  # unborn: no HEAD
+    run(["change", "start", "ABC-9", "--tier", "1", "--kind", "fix", "--plan", "plan/ABC-9.md"], d)
+    os.makedirs(os.path.join(d, "plan"))
+    open(os.path.join(d, "plan", "ABC-9.md"), "w").write(PLAN.replace("ABC-7", "ABC-9"))
+    s9 = json.loads(run(["change", "status", "ABC-9", "--json"], d).stdout)
+    prompt(d, f"evidence approve ABC-9 {s9['plan_sha256'][:12]}")
+    r = run(["change", "advance", "ABC-9", "failing-test"], d)
+    st9 = json.load(open(os.path.join(d, ".evidence/changes/ABC-9/state.json")))
+    check("REQ-CON-23 failing-test is refused when git cannot read HEAD, and no empty fix_base is recorded",
+          r.returncode != 0 and "fix_base" not in st9 and st9.get("stage") != "failing-test",
+          (r.returncode, r.stdout + r.stderr, st9.get("stage"), st9.get("fix_base")))
+    shutil.rmtree(d)
+
+
 def main():
     d = repo()
     r = run(["change", "start", "ABC-7", "--tier", "1", "--kind", "feature"], d)
@@ -879,6 +1066,8 @@ def main():
     r = run(["approve", "ABC-8", "--github-pr", "5"], d, env={"EVIDENCE_GH": fake, "EVIDENCE_ORG_POLICY": org})
     check("REQ-V2A-01 github mode with no allowed approvers refuses", r.returncode != 0 and "allowed_approvers" in r.stderr, r.stderr)
     shutil.rmtree(d)
+    approve_github_59_tests()
+    fix_base_59_test()
     signed_terminal_tests()
     verify_range_tests()
     gaps_tests()

@@ -63,6 +63,7 @@ class Simple:
         self.stdin_file = stdin_file
         self.wrappers = list(wrappers)
         self.piped_in = False
+        self.heredocs = []  # indexes into split_simple's heredoc bodies fed to this command's stdin
 
     @property
     def prog(self):
@@ -70,9 +71,12 @@ class Simple:
 
 
 def _tokenize(cmd):
+    """shlex over text that _scan has already prepared: comments removed (shlex would also end a
+    word like `a#b` at the `#` and drop the rest of the line), heredoc bodies replaced by markers,
+    line continuations joined and newlines turned into `;`."""
     lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()<>")
     lex.whitespace_split = True
-    lex.commenters = "#"
+    lex.commenters = ""
     tokens = []
     try:
         for tok in lex:
@@ -86,27 +90,401 @@ def _tokenize(cmd):
 
 
 _SUBST = re.compile(r"\$\(((?:[^()]|\([^()]*\))*)\)|`([^`]*)`")
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)\n\s*\2\s*(?:\n|$)", re.S)
+# A heredoc body is replaced by this marker (the word after `<<`), so a rescan of the text (a
+# command substitution is parsed again on its own) does not look for the body a second time.
+_HEREDOC_MARK = "__EVIDENCE_HEREDOC_{}__"
+_HEREDOC_MARK_RE = re.compile(r"__EVIDENCE_HEREDOC_(\d+)__")
+_META = set(" \t\n;&|()<>")
+
+
+class _Scanner:
+    """A shell lexer for what the gates need (PILOT-59, REQ-CON-15). It walks the command once,
+    tracking quotes, escapes, `$( )`, `${ }`, `$(( ))`, backticks, process substitution and
+    heredocs, and returns the command text with:
+      - comments removed (a `#` at the start of a word, to the end of the line);
+      - `\\` + newline joined, as the shell does outside single quotes;
+      - every newline in command context turned into a `;` separator, unless the line ends in an
+        operator that continues onto the next line (`|`, `&&`, `||`, `(`);
+      - each heredoc body removed (it is data) and recorded, while the rest of the operator's line
+        (`| sh`, `&& touch x`, `> f`, a second heredoc) is kept; `<<<` is a here-string;
+      - each process substitution `<( )` / `>( )` replaced by a quoted placeholder word, its
+        inside recorded to be parsed as a command of its own.
+    Command substitutions `$( )` and backticks are recorded too (their text stays in place), as
+    are the substitutions inside an unquoted heredoc body, which the shell expands. Anything it
+    cannot place (an unterminated quote or substitution) clears `ok`."""
+
+    def __init__(self, src, bodies):
+        self.s, self.n, self.i = src, len(src), 0
+        self.bodies = bodies
+        self.subs = []        # [(kind, inner text)] for kind in "$(", "`", "<(", ">("
+        self.pending = []     # heredocs whose bodies start after the next newline
+        self.ok = True
+
+    # -- helpers
+    def _peek(self, k=1):
+        return self.s[self.i + k] if self.i + k < self.n else ""
+
+    @staticmethod
+    def _last_char(out):
+        for piece in reversed(out):
+            if piece:
+                return piece[-1]
+        return ""
+
+    @staticmethod
+    def _last_significant(out):
+        for piece in reversed(out):
+            t = piece.rstrip(" \t\n")
+            if t:
+                return t[-1]
+        return ""
+
+    # -- contexts
+    def cmd(self, level, nested):
+        """Command context. `nested` ends at the `)` that closes a substitution; level 0 is the
+        text this scanner was asked about, deeper levels are copied for a later rescan."""
+        out, pdepth = [], 0
+        s = self.s
+        while self.i < self.n:
+            c = s[self.i]
+            nxt = self._peek()
+            if c == "\\":
+                if nxt == "\n":
+                    self.i += 2  # line continuation
+                    continue
+                out.append(s[self.i:self.i + 2])
+                self.i += 2
+                continue
+            if c == "'":
+                j = s.find("'", self.i + 1)
+                if j < 0:
+                    self.ok = False
+                    out.append(s[self.i:])
+                    self.i = self.n
+                    break
+                out.append(s[self.i:j + 1])
+                self.i = j + 1
+                continue
+            if c == '"':
+                out.append(self.dq(level))
+                continue
+            if c == "`":
+                out.append(self.backtick(level))
+                continue
+            if c == "$" and nxt == "'":
+                out.append(self.ansi())
+                continue
+            if c == "$" and nxt == "(" and self._peek(2) == "(":
+                out.append(self.arith(3, "$(("))
+                continue
+            if c == "$" and nxt == "(":
+                out.append(self.comsub(level))
+                continue
+            if c == "$" and nxt == "{":
+                out.append(self.brace(level))
+                continue
+            if c == "(" and nxt == "(" and self._last_char(out) in ("",) + tuple(_META):
+                out.append(self.arith(2, "(("))  # `(( x << 2 ))`: arithmetic, not a heredoc
+                continue
+            if c in "<>" and nxt == "(":
+                self.i += 2
+                inner = self.cmd(level + 1, nested=True)
+                if level == 0:
+                    self.subs.append((c + "(", inner))
+                    out.append(f"'{c}(PROCSUB)'")
+                else:
+                    out.append(c + "(" + inner + ")")
+                continue
+            if c == "<" and nxt == "<" and self._peek(2) == "<":
+                out.append("<<<")
+                self.i += 3
+                continue
+            if c == "<" and nxt == "<":
+                out.append(self.heredoc_op(nested))
+                continue
+            if c == "#" and self._last_char(out) in ("",) + tuple(_META):
+                j = s.find("\n", self.i)
+                self.i = self.n if j < 0 else j
+                continue
+            if c == "\n":
+                self.i += 1
+                last = self._last_significant(out)
+                if self.pending:
+                    self.read_bodies(nested)
+                out.append("\n" if last in ("", "|", "&", ";", "(") else "\n;")
+                continue
+            if nested:
+                if c == "(":
+                    pdepth += 1
+                elif c == ")":
+                    if pdepth == 0:
+                        self.i += 1
+                        return "".join(out)
+                    pdepth -= 1
+            out.append(c)
+            self.i += 1
+        if nested:
+            self.ok = False  # the substitution never closed
+        return "".join(out)
+
+    def dq(self, level):
+        s, out = self.s, ['"']
+        self.i += 1
+        while self.i < self.n:
+            c, nxt = s[self.i], self._peek()
+            if c == "\\":
+                if nxt == "\n":
+                    self.i += 2
+                    continue
+                out.append(s[self.i:self.i + 2])
+                self.i += 2
+                continue
+            if c == '"':
+                out.append('"')
+                self.i += 1
+                return "".join(out)
+            if c == "`":
+                out.append(self.backtick(level))
+                continue
+            if c == "$" and nxt == "(" and self._peek(2) == "(":
+                out.append(self.arith(3, "$(("))
+                continue
+            if c == "$" and nxt == "(":
+                out.append(self.comsub(level))
+                continue
+            if c == "$" and nxt == "{":
+                out.append(self.brace(level))
+                continue
+            out.append(c)
+            self.i += 1
+        self.ok = False
+        return "".join(out)
+
+    def ansi(self):
+        s, start = self.s, self.i
+        self.i += 2
+        while self.i < self.n:
+            if s[self.i] == "\\":
+                self.i += 2
+                continue
+            if s[self.i] == "'":
+                self.i += 1
+                return s[start:self.i]
+            self.i += 1
+        self.ok = False
+        return s[start:]
+
+    def backtick(self, level):
+        s, raw = self.s, []
+        self.i += 1
+        while self.i < self.n:
+            c = s[self.i]
+            if c == "\\" and self.i + 1 < self.n:
+                nxt = s[self.i + 1]
+                raw.append(nxt if nxt in "`\\$" else c + nxt)
+                self.i += 2
+                continue
+            if c == "`":
+                self.i += 1
+                inner = "".join(raw)
+                if level == 0:
+                    self.subs.append(("`", inner))
+                return "`" + inner.replace("`", "\\`") + "`"
+            raw.append(c)
+            self.i += 1
+        self.ok = False
+        return "`" + "".join(raw)
+
+    def comsub(self, level):
+        self.i += 2
+        inner = self.cmd(level + 1, nested=True)
+        if level == 0:
+            self.subs.append(("$(", inner))
+        return "$(" + inner + ")"
+
+    def brace(self, level):
+        s, out = self.s, ["${"]
+        self.i += 2
+        while self.i < self.n:
+            c, nxt = s[self.i], self._peek()
+            if c == "\\":
+                out.append(s[self.i:self.i + 2])
+                self.i += 2
+                continue
+            if c == "'":
+                j = s.find("'", self.i + 1)
+                if j < 0:
+                    break
+                out.append(s[self.i:j + 1])
+                self.i = j + 1
+                continue
+            if c == '"':
+                out.append(self.dq(level))
+                continue
+            if c == "`":
+                out.append(self.backtick(level))
+                continue
+            if c == "$" and nxt == "(":
+                out.append(self.comsub(level))
+                continue
+            if c == "$" and nxt == "{":
+                out.append(self.brace(level))
+                continue
+            if c == "}":
+                out.append("}")
+                self.i += 1
+                return "".join(out)
+            out.append(c)
+            self.i += 1
+        self.ok = False
+        return "".join(out)
+
+    def arith(self, width, opener):
+        """`$(( ))` or `(( ))`: copied as is; a `$( )` inside still runs, so it is recorded."""
+        s, out, depth = self.s, [opener], 2
+        self.i += width
+        while self.i < self.n:
+            c = s[self.i]
+            if c == "$" and self._peek() == "(" and self._peek(2) != "(":
+                out.append(self.comsub(0))
+                continue
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    out.append(c)
+                    self.i += 1
+                    return "".join(out)
+            out.append(c)
+            self.i += 1
+        self.ok = False
+        return "".join(out)
+
+    def heredoc_op(self, nested):
+        s = self.s
+        self.i += 2
+        strip_tabs = self.i < self.n and s[self.i] == "-"
+        if strip_tabs:
+            self.i += 1
+        while self.i < self.n and s[self.i] in " \t":
+            self.i += 1
+        delim, quoted = [], False
+        while self.i < self.n and s[self.i] not in _META:
+            c = s[self.i]
+            if c in "'\"":
+                j = s.find(c, self.i + 1)
+                if j < 0:
+                    self.ok = False
+                    self.i = self.n
+                    break
+                delim.append(s[self.i + 1:j])
+                quoted = True
+                self.i = j + 1
+                continue
+            if c == "\\" and self.i + 1 < self.n:
+                delim.append(s[self.i + 1])
+                quoted = True
+                self.i += 2
+                continue
+            delim.append(c)
+            self.i += 1
+        word = "".join(delim)
+        if not word:
+            self.ok = False
+            return "<<"
+        if _HEREDOC_MARK_RE.fullmatch(word):
+            return "<< " + word  # already scanned: its body was removed before
+        idx = len(self.bodies)
+        self.bodies.append("")
+        self.pending.append((idx, word, strip_tabs, quoted))
+        return "<< " + _HEREDOC_MARK.format(idx)
+
+    def read_bodies(self, nested):
+        """Read the pending heredocs' bodies, in order, from the line after their operators. A
+        body ends at a line that is exactly its word (leading tabs dropped for `<<-`); spaces
+        around it are tolerated, which ends bodies no later than the shell does. Inside a command
+        substitution `WORD)` also ends it. A body with no end runs to the end of the text, as in
+        bash."""
+        s = self.s
+        pending, self.pending = self.pending, []
+        for idx, word, strip_tabs, quoted in pending:
+            lines = []
+            while self.i < self.n:
+                j = s.find("\n", self.i)
+                end = self.n if j < 0 else j
+                line = s[self.i:end]
+                probe = (line.lstrip("\t") if strip_tabs else line).strip()
+                if probe == word:
+                    self.i = end + 1 if j >= 0 else self.n
+                    break
+                if nested and probe.startswith(word) and probe[len(word):].lstrip().startswith(")"):
+                    self.i += line.index(word) + len(word)  # the `)` closes the substitution
+                    break
+                lines.append(line)
+                self.i = end + 1 if j >= 0 else self.n
+            body = "\n".join(lines)
+            self.bodies[idx] = body
+            if not quoted:
+                # an unquoted body is expanded by the shell: its $( ) and backticks run
+                sub = _Scanner(body, self.bodies)
+                sub.dq_body()
+                self.subs.extend(sub.subs)
+                self.ok = self.ok and sub.ok
+
+    def dq_body(self):
+        """An unquoted heredoc body: like the inside of double quotes, with no closing quote."""
+        s = self.s
+        while self.i < self.n:
+            c, nxt = s[self.i], self._peek()
+            if c == "\\":
+                self.i += 2
+                continue
+            if c == "`":
+                self.backtick(0)
+                continue
+            if c == "$" and nxt == "(" and self._peek(2) == "(":
+                self.arith(3, "$((")
+                continue
+            if c == "$" and nxt == "(":
+                self.comsub(0)
+                continue
+            if c == "$" and nxt == "{":
+                self.brace(0)
+                continue
+            self.i += 1
+
+
+def _scan(cmd, bodies):
+    """(prepared text, substitutions, ok) for one level of a command; see _Scanner."""
+    sc = _Scanner(cmd, bodies)
+    text = sc.cmd(0, nested=False)
+    if sc.pending:  # a heredoc operator on the last line: its body is empty
+        sc.read_bodies(False)
+    return text, sc.subs, sc.ok
 
 
 def _strip_heredocs(cmd):
-    """Remove heredoc bodies (they are data, not commands) but keep the command line."""
+    """The command text as the parser reads it (see _Scanner), and the heredoc bodies."""
     bodies = []
-
-    def repl(m):
-        bodies.append(m.group(3))
-        return "<< HEREDOC\n"
-
-    return _HEREDOC.sub(repl, cmd), bodies
+    text, _subs, _ok = _scan(cmd, bodies)
+    return text, bodies
 
 
-def split_simple(cmd, _depth=0):
-    """Return (simples, ok, heredoc_bodies). Recurses into $(...), `...`, and sh -c."""
+def split_simple(cmd, _depth=0, _bodies=None):
+    """Return (simples, ok, heredoc_bodies). Recurses into $(...), `...`, <(...), >(...), sh -c,
+    and a shell reading a heredoc. Nested calls share the top level's heredoc list."""
     if _depth > 4:
         return [], False, []
-    cmd, bodies = _strip_heredocs(cmd)
-    inner_cmds = [m.group(1) or m.group(2) for m in _SUBST.finditer(cmd)]
+    bodies = [] if _bodies is None else _bodies
+    cmd, subs, scan_ok = _scan(cmd, bodies)
+    # the scanner's substitutions, plus the old textual match (which also finds `$(` inside
+    # single quotes: parsing more than the shell runs only ever judges more)
+    inner_cmds = list(dict.fromkeys([m.group(1) or m.group(2) for m in _SUBST.finditer(cmd)]
+                                    + [t for k, t in subs if k in ("$(", "`")]))
+    procs = [(k, t) for k, t in subs if k in ("<(", ">(")]
     tokens, ok = _tokenize(cmd)
+    ok = ok and scan_ok
 
     simples, cur = [], []
     state = {"piped": False}
@@ -126,21 +504,31 @@ def split_simple(cmd, _depth=0):
         else:
             cur.append(tok)
     flush()
+    own = list(simples)
 
-    # Recurse into command substitutions and shell -c payloads.
-    for inner in inner_cmds:
-        sub, sub_ok, sub_bodies = split_simple(inner, _depth + 1)
+    def recurse(text, piped=False):
+        nonlocal ok
+        sub, sub_ok, _ = split_simple(text, _depth + 1, bodies)
+        if piped and sub:
+            sub[0].piped_in = True  # `>(cmd)`: cmd reads what the outer command writes
         simples.extend(sub)
         ok = ok and sub_ok
-        bodies.extend(sub_bodies)
-    for s in list(simples):
+
+    # Recurse into command substitutions, process substitutions and shell -c payloads.
+    for inner in inner_cmds:
+        recurse(inner)
+    for kind, inner in procs:
+        recurse(inner, piped=kind == ">(")
+    for s in own:
         if s.prog in SHELLS:
             payload = _flag_value(s.argv[1:], {"-c"})
             if payload:
-                sub, sub_ok, sub_bodies = split_simple(payload, _depth + 1)
-                simples.extend(sub)
-                ok = ok and sub_ok
-                bodies.extend(sub_bodies)
+                recurse(payload)
+        if (s.prog in SHELLS or s.prog in ("source", ".")) and s.heredocs and _reads_stdin_program(s):
+            # `bash <<EOF … EOF`, `. /dev/stdin <<EOF`: the body is the program; judge its commands
+            for idx in s.heredocs:
+                if 0 <= idx < len(bodies):
+                    recurse(bodies[idx])
         if s.prog in ("export", "declare", "typeset", "readonly"):
             for a in s.argv[1:]:
                 if "=" in a and not a.startswith("-"):
@@ -149,14 +537,24 @@ def split_simple(cmd, _depth=0):
         if s.prog == "alias":
             for a in s.argv[1:]:
                 if "=" in a:
-                    sub, sub_ok, sub_bodies = split_simple(a.split("=", 1)[1], _depth + 1)
-                    simples.extend(sub)
-                    ok = ok and sub_ok
+                    recurse(a.split("=", 1)[1])
         if s.prog == "eval":
-            sub, sub_ok, sub_bodies = split_simple(" ".join(s.argv[1:]), _depth + 1)
-            simples.extend(sub)
-            ok = ok and sub_ok
-    return simples, ok, bodies
+            recurse(" ".join(s.argv[1:]))
+    return simples, ok, (bodies if _bodies is None else [])
+
+
+_STDIN_PATHS = ("/dev/stdin", "/dev/fd/0", "/proc/self/fd/0")
+
+
+def _reads_stdin_program(s):
+    """True when a shell (or `source`) takes its program from standard input: no -c, and no
+    script operand other than /dev/stdin."""
+    if s.prog in ("source", "."):
+        return bool(s.argv[1:]) and s.argv[1] in _STDIN_PATHS
+    if _flag_value(s.argv[1:], {"-c"}) is not None:
+        return False
+    sc = script_execution(s)
+    return sc is None or sc in _STDIN_PATHS
 
 
 def _flag_value(args, flags):
@@ -169,6 +567,7 @@ def _flag_value(args, flags):
 def _make_simple(tokens):
     env, argv, redirects = {}, [], []
     stdin_file = None
+    heredocs = []
     i = 0
     # Redirections can appear anywhere; pull them out first.
     rest = []
@@ -181,6 +580,10 @@ def _make_simple(tokens):
             continue
         if t == "<" and i + 1 < len(tokens):
             stdin_file = tokens[i + 1]
+        if t == "<<" and i + 1 < len(tokens):
+            m = _HEREDOC_MARK_RE.fullmatch(tokens[i + 1])
+            if m:
+                heredocs.append(int(m.group(1)))
         if t in ("<", "<<", "<<<", "<&", ">&"):
             # input redirection or fd duplication: not a write
             if t == ">&" and i + 1 < len(tokens) and not tokens[i + 1].isdigit() and tokens[i + 1] != "-":
@@ -205,7 +608,9 @@ def _make_simple(tokens):
     argv = _strip_wrappers(argv, env)
     if not argv and not redirects:
         return None
-    return Simple(argv, env, redirects, " ".join(tokens), via_xargs, stdin_file, wrappers)
+    s = Simple(argv, env, redirects, " ".join(tokens), via_xargs, stdin_file, wrappers)
+    s.heredocs = heredocs
+    return s
 
 
 SHELL_KEYWORDS = {"{", "}", "!", "then", "do", "else", "elif", "if", "while", "until", "fi", "done", "esac", "in",
@@ -446,7 +851,12 @@ def script_execution(s):
 
 
 def writes_of(s):
-    """File-system writes performed by one simple command."""
+    """File-system writes performed by one simple command. A process substitution operand
+    (`tee >(sh)`, `> >(sh)`) is a pipe, not a file: its command is parsed and judged on its own."""
+    return [x for x in _writes_of(s) if not (x.path or "").startswith(("<(", ">("))]
+
+
+def _writes_of(s):
     w = []
     if s.via_xargs and s.prog in WRITE_PROGS:
         w.append(Write(None, "opaque", f"xargs {s.prog} (targets come from input)"))
@@ -611,8 +1021,17 @@ def writes_of(s):
 def stdin_code(s):
     """An interpreter or shell reading its program from a file redirect, a pipe, a file
     descriptor or process substitution: the program is not visible to the gates."""
+    if s.prog in ("source", "."):
+        # `source <(…)`, `. /dev/stdin`, `. /dev/fd/3`: the sourced program is not a file the gates can read
+        # (a heredoc fed to /dev/stdin is parsed as commands by split_simple instead)
+        sc = s.argv[1] if len(s.argv) > 1 else ""
+        if sc.startswith(("<(", ">(", "/dev/fd/", "/proc/self/fd")) or (sc in _STDIN_PATHS and not s.heredocs):
+            return Write(None, "opaque", f"{s.prog} reading its program from {sc}")
+        return None
     if s.prog not in INTERPRETERS and s.prog not in SHELLS:
         return None
+    if s.prog in SHELLS and s.heredocs and _reads_stdin_program(s) and not s.piped_in:
+        return None  # the heredoc is the program, and split_simple parsed its commands
     for i, a in enumerate(s.argv[1:]):
         if a in INLINE_FLAGS and i + 2 <= len(s.argv[1:]) and ("$(" in s.argv[i + 2] or "`" in s.argv[i + 2]):
             return Write(None, "opaque", f"{s.prog} running code assembled at run time")
