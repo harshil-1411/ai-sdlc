@@ -476,15 +476,20 @@ def _extras(root, policy):
     ignored top-level entries, and the user-level control plane."""
     ex = {}
     gd = (st.run_git(["rev-parse", "--git-dir"], root) or "").strip()
-    gd = gd if os.path.isabs(gd) else os.path.join(root, gd)
-    for rel in ("config", "info/exclude", "info/attributes"):
-        p = os.path.join(gd, rel)
-        ex[f".git/{rel}"] = _hash(p) if os.path.isfile(p) else None
-    hooks = os.path.join(gd, "hooks")
-    if os.path.isdir(hooks):
-        for n in sorted(os.listdir(hooks)):
-            if not n.endswith(".sample"):
-                ex[f".git/hooks/{n}"] = _hash(os.path.join(hooks, n))
+    if not gd:
+        # REQ-CON-23: git failed. "" would make the paths below <root>/config and <root>/hooks, files the
+        # agent can write, so nothing is hashed: the marker makes check() record git-unavailable.
+        ex["(git dir)"] = "git-unavailable"
+    else:
+        gd = gd if os.path.isabs(gd) else os.path.join(root, gd)
+        for rel in ("config", "info/exclude", "info/attributes"):
+            p = os.path.join(gd, rel)
+            ex[f".git/{rel}"] = _hash(p) if os.path.isfile(p) else None
+        hooks = os.path.join(gd, "hooks")
+        if os.path.isdir(hooks):
+            for n in sorted(os.listdir(hooks)):
+                if not n.endswith(".sample"):
+                    ex[f".git/hooks/{n}"] = _hash(os.path.join(hooks, n))
     try:
         flags = st.run_git(["ls-files", "-v"], root, timeout=20, raise_timeout=True)
         hidden = sorted(l[2:] for l in (flags or "").splitlines() if l[:1].islower() or l[:1] == "S")
@@ -620,6 +625,10 @@ def check(ctx, judge):
                      "(git-unavailable), so only the control plane and audit logs were checked.")
         violations.append({"path": "(git)", "rule": "git-unavailable", "action": "recorded"})
         git_ok = False
+    elif "git_dir" in snap and snap.get("git_dir") is None:
+        # REQ-CON-23: the pre could not identify the git directory, so a replaced one could not be seen
+        notes.append("git could not identify its directory before that command (git-unavailable).")
+        violations.append({"path": "(git)", "rule": "git-unavailable", "action": "recorded"})
     elif snap.get("git_dir") and _git_dir_id(root) != snap.get("git_dir"):
         notes.append("the repository's git directory was replaced by that command.")
         violations.append({"path": ".git", "rule": "git-dir-replaced", "action": "recorded"})
@@ -712,8 +721,13 @@ def check(ctx, judge):
             violations.append(v)
     # 1b. git metadata, hidden index flags, ignored entries, user control plane
     before_ex = snap.get("extras") or {}
-    if before_ex and git_ok:
-        after_ex = _extras(root, pol)
+    after_ex = _extras(root, pol) if before_ex and git_ok else {}
+    if "git-unavailable" in (before_ex.get("(git dir)"), after_ex.get("(git dir)")):
+        # REQ-CON-23: git's own directory could not be found before or after the call, so hooks and
+        # config were not compared: recorded, never read as "unchanged"
+        notes.append("git could not name its own directory (git-unavailable), so git hooks and config were not checked.")
+        violations.append({"path": "(git)", "rule": "git-unavailable", "action": "recorded"})
+    elif before_ex and git_ok:
         for k in sorted(set(before_ex) | set(after_ex)):
             b, a = before_ex.get(k), after_ex.get(k)
             how = _extra_change(k, b, a, pol)

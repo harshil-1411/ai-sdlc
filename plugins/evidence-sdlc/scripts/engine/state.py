@@ -102,7 +102,12 @@ def _attr_source(cwd):
     key = os.path.realpath(cwd)
     if key not in _ATTR_SOURCE:
         fmt = (run_git(["rev-parse", "--show-object-format"], cwd, _attrs=False) or "").strip()
-        _ATTR_SOURCE[key] = _EMPTY_TREE.get(fmt)
+        if fmt not in _EMPTY_TREE:
+            # REQ-CON-23: git failed (or reported a format we do not know). Returning None would drop
+            # GIT_ATTR_SOURCE and let the worktree's attributes (diff drivers, filters) apply. The sha1
+            # tree instead: in a sha256 repository git then fails, and its callers fail closed.
+            return _EMPTY_TREE["sha1"]
+        _ATTR_SOURCE[key] = _EMPTY_TREE[fmt]
     return _ATTR_SOURCE[key]
 
 
@@ -624,6 +629,20 @@ def load_approval(root, key):
         return None
     with open(p) as f:
         return json.load(f)
+
+
+def creator_github_logins(policy, created_by):
+    """The GitHub logins (lower case) of the person who started a change, from the org policy's
+    approval.github_identities (git email -> login, or a list of logins); [] when unknown (PILOT-59
+    REQ-CON-16). Only the org policy can set the map: the repository policy merge drops it, and
+    a login captured from the session's own gh would be the agent's to choose."""
+    ids = (policy.get("approval") or {}).get("github_identities")
+    if not isinstance(ids, dict) or not isinstance(created_by, str) or not created_by.strip():
+        return []
+    want = created_by.strip().lower()
+    val = next((v for k, v in ids.items() if isinstance(k, str) and k.strip().lower() == want), None)
+    vals = [val] if isinstance(val, str) else (val if isinstance(val, list) else [])
+    return [v.strip().lower() for v in vals if isinstance(v, str) and v.strip()]
 
 
 def approval_problem(root, key, approval, plan_path):

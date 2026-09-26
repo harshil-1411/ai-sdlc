@@ -3367,7 +3367,7 @@ def suite_pilot59():
         gh_approved(r, approver)
         t, i = edit("src/app.py")
         case(f"REQ-CON-16 tier3-same-person github: {label}", r, t, i, expect, env={"EVIDENCE_ORG_POLICY": org(pol)},
-             rule_hint="tier3" if expect == "deny" else None)
+             rule_hint="second person" if expect == "deny" else None)
     shutil.rmtree(r)
     shutil.rmtree(org_dir)
 

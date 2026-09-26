@@ -123,6 +123,14 @@ def check_write(ctx, raw_path, content=None, kind="write", detail=""):
                     f"This is a fix task (FIX_TASK=1) and {rel} is an existing test. Fix the code, not the test. "
                     "If the test itself is wrong, stop and say so; a human decides.")
     if st.glob_match(rel, pol.get("ungated", [])) and not st.glob_match(rel, pol.get("always_gated", [])):
+        if rel.startswith((".evidence/context/", ".evidence/decisions/")):
+            # REQ-CON-20: ungated here, but verify-range (the merge gate) requires every path outside the
+            # records to be claimed, so say so now rather than at the pull request
+            claims = _plan_claims(ctx)
+            if claims is None or not st.claim_matches(rel, claims):
+                return Decision(True, context=f"Note: {rel} is allowed here, but verify-range (the merge gate) requires "
+                                              "this path in the plan's \"Files claimed\". Add it to the plan before the "
+                                              "pull request, or leave the file alone.")
         return ALLOW
     return check_gated(ctx, rel, kind, detail)
 
@@ -245,6 +253,18 @@ def check_gated(ctx, rel, kind="write", detail=""):
                     f"{what}: change {key} is Tier 3, and its plan was approved by the same person who started the "
                     f"change ({approval.get('approver')}). Tier 3 needs a second person: another engineer approves "
                     "in their own session or terminal, or the plan is approved on GitHub.")
+    if tier >= 3 and pol.get("tier3_distinct_approver", True) and approval.get("method") == "github":
+        # REQ-CON-16: the GitHub route compares the approver's login with the creator's, from the org map
+        logins = st.creator_github_logins(pol, state.get("created_by"))
+        if not logins or str(approval.get("approver") or "").lower() in logins:
+            return deny("tier3-same-person",
+                        f"{what}: change {key} is Tier 3, and its GitHub approval "
+                        + (f"is by the person who started the change ({approval.get('approver')})."
+                           if logins else
+                           f"cannot be shown to come from a second person: the org policy's approval.github_identities "
+                           f"has no GitHub login for the change's creator ({state.get('created_by') or 'unknown'}).")
+                        + " Tier 3 needs a second person to approve. Owner action: list every Tier 3 change creator in "
+                          "approval.github_identities (git email -> GitHub login) in the org policy.")
     if tier >= 3 and pol.get("deny_tier3_auto_modes", True) and ctx.permission_mode in pol.get("tier3_denied_permission_modes", []):
         why = _tier3_gate_problem(ctx)
         if why:
@@ -299,6 +319,7 @@ def _github_slug(url):
 
 def _scoped(root, key):
     """[(scope, value)] for every setting of `key`, with its scope; [] when there is none."""
+    # REQ-CON-23: "" (git failed, or the key is unset) gives no URL, so _origin_repo answers None: fail closed
     out = st.run_git(["config", "--show-scope", "--get-all", key], root) or ""
     return [tuple(l.split("\t", 1)) for l in out.splitlines() if "\t" in l]
 
@@ -731,6 +752,11 @@ def _check_git(ctx, s, bodies=()):
                 return deny("git-config", f"Setting git config '{k}' can run arbitrary programs; a human sets it.")
     if sub == "push":
         targets, flags = cmdparse.git_push_targets(sargs, ctx.branch)
+        if not ctx.branch and (not targets or any(t in ("HEAD", "@") for t in targets)):
+            # REQ-CON-23: "" is git failing (or a detached HEAD), never "no branch to protect"
+            return deny("protected-push", "The engine could not read the current branch, so it cannot tell which "
+                                          "branch this push updates. Name the destination (`git push origin "
+                                          "feature/KEY-x`), or a human checks the repository.")
         bad = [t for t in targets if _protected(t, pol)]
         if bad:
             what = "all branches" if "*" in bad else ", ".join(bad)
@@ -795,9 +821,39 @@ _INDEX_CHANGING = {"add", "rm", "mv", "reset", "restore", "checkout", "switch", 
 _INDEX_ENV = ("GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
 
 
+# git commit's long options (git 2.46 `git commit -h`), with whether each needs a value. git accepts any
+# unique prefix of one (`--o` is --only), and `--no-X` for most; REQ-CON-22 resolves them as git does.
+_COMMIT_LONG = {
+    "ahead-behind": False, "all": False, "allow-empty": False, "allow-empty-message": False, "amend": False,
+    "author": True, "branch": False, "cleanup": True, "date": True, "dry-run": False, "edit": False, "file": True,
+    "fixup": True, "gpg-sign": False, "include": False, "interactive": False, "long": False, "message": True,
+    "no-post-rewrite": False, "no-verify": False, "null": False, "only": False, "patch": False,
+    "pathspec-file-nul": False, "pathspec-from-file": True, "porcelain": False, "post-rewrite": False, "quiet": False,
+    "reedit-message": True, "reset-author": False, "reuse-message": True, "short": False, "signoff": False,
+    "squash": True, "status": False, "template": True, "trailer": True, "untracked-files": False, "verbose": False,
+    "verify": False}
+_COMMIT_BYPASS_LONG = ("only", "include", "patch", "interactive", "pathspec-from-file")
+
+
+def _commit_long(name):
+    """git's resolution of `--name`: (option, negated) for an exact or unique-prefix match, or
+    (None, candidates) when it is ambiguous or unknown (git then refuses the command)."""
+    if name in _COMMIT_LONG:
+        return name, False
+    if name.startswith("no-") and name[3:] in _COMMIT_LONG:
+        return name[3:], True
+    hits = [o for o in _COMMIT_LONG if o.startswith(name)]
+    neg = [o for o in _COMMIT_LONG if name.startswith("no-") and o.startswith(name[3:])] if len(name) > 3 else []
+    if len(hits) + len(neg) == 1:
+        return (hits[0], False) if hits else (neg[0], True)
+    return None, hits + neg
+
+
 def _commit_bypass(sargs):
     """The `git commit` forms that commit something other than the index the gate checked:
-    a pathspec, --only, --include, --patch, --interactive, --pathspec-from-file (REQ-IMH-10)."""
+    a pathspec, --only, --include, --patch, --interactive, --pathspec-from-file (REQ-IMH-10), in
+    any abbreviation git accepts (REQ-CON-22). An ambiguous abbreviation that could be one of them
+    is reported too (git refuses it, so nothing is lost by failing closed)."""
     found, i = [], 0
     while i < len(sargs):
         a = sargs[i]
@@ -805,21 +861,24 @@ def _commit_bypass(sargs):
             if sargs[i + 1:]:
                 found.append("a pathspec")
             break
+        if a.startswith("--") and len(a) > 2:
+            name, eq, _val = a[2:].partition("=")
+            opt, info = _commit_long(name)
+            if opt is None:
+                found.extend(f"--{o}" for o in info if o in _COMMIT_BYPASS_LONG)
+                i += 1
+                continue
+            if not info and opt in _COMMIT_BYPASS_LONG:
+                found.append(f"--{opt}")
+            if not info and _COMMIT_LONG[opt] and not eq:
+                i += 2  # its value is the next argument
+                continue
+            i += 1
+            continue
         if a in _COMMIT_VALUE_OPTS:
-            if a == "--pathspec-from-file":
-                found.append(a)
             i += 2
             continue
-        name = a.split("=", 1)[0]
-        # git accepts any unambiguous prefix of a long option (--patc, --pathspec-from-f=…)
-        long_hit = next((o for o in ("--only", "--include", "--patch", "--interactive", "--pathspec-from-file")
-                         if name.startswith("--") and len(name) > 3 and o.startswith(name)), None)
-        if long_hit:
-            found.append(long_hit)
-            if long_hit == "--pathspec-from-file" and "=" not in a:
-                i += 2
-                continue
-        elif re.fullmatch(r"-[A-Za-z]+", a):
+        if re.fullmatch(r"-[A-Za-z]+", a):
             letters = a[1:]
             # value-taking letters end the cluster: -am 'msg', -uno, -Skeyid
             for n, ch in enumerate(letters):
@@ -849,7 +908,7 @@ def _check_commit(ctx, sargs, bodies=()):
     msgs = [heredoc if ("$(" in m or "HEREDOC" in m) and heredoc else m for m in msgs]
     if not msgs:
         if "amend" in flags and "no-edit" in flags:
-            head = st.git(["log", "-1", "--format=%B"], ctx.root) or ""
+            head = st.git(["log", "-1", "--format=%B"], ctx.root) or ""  # REQ-CON-23: "" has no key: denied below
             msgs = [head]
         elif "reuse" in flags:
             msgs = [""]

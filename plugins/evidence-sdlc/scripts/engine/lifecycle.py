@@ -326,6 +326,10 @@ def cmd_change(args):
             if s["approval"] != "valid":
                 sys.exit("Approve the fix plan first (a human runs `evidence approve`).")
             head = (st.git(["rev-parse", "HEAD"], root) or "").strip()
+            if not re.fullmatch(r"[0-9a-f]{40}(?:[0-9a-f]{24})?", head):
+                # REQ-CON-23: an empty fix_base would switch test-weakening protection off
+                sys.exit("git could not read HEAD, so the fix base (the tests this fix may not weaken) cannot be "
+                         "recorded. Commit first, or repair the repository, then advance again.")
             state["fix_base"] = head
             print(f"Fix base recorded at {head[:12]}: tests that exist at this commit are now protected from edits.")
         if target == "verified":
@@ -503,11 +507,25 @@ def _approve_github(root, policy, key, plan, sha, pr):
         sys.exit(f"The plan in PR {pr} ({remote_sha[:12]}) differs from the local plan ({sha[:12]}). Push the plan first.")
     who = None
     author = ((data.get("author") or {}).get("login") or "").lower()
+    # REQ-CON-16: nor may it be the person who started the change. Their GitHub login comes from the org
+    # policy's approval.github_identities; for Tier 3, with no login known, no GitHub approval is accepted.
+    state = st.load_state(root, key) or {}
+    creators = st.creator_github_logins(policy, state.get("created_by"))
+    tier = int(state.get("tier") or 1)
+    if not creators and tier >= 3 and policy.get("tier3_distinct_approver", True):
+        sys.exit(f"Change {key} is Tier 3, and the org policy's approval.github_identities has no GitHub login for the "
+                 f"person who started it ({state.get('created_by') or 'unknown'}), so a GitHub approval cannot be shown "
+                 "to come from a second person. Owner action: add that git email and GitHub login to "
+                 "approval.github_identities in the org policy, then record the approval again.")
+    skipped_creator = []
 
     def eligible(login):
         # The approver must be someone other than whoever opened the PR: with a
         # locally-authenticated gh, the agent acts as the PR author, so a review
         # from that same account proves nothing about a second human.
+        if login and login.lower() in creators:
+            skipped_creator.append(login)
+            return False
         return login and login.lower() != author and (not allowed or login.lower() in allowed)
 
     for r in data.get("reviews", []):
@@ -520,8 +538,16 @@ def _approve_github(root, policy, key, plan, sha, pr):
             who = login
     if not who:
         sys.exit(f"No approving review or `/approve-plan {sha[:12]}` comment on PR {pr}"
-                 + (f" from an allowed approver ({', '.join(allowed)})." if allowed else "."))
-    write_approval(root, key, plan, who, "github", {"pr": data.get("url"), "pr_number": int(pr), "head": data.get("headRefOid")})
+                 + (f" from an allowed approver ({', '.join(allowed)})" if allowed else "")
+                 + (f" (the approval by {skipped_creator[0]} does not count: they created change {key})"
+                    if skipped_creator else "") + ".")
+    extra = {"pr": data.get("url"), "pr_number": int(pr), "head": data.get("headRefOid")}
+    if creators:
+        extra["creator_login"] = creators[0] if len(creators) == 1 else creators
+    else:
+        print(f"Note: the org policy's approval.github_identities has no GitHub login for the person who started {key} "
+              f"({state.get('created_by') or 'unknown'}), so this approval was not compared with the change's creator.")
+    write_approval(root, key, plan, who, "github", extra)
     print(f"Recorded GitHub approval of {key} by {who} (plan {sha[:12]}).")
     return 0
 
@@ -781,10 +807,15 @@ def _codeowners(root, base):
 def _owners_of(rules, path):
     got = None
     for pat, owners in rules:  # the last matching rule wins
-        # as on GitHub, a pattern without wildcards also owns everything under it (`/apps/foo`, `docs`)
-        if st.glob_to_regex(pat).match(path) or (
-                not any(ch in pat for ch in "*?[") and st.glob_to_regex(pat.rstrip("/") + "/**").match(path)):
-            got = owners
+        # as on GitHub, a pattern with no `/` but a trailing one matches at any depth (`docs`, `*.js`);
+        # a leading or middle `/` anchors it to the root (REQ-CON-21)
+        forms = [pat] if "/" in pat.rstrip("/") else [pat, "**/" + pat]
+        for f in forms:
+            # a pattern without wildcards also owns everything under it (`/apps/foo`, `docs`)
+            if st.glob_to_regex(f).match(path) or (
+                    not any(ch in pat for ch in "*?[") and st.glob_to_regex(f.rstrip("/") + "/**").match(path)):
+                got = owners
+                break
     return got
 
 
@@ -820,12 +851,18 @@ def _commit_changes(root, c, parents, combined):
     return None if out is None else _name_status(out)
 
 
+_AUDIT_LOG = re.compile(r"^\.evidence/audit/[^/]+\.jsonl$")
+
+
 def _check_paths(entries, claims, where, F):
-    """Rule 2: every added, modified, deleted, type-changed or renamed path outside .evidence/ is claimed."""
+    """Rule 2: every added, modified, deleted, type-changed or renamed path is claimed, except the
+    records rules 4-5 judge: a change or violations record (_RECORD) and an audit log directly
+    under .evidence/audit/ (REQ-CON-19). Any other file there, and the rest of .evidence/ (policy,
+    allow-list, context, decisions), is claimed like source."""
     for status, paths in entries:
         for p in paths:
-            if p.startswith((".evidence/audit/", ".evidence/changes/", ".evidence/violations/")):
-                continue  # judged by rules 4-5; the rest of .evidence/ (policy, allow-list, context) is claimed like source
+            if _RECORD.match(p) or _AUDIT_LOG.match(p):
+                continue
             if not st.claim_matches(p, claims):
                 F.fail(2, f"{p} ({status[:1]} in {where}) is outside the approved plan's claims")
 
@@ -881,6 +918,15 @@ def _scan_blobs(root, commits, pol, base, F):
                     F.fail(3, f"possible secret in {path} added in {c[:12]}: {hit['rule']} (fingerprint {hit['fingerprint']})")
 
 
+_SHARED_LOG = re.compile(r"^(approval-.+|clear-violations|attestations)\.jsonl$")
+
+
+def _ordered_subseq(old, new):
+    """True when every line of `old` appears in `new`, in the same order (REQ-CON-17)."""
+    it = iter(new.splitlines())
+    return all(any(line == m for m in it) for line in old.splitlines())
+
+
 def _check_audit(root, base, head, commits, sessions, F):
     """Rule 4: named sessions' logs exist at the head and verify; logs that existed where the branch
     left the base are neither deleted nor type-changed; every log in every commit is a byte-prefix
@@ -910,9 +956,11 @@ def _check_audit(root, base, head, commits, sessions, F):
         # every line of the log where the branch left the base is still in the head's. (Not a
         # byte-prefix: after an update merge the merge-base holds the base's appends too.)
         old, new = _blob_at(root, mb, p, text=False), _blob_at(root, head, p, text=False)
-        if old is None or new is None or not set(old.splitlines()) <= set(new.splitlines()):
+        if old is None or new is None or not _ordered_subseq(old, new):
             F.fail(4, f"{p} at the head has lost lines of the log where the branch left the base (truncated or rewritten)")
     for c, *parents in commits:
+        merge = len(parents) > 1
+        touched = set()
         for n, p in enumerate(parents):
             out = _vg(root, ["diff", "--no-renames", "--name-only", "-z", p, c, "--", ".evidence/audit"])
             if out is None:
@@ -925,16 +973,44 @@ def _check_audit(root, base, head, commits, sessions, F):
                     continue
                 if mode == "":
                     continue  # a new log; named sessions' logs are verified above
+                touched.add(path)
                 old = _blob_at(root, p, path, text=False)
                 new = _blob_at(root, c, path, text=False)
                 same_type = new is not None and _mode_at(root, c, path) == _mode_at(root, p, path)
-                if n == 0:
+                if n == 0 and not (merge and _SHARED_LOG.match(os.path.basename(path))):
                     ok = same_type and new.startswith(old)
                 else:
-                    ok = same_type and set(old.splitlines()) <= set(new.splitlines())
+                    # a merge's other parents, and every parent of a merged shared log: the parent's lines are all
+                    # still there, in their order (REQ-CON-17, 18)
+                    ok = same_type and _ordered_subseq(old, new)
                 if not ok:
                     F.fail(4, f"{path} in {c[:12]} is not an append-only extension of its parent's version "
-                              "(truncated, rewritten, replaced or deleted)")
+                              "(truncated, rewritten, reordered, replaced or deleted)")
+        if merge:
+            _check_merged_logs(root, c, parents, sorted(touched), F)
+
+
+def _check_merged_logs(root, c, parents, paths, F):
+    """REQ-CON-18: in a merge, a shared log (approval-*, clear-violations, attestations) may hold both
+    sides' lines in any interleaving, but every line must come from a parent. Any other log is one
+    session's hash chain: if both sides appended to it, the merged version equals neither parent's,
+    its chain forks, and it is unsupported (ADR-0004 rev. 3): the branch is rebased instead."""
+    for path in paths:
+        new = _blob_at(root, c, path, text=False)
+        versions = [v for v in (_blob_at(root, p, path, text=False) for p in parents) if v is not None]
+        if new is None or not versions:
+            continue
+        if _SHARED_LOG.match(os.path.basename(path)):
+            known = set()
+            for v in versions:
+                known.update(v.splitlines())
+            extra = [l for l in new.splitlines() if l not in known]
+            if extra:
+                F.fail(4, f"{path} in merge {c[:12]} has {len(extra)} line(s) that neither parent has")
+        elif len(versions) >= 2 and new not in versions:
+            session = os.path.basename(path)[:-len(".jsonl")] if path.endswith(".jsonl") else path
+            F.fail(4, f"{path} in merge {c[:12]}: session {session}'s log was appended on both sides of the merge, "
+                      "so its hash chain forks. Rebase the branch onto the base instead of merging.")
 
 
 def _check_records(root, base, head, commits, key, own_branch_file, F):
@@ -1244,8 +1320,11 @@ def _verify_push(root, F):
     sessions = set()
     for c, *parents in commits:
         combined = len(parents) > 1
-        changes = _commit_changes(root, c, parents, combined) or []
-        msg = _vg(root, ["log", "-1", "--format=%B", c]) or ""
+        changes = _commit_changes(root, c, parents, combined)
+        if changes is None:  # REQ-CON-23: a failed listing is not "no paths"
+            F.fail(2, f"git could not list the paths of {c[:12]}")
+            continue
+        msg = _vg(root, ["log", "-1", "--format=%B", c]) or ""  # "" finds no key: the commit fails rule 2
         sessions.update(_AGENT_TRAILER.findall(msg))
         keys = list(dict.fromkeys(st.find_keys(msg, pol)))
         appr = _json_at(root, c, f".evidence/changes/{keys[0]}/approval.json") if len(keys) == 1 else None
