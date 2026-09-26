@@ -2400,7 +2400,9 @@ def suite_pilot62():
         b["protection"]["required_status_checks"]["checks"] = [{"context": ctx_name, "app_id": app}]
         return b
 
-    def fake_gh(d, branch, rules_body=None, fail=False, raw_branch=None):
+    GATE_TOKEN = "tok-fixture-62"
+
+    def fake_gh(d, branch, rules_body=None, fail=False, raw_branch=None, token=GATE_TOKEN):
         os.makedirs(d, exist_ok=True)
         json.dump(repo_json, open(os.path.join(d, "repo.json"), "w"))
         if raw_branch is not None:
@@ -2412,8 +2414,10 @@ def suite_pilot62():
         open(gh, "w").write("#!/bin/sh\n"
                             f"echo \"$@\" >> {d}/gh.log\n"
                             f"env > {d}/gh.env\n"
+                            f"echo \"$1 $GH_CONFIG_DIR\" >> {d}/gh.cfg\n"
                             + ("echo 'HTTP 502' >&2; exit 1\n" if fail else "")
                             + "case \"$*\" in\n"
+                            f"  'auth token --hostname github.com') printf '%s\\n' '{token}';;\n"
                             f"  *rules/branches/*) cat {d}/rules.json;;\n"
                             f"  *branches/*) cat {d}/branch.json;;\n"
                             f"  *repos/o/r*) cat {d}/repo.json;;\n"
@@ -2554,17 +2558,65 @@ def suite_pilot62():
           res[0] is True and "GH_HOST=github.com" in genv and "GITHUB_API_URL" not in genv
           and "GH_ENTERPRISE_TOKEN" not in genv, (res, genv[:300]))
     shutil.rmtree(root)
-    for label, fname, text in (("an http_unix_socket in the gh config", "config.yml", "http_unix_socket: /tmp/evil.sock\n"),
-                               ("a non-github.com host in gh hosts.yml", "hosts.yml",
-                                "github.com:\n    user: a\nghe.evil.example:\n    user: b\n")):
+    # structural fix 1: the user's gh configuration is never read by the gate's `gh api` calls
+    def gh_cfgs(d):
+        p = os.path.join(d, "gh.cfg")
+        return [tuple(l.split(" ", 1)) for l in open(p).read().splitlines()] if os.path.isfile(p) else []
+
+    def user_cfg_ignored(label, files, env_of=None):
         root = gate_root()
         gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
         cfg = os.path.join(root, "ghcfg")
         os.makedirs(cfg)
-        open(os.path.join(cfg, fname), "w").write(text)
-        res = gate(root, gh, env={"GH_CONFIG_DIR": cfg})
-        check(f"REQ-LLA-09 {label} does not confirm, and gh is never run",
-              res[0] is False and gh_calls(os.path.join(root, "ghd")) == [], (res, gh_calls(os.path.join(root, "ghd"))))
+        for fname, text in files.items():
+            open(os.path.join(cfg, fname), "w").write(text)
+        env = env_of(cfg) if env_of else {"GH_CONFIG_DIR": cfg}
+        res = gate(root, gh, env=env)
+        cfgs = gh_cfgs(os.path.join(root, "ghd"))
+        api_dirs = [c for sub, c in cfgs if sub == "api"]
+        tmp = os.path.realpath(tempfile.gettempdir())
+        ok = (res[0] is True and api_dirs and all(
+            os.path.realpath(os.path.dirname(c)) == tmp and os.path.basename(c).startswith("evidence-gh-cfg-")
+            and not os.path.exists(c) for c in api_dirs)
+            and [sub for sub, _ in cfgs][:1] == ["auth"] and cfgs[0][1] == env["GH_CONFIG_DIR"])
+        check(f"REQ-LLA-09 {label} is ignored: gate detection reaches gh, every api call with an empty engine "
+              "config directory (removed afterwards)", ok, (res, cfgs))
+        shutil.rmtree(root)
+    user_cfg_ignored("an http_unix_socket in the user's gh config.yml",
+                     {"config.yml": 'version: "1"\n"\x68ttp_unix_socket": /nonexistent.sock\n'})
+    user_cfg_ignored("a non-github.com host in the user's gh hosts.yml",
+                     {"hosts.yml": "github.com:\n    user: a\nghe.evil.example:\n    user: b\n"})
+    home_b = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-home-b-"))
+
+    def linked(cfg):
+        os.symlink(cfg, os.path.join(home_b, "ghlink"))
+        return {"HOME": home_b, "GH_CONFIG_DIR": os.path.join(home_b, "ghlink")}
+    user_cfg_ignored("a GH_CONFIG_DIR that is a symlink leading outside HOME",
+                     {"config.yml": "http_unix_socket: /nonexistent.sock\n"}, env_of=linked)
+    shutil.rmtree(home_b)
+    root = gate_root()
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    res = gate(root, gh)
+    genv = open(os.path.join(root, "ghd", "gh.env")).read()
+    cache = os.path.join(tempfile.gettempdir(), ep._ci_gate_cache_rel(root))
+    ctext = open(cache).read() if os.path.isfile(cache) else ""
+    check("REQ-LLA-09 the token from `gh auth token` reaches the api call only in its environment, never the cache "
+          "or the audit log",
+          res[0] is True and f"GH_TOKEN={GATE_TOKEN}" in genv and ctext and GATE_TOKEN not in ctext
+          and GATE_TOKEN not in json.dumps(res) and not any(GATE_TOKEN in json.dumps(e) for e in events(root)),
+          (res, genv[:200]))
+    if os.path.isfile(cache):
+        os.remove(cache)
+    shutil.rmtree(root)
+    for label, tok in (("an empty token", ""), ("no token (gh auth token fails)", None)):
+        root = gate_root()
+        gh = fake_gh(os.path.join(root, "ghd"), branch=classic, token=tok if tok is not None else "")
+        if tok is None:
+            open(gh, "w").write(open(gh).read().replace("'auth token --hostname github.com') printf", "'x') printf"))
+        res = gate(root, gh)
+        check(f"REQ-LLA-09 {label} does not confirm, and no api call is made",
+              res[0] is False and "token" in res[1] and not any(c.startswith("api") for c in gh_calls(os.path.join(root, "ghd"))),
+              (res, gh_calls(os.path.join(root, "ghd"))))
         shutil.rmtree(root)
 
     # re-review H-A: origin is read from the repository's own config; global spoofs and push rewrites refuse
@@ -2605,42 +2657,6 @@ def suite_pilot62():
     t, i = bash("git config --get remote.origin.url")
     case("REQ-LLA-09 control: reading remote.origin.url is allowed", rg, t, i, "allow")
     shutil.rmtree(rg)
-    # re-review H-B: any mention of http_unix_socket refuses; a config directory linked out of HOME refuses
-    for label, text in (("a double-quoted key", '"http_unix_socket": /tmp/evil.sock\n'),
-                        ("a single-quoted key with a spaced colon", "'http_unix_socket' : /tmp/evil.sock\n"),
-                        ("flow style", "{http_unix_socket: /tmp/evil.sock}\n"),
-                        ("a mention inside a comment", "# http_unix_socket: /tmp/evil.sock\ngit_protocol: https\n"),
-                        ("upper case", "HTTP_UNIX_SOCKET: /tmp/evil.sock\n")):
-        root = gate_root()
-        gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
-        cfg = os.path.join(root, "ghcfg")
-        os.makedirs(cfg)
-        open(os.path.join(cfg, "config.yml"), "w").write(text)
-        res = gate(root, gh, env={"GH_CONFIG_DIR": cfg})
-        check(f"REQ-LLA-09 http_unix_socket written as {label} does not confirm, and gh is never run",
-              res[0] is False and "http_unix_socket" in res[1] and gh_calls(os.path.join(root, "ghd")) == [],
-              (res, gh_calls(os.path.join(root, "ghd"))))
-        shutil.rmtree(root)
-    root = gate_root()
-    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
-    cfg = os.path.join(root, "ghcfg")
-    os.makedirs(cfg)
-    open(os.path.join(cfg, "hosts.yml"), "w").write('{"github.com": {user: a}, "ghe.evil.example": {user: b}}\n')
-    res = gate(root, gh, env={"GH_CONFIG_DIR": cfg})
-    check("REQ-LLA-09 a non-github.com host in flow-style hosts.yml does not confirm", res[0] is False, res)
-    shutil.rmtree(root)
-    root = gate_root()  # a fresh root: the failure above is cached for 60 s for the first one
-    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
-    cfg = os.path.join(root, "ghcfg")
-    os.makedirs(cfg)
-    open(os.path.join(cfg, "hosts.yml"), "w").write("github.com:\n    user: a\n")
-    home_b = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-home-b-"))
-    os.symlink(cfg, os.path.join(home_b, "ghlink"))
-    res = gate(root, gh, env={"HOME": home_b, "GH_CONFIG_DIR": os.path.join(home_b, "ghlink")})
-    check("REQ-LLA-09 a GH_CONFIG_DIR that is a symlink leading outside HOME does not confirm",
-          res[0] is False and "symlink" in res[1], res)
-    shutil.rmtree(home_b)
-    shutil.rmtree(root)
 
     # ---------------- REQ-LLA-08: Tier 3 auto modes follow the confirmed gate
     ghdir = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-gh-"))

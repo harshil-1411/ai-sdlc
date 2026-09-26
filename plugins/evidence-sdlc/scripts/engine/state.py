@@ -71,6 +71,19 @@ def _gh_env():
     return env
 
 
+def _gh_gate_env(config_dir, token):
+    """The environment for a server-gate `gh api` call (PILOT-62 structural fix 1): every GH_* and
+    GITHUB_* dropped, then GH_CONFIG_DIR set to the engine's fresh empty directory (so nothing in
+    the user's gh configuration, such as http_unix_socket or another host, applies), GH_TOKEN to
+    the token read with `gh auth token`, and GH_HOST to github.com."""
+    env = {k: v for k, v in _child_env().items() if not k.startswith(("GH_", "GITHUB_"))}
+    env.update({"GH_CONFIG_DIR": config_dir, "GH_TOKEN": token, "GH_HOST": "github.com"})
+    return env
+
+
+GH_AUTH_TOKEN_ARGS = ["auth", "token", "--hostname", "github.com"]
+
+
 def _git_argv(args):
     sub = args[:1]
     extra = []
@@ -160,13 +173,23 @@ def check_git_config(cwd, policy=None):
     return reason
 
 
-def run_gh(args, cwd, repo, timeout=60, exe=None):
+def run_gh(args, cwd, repo, timeout=60, exe=None, gate=None):
     """Run gh against the pinned repository only (never whatever `gh repo view` resolves),
-    without GIT_* or the key. Raises RuntimeError on refusal or failure."""
+    without GIT_* or the key. Raises RuntimeError on refusal or failure.
+    `gate` is (config_dir, token) for a server-gate `gh api` call: it runs with _gh_gate_env, so the
+    user's gh configuration is never read. GH_AUTH_TOKEN_ARGS (which makes no network call) is the
+    only command run with the user's configuration on the gate path."""
     if not repo or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise RuntimeError("no pinned GitHub repository (policy approval.github_repo, or $GITHUB_REPOSITORY in CI); "
                            "refusing to let gh pick one")
-    if args[:1] == ["api"]:
+    env = _gh_env()
+    if gate is not None:
+        if args[:1] != ["api"] or not gate[0] or not gate[1]:
+            raise RuntimeError("a server-gate gh call must be `gh api` with an engine config directory and a token")
+        env = _gh_gate_env(gate[0], gate[1])
+    if list(args) == GH_AUTH_TOKEN_ARGS and gate is None:
+        argv = list(args)
+    elif args[:1] == ["api"]:
         # gh api takes no --repo: the endpoint itself must name the pinned repository
         path = next((a for a in args[1:] if not a.startswith("-")), "")
         rel = path.lstrip("/")
@@ -176,7 +199,7 @@ def run_gh(args, cwd, repo, timeout=60, exe=None):
     else:
         argv = list(args) + ["--repo", repo]
     exe = exe or os.environ.get("EVIDENCE_GH", "gh")
-    r = subprocess.run([exe] + argv, cwd=cwd, env=_gh_env(), capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run([exe] + argv, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip() or f"gh {' '.join(argv)} failed")
     return r.stdout

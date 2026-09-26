@@ -309,38 +309,6 @@ def _origin_repo(root):
     return _github_slug(urls[0][1].strip())
 
 
-def _gh_config_problem():
-    """Why the gh configuration cannot be trusted for gate detection, or None (H2, re-review H-B).
-    Deliberately crude, so that no YAML spelling gets past it: any mention of http_unix_socket in
-    config.yml or hosts.yml (quoted, flow style, even a comment) refuses, as does any host-like
-    name in hosts.yml other than github.com, any read error, and a config directory (or
-    GH_CONFIG_DIR / XDG_CONFIG_HOME) that is a symlink leading outside $HOME."""
-    home = os.path.realpath(os.path.expanduser("~"))
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = os.environ.get("GH_CONFIG_DIR") or os.path.join(xdg or os.path.expanduser("~/.config"), "gh")
-    for d in filter(None, (os.environ.get("GH_CONFIG_DIR"), xdg, base)):
-        if os.path.islink(d) or os.path.realpath(d) != os.path.abspath(d):
-            real = os.path.realpath(d)
-            if real != home and not real.startswith(home + os.sep):
-                return f"the gh configuration directory {d} is a symlink leading outside the home directory"
-    for name in ("config.yml", "hosts.yml"):
-        p = os.path.join(base, name)
-        try:
-            text = open(p, "rb").read(1 << 20).decode("utf-8", "replace")
-        except FileNotFoundError:
-            continue
-        except OSError as e:
-            return f"the gh configuration {p} could not be read ({e.strerror})"
-        if "http_unix_socket" in text.lower():
-            return f"the gh configuration {p} mentions http_unix_socket, which could redirect the GitHub API"
-        if name == "hosts.yml":
-            names = {h.lower() for h in re.findall(r"[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}", text)}
-            other = sorted(h for h in names if h != "github.com")
-            if other:
-                return f"the gh configuration {p} names a host other than github.com ({other[0][:60]})"
-    return None
-
-
 def _dir_not_user_writable(d):
     try:
         return os.stat(d).st_uid != os.getuid() and not os.access(d, os.W_OK)
@@ -414,25 +382,51 @@ def _ci_gate_cache_write(ctx, bind, confirmed, why, evidence):
         pass
 
 
-def _ci_gate_fetch(ctx, bind):
-    """Read GitHub through the pinned gh: the default branch, then its classic protection and,
-    if that does not confirm, its rulesets. Returns (confirmed, why, evidence); fails closed."""
+def _gate_config_dir():
+    """A fresh, empty directory only this user can enter, for GH_CONFIG_DIR on the gate's `gh api`
+    calls (structural fix 1). mkdtemp creates it with mode 0700 and never follows an existing name;
+    it is checked again with lstat. None if it cannot be made safely."""
+    import shutil
+    import stat as _stat
+    import tempfile
+    try:
+        d = tempfile.mkdtemp(prefix="evidence-gh-cfg-")
+    except OSError:
+        return None
+    try:
+        info = os.lstat(d)
+        if _stat.S_ISDIR(info.st_mode) and info.st_uid == os.getuid() and _stat.S_IMODE(info.st_mode) == 0o700 \
+                and not os.listdir(d):
+            return d
+    except OSError:
+        pass
+    shutil.rmtree(d, ignore_errors=True)
+    return None
+
+
+def _gate_token(ctx, repo, gh, timeout):
+    """The github.com token from `<pinned gh> auth token` (no network call; the only gate command
+    run with the user's gh configuration and keyring), or None. It is passed only in the child
+    environment of the gate's `gh api` calls: never logged, cached or written to disk."""
+    try:
+        tok = st.run_gh(list(st.GH_AUTH_TOKEN_ARGS), ctx.root, repo, timeout=timeout, exe=gh).strip()
+    except Exception:
+        return None
+    return tok if tok and re.fullmatch(r"[\x21-\x7e]{1,4096}", tok) else None
+
+
+def _ci_gate_read(ctx, bind, gh, gate, deadline):
+    """_ci_gate_fetch's GitHub reads, every `gh api` call with the engine's empty config directory
+    and the token (`gate`), so the user's gh configuration is never read."""
     import time
     import urllib.parse
     repo, check, app = bind["repo"], bind["check"], bind["app_id"]
-    gh, why_gh = _gate_gh(ctx.policy)
-    if gh is None:
-        return False, why_gh, {}
-    why_cfg = _gh_config_problem()
-    if why_cfg:
-        return False, why_cfg, {}
-    deadline = time.monotonic() + CI_GATE_BUDGET_SECONDS
 
     def api(path):
         left = deadline - time.monotonic()
         if left <= 1:
             raise RuntimeError("the time allowed for reading GitHub ran out")
-        return json.loads(st.run_gh(["api", path], ctx.root, repo, timeout=min(10, left), exe=gh))
+        return json.loads(st.run_gh(["api", path], ctx.root, repo, timeout=min(10, left), exe=gh, gate=gate))
 
     def pinned(v):
         return isinstance(v, int) and not isinstance(v, bool) and v == app
@@ -482,6 +476,28 @@ def _ci_gate_fetch(ctx, bind):
         return False, "; ".join(why), ev
     except Exception as e:  # gh missing, failing, timing out, non-JSON: not confirmed, never an error
         return False, f"GitHub could not be read through gh ({type(e).__name__}: {str(e)[:160]})", {}
+
+
+def _ci_gate_fetch(ctx, bind):
+    """Read GitHub through the pinned gh: the default branch, then its classic protection and,
+    if that does not confirm, its rulesets. Returns (confirmed, why, evidence); fails closed."""
+    import shutil
+    import time
+    repo = bind["repo"]
+    gh, why_gh = _gate_gh(ctx.policy)
+    if gh is None:
+        return False, why_gh, {}
+    deadline = time.monotonic() + CI_GATE_BUDGET_SECONDS
+    token = _gate_token(ctx, repo, gh, 5)
+    if not token:
+        return False, "gh reported no github.com token (`gh auth token --hostname github.com`), so GitHub cannot be read", {}
+    cfg = _gate_config_dir()
+    if cfg is None:
+        return False, "the engine could not create an empty gh configuration directory for reading GitHub", {}
+    try:
+        return _ci_gate_read(ctx, bind, gh, (cfg, token), deadline)
+    finally:
+        shutil.rmtree(cfg, ignore_errors=True)
 
 
 TIER3_NEVER_GATE_MODES = ("bypassPermissions", "dontAsk")
