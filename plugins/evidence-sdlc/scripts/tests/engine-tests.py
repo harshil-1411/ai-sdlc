@@ -2448,7 +2448,8 @@ def suite_pilot62():
         if ci_gate is None:
             return (None, "no _ci_gate", {})
         pol = json.loads(json.dumps({k: v for k, v in pol0.items() if not k.startswith("_")}))
-        pol["approval"] = dict(pol.get("approval") or {}, github_repo=polx.pop("repo", "o/r"))
+        pol["approval"] = dict(pol.get("approval") or {}, github_repo=polx.pop("repo", "o/r"),
+                               github_repo_roots=polx.pop("roots", [os.path.realpath(root)]))
         if gh is not None:
             pol["ci_gate_gh_path"] = gh
         pol.update(polx)
@@ -2544,6 +2545,53 @@ def suite_pilot62():
     # M2: with ci_gate_require_enforce_admins, a ruleset alone cannot show admins are held to the check
     root, _ = scenario("with ci_gate_require_enforce_admins, a check required only by a ruleset does not confirm", False,
                        branch=unprotected, rules_body=rules, polx={"ci_gate_require_enforce_admins": True})
+    shutil.rmtree(root)
+    # structural fix 2: the checkout's real path must be in approval.github_repo_roots
+    for label, roots in (("a checkout not in approval.github_repo_roots", ["/nonexistent/checkout"]),
+                         ("an empty approval.github_repo_roots", []), ("no approval.github_repo_roots", None),
+                         ("a relative entry in approval.github_repo_roots", ["."])):
+        root = gate_root()
+        gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+        res = gate(root, gh, roots=roots)
+        check(f"REQ-LLA-09 {label} does not confirm, and gh is never run",
+              res[0] is False and "github_repo_roots" in res[1] and gh_calls(os.path.join(root, "ghd")) == [],
+              (res, gh_calls(os.path.join(root, "ghd"))))
+        shutil.rmtree(root)
+    root = gate_root()
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    lnk_parent = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-lnk-"))
+    lnk = os.path.join(lnk_parent, "checkout")
+    os.symlink(root, lnk)
+    res = gate(lnk, gh, roots=[root])
+    check("REQ-LLA-09 a checkout reached through a symlink resolves to its listed real path and confirms", res[0] is True, res)
+    res = gate(root, gh, roots=[lnk])
+    check("REQ-LLA-09 a symlinked entry in approval.github_repo_roots is not resolved (does not confirm)",
+          res[0] is False and "github_repo_roots" in res[1], res)
+    shutil.rmtree(lnk_parent)
+    shutil.rmtree(root)
+    for label, cfg in (("an include.path", "include.path cfg/extra"),
+                       ("an includeIf.*.path", "includeIf.gitdir:/.path cfg/extra"),
+                       ("a branch.*.pushRemote naming another remote", "branch.main.pushRemote upstream"),
+                       ("a remote.pushDefault naming another remote", "remote.pushDefault upstream")):
+        root = gate_root()
+        sh(f"git config {cfg}", root)
+        gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+        res = gate(root, gh)
+        check(f"REQ-LLA-09 {label} in git config does not confirm the gate", res[0] is False and "origin" in res[1], res)
+        shutil.rmtree(root)
+    home_c = os.path.realpath(tempfile.mkdtemp(prefix="evidence-p62-home-c-"))
+    open(os.path.join(home_c, ".gitconfig"), "w").write("[include]\n\tpath = /nonexistent/x\n")
+    root = gate_root()
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    res = gate(root, gh, env={"HOME": home_c})
+    check("REQ-LLA-09 an include.path at global scope does not confirm the gate", res[0] is False and "origin" in res[1], res)
+    shutil.rmtree(root)
+    shutil.rmtree(home_c)
+    root = gate_root()
+    sh("git config branch.main.pushRemote origin", root)
+    gh = fake_gh(os.path.join(root, "ghd"), branch=classic)
+    res = gate(root, gh)
+    check("REQ-LLA-09 control: a branch.*.pushRemote of origin still confirms", res[0] is True, res)
     shutil.rmtree(root)
     # H2: gh is pinned; a user-writable gh on PATH is never trusted
     root = gate_root()
@@ -2693,6 +2741,15 @@ def suite_pilot62():
     org8norepo = org("org8norepo", ci_gate_gh_path=gh_ok)
     E8 = dict(KEY, EVIDENCE_ORG_POLICY=org8)
     ORIGIN = "https://github.com/o/r.git"
+    _signed_repo = signed_repo
+
+    def signed_repo(*a, **kw):  # noqa: F811 - every org8 policy lists the new checkout in github_repo_roots
+        r = _signed_repo(*a, **kw)
+        for path in (org8, org8bad, org8off, org8norepo):
+            d = json.load(open(path))
+            d["approval"] = dict(d.get("approval") or {}, github_repo_roots=[os.path.realpath(r)])
+            json.dump(d, open(path, "w"))
+        return r
     r = signed_repo(tier=3, claims=("src/**",), origin=ORIGIN)
     for mode in ("auto", "acceptEdits"):
         got, reason = edit_src(r, env=E8, perm=mode, path="src/auth/login.py")
@@ -2733,6 +2790,39 @@ def suite_pilot62():
         check(f"REQ-LLA-08 a repository with {label} is denied Tier 3 auto mode although o/r's gate is confirmed",
               got == "deny" and "origin" in reason, reason)
         shutil.rmtree(r)
+    # structural fix 2: the checkout must be listed in the org policy's approval.github_repo_roots
+    r = signed_repo(tier=3, claims=("src/**",), origin=ORIGIN)
+    d = json.load(open(org8))
+    d["approval"]["github_repo_roots"] = ["/nonexistent/other-checkout"]
+    json.dump(d, open(org8, "w"))
+    got, reason = edit_src(r, env=E8, perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 a checkout not in approval.github_repo_roots is denied Tier 3 auto mode, naming the key",
+          got == "deny" and "github_repo_roots" in reason, reason)
+    d["approval"]["github_repo_roots"] = []
+    json.dump(d, open(org8, "w"))
+    got, reason = edit_src(r, env=E8, perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 an empty approval.github_repo_roots denies Tier 3 auto mode, naming the key",
+          got == "deny" and "github_repo_roots" in reason, reason)
+    shutil.rmtree(r)
+
+    def repo_roots_policy(roots):
+        return lambda r: open(os.path.join(r, ".evidence", "policy.json"), "w").write(
+            json.dumps({"approval": {"github_repo_roots": roots(r)}}))
+    r = signed_repo(tier=3, claims=("src/**",), origin=ORIGIN,
+                    extra=repo_roots_policy(lambda r: ["/nonexistent/other-checkout"]))
+    got, reason = edit_src(r, env=E8, perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 a repository policy cannot narrow away the org's approval.github_repo_roots (still allowed)",
+          got == "allow", reason)
+    d = json.load(open(org8))
+    d["approval"]["github_repo_roots"] = []
+    json.dump(d, open(org8, "w"))
+    shutil.rmtree(r)
+    r = _signed_repo(tier=3, claims=("src/**",), origin=ORIGIN,
+                     extra=repo_roots_policy(lambda r: [os.path.realpath(r)]))
+    got, reason = edit_src(r, env=E8, perm="auto", path="src/auth/login.py")
+    check("REQ-LLA-08 a repository policy cannot set approval.github_repo_roots when the org's is empty (denied)",
+          got == "deny" and "github_repo_roots" in reason, reason)
+    shutil.rmtree(r)
     shutil.rmtree(ghdir)
 
     # ---------------- REQ-LLA-10: creating a commit status or check run is check-forgery

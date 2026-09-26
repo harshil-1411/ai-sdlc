@@ -293,11 +293,32 @@ def _scoped(root, key):
     return [tuple(l.split("\t", 1)) for l in out.splitlines() if "\t" in l]
 
 
+def _config_redirects(root):
+    """True when git config at any scope could change which repository `origin` or a push means
+    (structural fix 2): an include.path or includeIf.* key (an included file the agent can write
+    reads as the including file's scope), or remote.pushDefault / branch.*.pushRemote naming
+    anything but origin. A git failure counts as True."""
+    out = st.run_git(["config", "--list", "-z", "--show-scope", "--includes"], root, text=False)
+    if out is None:
+        return True
+    for entry in out.decode("utf-8", "replace").split("\0"):
+        k, _, v = entry.partition("\n")
+        kl = k.lower()
+        if re.match(r"include(if)?\.", kl):
+            return True
+        if (kl == "remote.pushdefault" or (kl.startswith("branch.") and kl.endswith(".pushremote"))) and v != "origin":
+            return True
+    return False
+
+
 def _origin_repo(root):
     """owner/name of the repository's `origin` remote, read from the repository's own config only
     (H1, re-review H-A): exactly one local remote.origin.url on github.com; remote.origin.pushurl
     absent or equal to it; no remote.origin.url/pushurl at another scope (global, system,
-    worktree, command) and no url.*.insteadOf / pushInsteadOf rewrite anywhere. None otherwise."""
+    worktree, command), no url.*.insteadOf / pushInsteadOf rewrite anywhere, and no include or
+    push-remote redirection (_config_redirects). None otherwise."""
+    if _config_redirects(root):
+        return None
     urls, pushes = _scoped(root, "remote.origin.url"), _scoped(root, "remote.origin.pushurl")
     if any(sc != "local" for sc, _ in urls + pushes) or len(urls) != 1:
         return None
@@ -341,9 +362,24 @@ def _gate_gh(pol):
     return None, "no gh executable was found on PATH"
 
 
+def _gate_root_listed(pol, root):
+    """(listed, why): is realpath(root) one of the org policy's approval.github_repo_roots
+    (structural fix 2)? Entries must be absolute and already realpath'd; they are compared as
+    written, never resolved, so a link the agent could repoint cannot make one match. A repository
+    policy cannot set the list (the approval merge copies only mode, github_repo and approvers)."""
+    roots = (pol.get("approval") or {}).get("github_repo_roots")
+    if not isinstance(roots, list) or not roots:
+        return False, ("the org policy sets no approval.github_repo_roots, so no checkout is allowed to use the "
+                       "server gate")
+    real = os.path.realpath(root)
+    if any(isinstance(r, str) and os.path.isabs(r) and os.path.normpath(r) == real for r in roots):
+        return True, ""
+    return False, f"this checkout ({real}) is not in the org policy's approval.github_repo_roots"
+
+
 def _ci_gate_bind(ctx):
     pol = ctx.policy
-    return {"root": ctx.root, "repo": (pol.get("approval") or {}).get("github_repo") or "",
+    return {"root": os.path.realpath(ctx.root), "repo": (pol.get("approval") or {}).get("github_repo") or "",
             "origin": _origin_repo(ctx.root), "gh_path": pol.get("ci_gate_gh_path") or "",
             "check": pol.get("ci_gate_check", "verify-range"), "app_id": pol.get("ci_gate_app_id", CI_GATE_APP_ID),
             "enforce_admins": bool(pol.get("ci_gate_require_enforce_admins", False)),
@@ -522,7 +558,8 @@ def _tier3_gate_problem(ctx):
         return None
     return (f"Tier 3 in this mode needs the server gate confirmed on GitHub, and it is not: {why}. Owner action: make "
             f"`{pol.get('ci_gate_check', 'verify-range')}` a required status check on the default branch with its "
-            "source set to GitHub Actions, and set approval.github_repo in the org policy.")
+            "source set to GitHub Actions, and set approval.github_repo and approval.github_repo_roots (this "
+            "checkout's real path) in the org policy.")
 
 
 def _ci_gate(ctx):
@@ -532,6 +569,9 @@ def _ci_gate(ctx):
     bind = _ci_gate_bind(ctx)
     if not bind["repo"]:
         return False, "approval.github_repo is not set in the org policy, so the server gate cannot be read", {}
+    listed, why_root = _gate_root_listed(ctx.policy, ctx.root)
+    if not listed:
+        return False, why_root, {}
     if bind["origin"] != bind["repo"].lower():
         # the gate confirmed is the one on approval.github_repo; it governs only a repository pushing there (H1)
         return False, (f"this repository's origin remote ({bind['origin'] or 'none on github.com'}) is not "
