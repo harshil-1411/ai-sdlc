@@ -427,6 +427,42 @@ check("REQ-LLA-11 all five plugins, the marketplace and the engine are version 2
       len(vers) == 5 and set(vers.values()) == {"2.2.0"} and set(v for v in mvers if v) == {"2.2.0"}
       and _st.ENGINE_VERSION == "2.2.0", (vers, mvers, _st.ENGINE_VERSION))
 
+# ------------------------------------------------------------ PILOT-60
+rt = read("scripts", "ci", "run-tests.sh")
+m_out = re.search(r'^out="\$\{EVIDENCE_RESULTS_DIR:-([^\n]*)\}"\s*$', rt, re.M)
+check("REQ-USA-01 run-tests.sh reads EVIDENCE_RESULTS_DIR and its default is outside the working tree",
+      m_out and "$root" not in m_out.group(1) and "TMPDIR" in m_out.group(1) and "validation/results" not in rt
+      and re.search(r'rm -f "\$out"/\*\.xml "\$out"/\*\.log "\$out"/\*\.sig', rt)
+      and re.search(r"^echo .*\$out", rt, re.M), m_out.group(0) if m_out else rt[:300])
+rt_lines = [l for l in rt.splitlines() if l.strip() and not l.strip().startswith("#")]
+sc_at = next((i for i, l in enumerate(rt_lines) if "gaps --strict --self-check --only-results" in l), -1)
+_in_suite = '"gaps", ' + '"--strict"'
+check("REQ-USA-02 run-tests.sh ends with gaps --strict --self-check and the content suite has no in-suite self-check",
+      sc_at > max((i for i, l in enumerate(rt_lines) if l.startswith("run ")), default=10 ** 6)
+      and re.search(r'--results "\$out"', rt_lines[sc_at] if sc_at >= 0 else "")
+      and re.search(r'junit_from_tsv\.py" "self-check" "\$out/self-check\.xml"', rt)
+      and "REQ-V2C-09 this repository passes its own evidence gaps --strict (run-tests.sh final step)" in rt
+      and _in_suite not in read("tests", "content_acceptance_tests.py"), rt_lines[-6:])
+ci = read(".github", "workflows", "ci.yml")
+sg = ci.split("sign-and-gate:", 1)[1].split("\n  evals:", 1)[0] if "sign-and-gate:" in ci else ""
+chk = ci.split("  checks:", 1)[1].split("\n  sign-and-gate:", 1)[0] if "  checks:" in ci else ""
+check("REQ-USA-04 sign-and-gate signs and gates only runner.temp results",
+      re.search(r"EVIDENCE_RESULTS_DIR: \$\{\{ runner\.temp \}\}/results", chk)
+      and re.search(r"if: always\(\)\s*\n\s*with:\s*\n\s*name: validation-results\s*\n\s*path: \$\{\{ runner\.temp \}\}/results/", chk)
+      and re.search(r"path: \$\{\{ runner\.temp \}\}/results/", sg)
+      and 'results sign "$RUNNER_TEMP"/results/*.xml' in sg
+      and '--only-results --results "$RUNNER_TEMP/results"' in sg and "gaps --help | grep -q -- --only-results" in sg
+      and "validation/results" not in sg, sg[:400])
+gha = read("pipelines", "github-actions", "evidence-chain.yml")
+gl = read("pipelines", "gitlab", "evidence-chain.gitlab-ci.yml")
+ev = gha.split("\n  evidence:", 1)[1] if "\n  evidence:" in gha else ""
+check("REQ-USA-04 adopter templates sign only downloaded results; GitLab refuses tracked test-results",
+      re.search(r"path: \$\{\{ runner\.temp \}\}/test-results/", ev)
+      and 'results sign "$RUNNER_TEMP"/test-results/*.xml' in ev
+      and '--only-results --results "$RUNNER_TEMP/test-results"' in ev and "sign test-results/" not in ev
+      and re.search(r"git ls-files[^\n]*test-results", gl) and "--only-results --results test-results" in gl,
+      (ev[:300], gl[-300:]))
+
 fails = sum(1 for _, ok, _ in res if not ok)
 print(f"\n{len(res) - fails} passed, {fails} failed")
 if os.environ.get("JUNIT_OUT"):

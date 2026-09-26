@@ -602,6 +602,169 @@ def verify_range_tests():
     shutil.rmtree(d)
 
 
+FIX60 = os.path.join(HERE, "fixtures", "pilot60")
+SPEC60 = "intent/2026-01-01-x/spec.md"
+
+
+def _trace():
+    """The traceability CLI module, for direct checks of the adapter reader and graph."""
+    sys.path.insert(0, os.path.join(HERE, "..", "cli"))
+    import evidence_trace
+    return evidence_trace
+
+
+def _junit(path, names):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="fresh" tests="%d" failures="0">\n' % len(names))
+        for n in names:
+            f.write(f'  <testcase classname="fresh" name="{n} works"></testcase>\n')
+        f.write("</testsuite>\n")
+
+
+def gaps_repo(adapter_extra="", committed=True, plans=(), specs=((SPEC60, "spec.md"),)):
+    """A fixture repository for `evidence gaps`: the commented adapter, a spec, one test per
+    requirement and (optionally) a committed passing result under the adapter's location."""
+    d = os.path.realpath(tempfile.mkdtemp(prefix="evidence-gaps-"))
+    os.makedirs(os.path.join(d, ".evidence"))
+    shutil.copy(os.path.join(FIX60, "adapter-comments.yml"), os.path.join(d, ".evidence", "adapter.yml"))
+    if adapter_extra:
+        open(os.path.join(d, ".evidence", "adapter.yml"), "a").write(adapter_extra)
+    for rel, src in specs:
+        os.makedirs(os.path.join(d, os.path.dirname(rel)), exist_ok=True)
+        shutil.copy(os.path.join(FIX60, src), os.path.join(d, rel))
+    for rel, src in plans:
+        os.makedirs(os.path.join(d, os.path.dirname(rel)), exist_ok=True)
+        if src.startswith("#"):
+            open(os.path.join(d, rel), "w").write(src)
+        else:
+            shutil.copy(os.path.join(FIX60, src), os.path.join(d, rel))
+    os.makedirs(os.path.join(d, "tests"))
+    with open(os.path.join(d, "tests", "test_x.sh"), "w") as f:
+        for rid in ("REQ-X-01", "REQ-X-02", "REQ-V2C-09", "REQ-Y-01"):
+            f.write(f'check_ok "{rid} works"\n')
+    if committed:
+        os.makedirs(os.path.join(d, "validation", "results"))
+        shutil.copy(os.path.join(FIX60, "pass.xml"), os.path.join(d, "validation", "results", "pass.xml"))
+    subprocess.run("git init -q -b main && git add -A && git commit -q -m 'ABC-1: fixture'", shell=True, cwd=d,
+                   env=ENV, check=True)
+    return d
+
+
+def gaps_tests():
+    """PILOT-60: `evidence gaps --self-check` / `--only-results` (REQ-USA-02, 03), YAML comments in the
+    adapter and eval front matter (REQ-USA-05), and plan rows that repeat their spec (REQ-USA-06)."""
+    et = _trace()
+    from pathlib import Path
+    # ---- REQ-USA-02: --self-check exempts only the hard-coded REQ-V2C-09
+    d = gaps_repo(committed=False)
+    fresh = d + "-fresh"
+    _junit(os.path.join(fresh, "r.xml"), ["REQ-X-01", "REQ-X-02"])
+    r = run(["gaps", "--strict", "--self-check", "--only-results", "--results", fresh], d)
+    check("REQ-USA-02 gaps --strict --self-check passes when only REQ-V2C-09 is unproven, and says so",
+          r.returncode == 0 and "self-check: REQ-V2C-09" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
+    r = run(["gaps", "--strict", "--only-results", "--results", fresh], d)
+    check("REQ-USA-02 without --self-check the unproven REQ-V2C-09 still blocks",
+          r.returncode == 1 and "REQ-V2C-09" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
+    _junit(os.path.join(fresh, "r.xml"), ["REQ-X-01"])
+    r = run(["gaps", "--strict", "--self-check", "--only-results", "--results", fresh], d)
+    check("REQ-USA-02 --self-check does not exempt another unproven requirement (REQ-X-02 blocks)",
+          r.returncode == 1 and "REQ-X-02" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
+    shutil.rmtree(d)
+    shutil.rmtree(fresh)
+    d = gaps_repo(adapter_extra="self_check_requirement: REQ-X-02\n", committed=False)
+    fresh = d + "-fresh"
+    _junit(os.path.join(fresh, "r.xml"), ["REQ-X-01", "REQ-V2C-09"])
+    r = run(["gaps", "--strict", "--self-check", "--only-results", "--results", fresh], d)
+    check("REQ-USA-02 an adapter self_check_requirement key cannot exempt REQ-X-02",
+          r.returncode == 1 and "REQ-X-02" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
+    shutil.rmtree(d)
+    shutil.rmtree(fresh)
+
+    # ---- REQ-USA-03: --only-results ignores the adapter's committed results
+    d = gaps_repo(committed=True)
+    fresh = d + "-fresh"
+    os.makedirs(fresh)
+    r = run(["gaps", "--strict", "--only-results", "--results", fresh], d)
+    check("REQ-USA-03 gaps --only-results ignores a committed passing result under test_results_location",
+          r.returncode == 1 and "REQ-X-01" in r.stdout, r.stdout[-600:] + r.stderr[-300:])
+    r = run(["gaps", "--strict", "--results", fresh], d)
+    check("REQ-USA-03 without --only-results the committed result still counts (2.1.0 behaviour)",
+          r.returncode == 0, r.stdout[-600:] + r.stderr[-300:])
+    r = run(["gaps", "--only-results"], d)
+    check("REQ-USA-03 gaps --only-results without --results exits 2 with a message",
+          r.returncode == 2 and "--results" in (r.stdout + r.stderr), r.stdout[-300:] + r.stderr[-300:])
+    shutil.rmtree(fresh)
+
+    # ---- REQ-USA-05: inline comments are stripped, quoted or unspaced # is kept
+    a, _ = et.load_adapter(Path(d))
+    check("REQ-USA-05 a commented `- glob   # comment` list item is the bare glob",
+          a.get("spec_glob") == ["intent/*/spec.md", "plan/*.md"], a.get("spec_glob"))
+    check("REQ-USA-05 a quoted value followed by a comment is unquoted and uncommented",
+          a.get("tracker_pattern") == "[A-Z]+-[0-9]+" and a.get("requirement_pattern") == "REQ-[A-Za-z0-9]+-[0-9]+",
+          (a.get("tracker_pattern"), a.get("requirement_pattern")))
+    check("REQ-USA-05 an inline list followed by a comment is a list",
+          a.get("test_results_location") == ["validation/results"] and a.get("test_dir_segments") == ["tests"],
+          (a.get("test_results_location"), a.get("test_dir_segments")))
+    check("REQ-USA-05 negative: a # inside quotes, or with no space before it, is part of the value",
+          a.get("hash_quoted") == "a # not a comment" and a.get("hash_unspaced") == "a#b",
+          (a.get("hash_quoted"), a.get("hash_unspaced")))
+    check("REQ-USA-05 a nested artifact_chain.plan_glob inline list is read",
+          (a.get("artifact_chain") or {}).get("plan_glob") == ["intent/*/plan.md", "plan/*.md"], a.get("artifact_chain"))
+    r = run(["gaps"], d)
+    check("REQ-USA-05 the commented spec glob finds the spec's requirements",
+          "3 requirements from 1 spec file" in r.stdout, r.stdout[:400])
+    shutil.rmtree(d)
+    rx = __import__("re").compile(r"REQ-[A-Za-z0-9]+-[0-9]+")
+    covers = et.find_eval_covers("---\nname: x\ncovers: [REQ-X-01]  # was REQ-X-09\n---\nbody\n", rx)
+    check("REQ-USA-05 negative: an eval `covers:` comment is not read as a covered ID", covers == ["REQ-X-01"], covers)
+    tmpd = os.path.realpath(tempfile.mkdtemp(prefix="evidence-adapter-"))
+    os.makedirs(os.path.join(tmpd, ".evidence"))
+    open(os.path.join(tmpd, ".evidence", "adapter.yml"), "w").write("requirement_pattern: 'REQ-#-[0-9]+'\n")
+    a2, _ = et.load_adapter(Path(tmpd))
+    check("REQ-USA-05 negative: a quoted pattern containing # keeps it", a2.get("requirement_pattern") == "REQ-#-[0-9]+",
+          a2.get("requirement_pattern"))
+    shutil.rmtree(tmpd)
+
+    # ---- REQ-USA-06: plan rows that repeat their From: spec are references
+    def dup(d):
+        g = et.build_graph(Path(d), et.load_adapter(Path(d))[0])
+        return g, g.get("duplicate_requirements", {})
+
+    d = gaps_repo(plans=(("plan/ABC-1.md", "plan-ref.md"),))
+    g, dups = dup(d)
+    r = run(["gaps", "--strict"], d)
+    check("REQ-USA-06 a plan row repeating its From: spec's ID is a reference, not a DUPLICATE-ID",
+          "REQ-X-01" not in dups and g["requirements"].get("REQ-X-01", {}).get("spec_file") == SPEC60
+          and "The spec's summary" in g["requirements"].get("REQ-X-01", {}).get("summary", "")
+          and "REQ-X-01: defined in" not in r.stdout, (dups, g["requirements"].get("REQ-X-01"), r.stdout[-400:]))
+    shutil.rmtree(d)
+    d = gaps_repo(plans=(("plan/ABC-1.md", open(os.path.join(FIX60, "plan-ref.md")).read().replace(
+        "`intent/2026-01-01-x/spec.md`", "intent/2026-01-01-x/")),))
+    check("REQ-USA-06 a plan whose From: names the spec's directory (trailing slash) is a reference",
+          "REQ-X-01" not in dup(d)[1], dup(d)[1])
+    shutil.rmtree(d)
+    d = gaps_repo(plans=(("plan/ABC-2.md", "plan-other.md"),))
+    g, dups = dup(d)
+    check("REQ-USA-06 negative: the same row in a plan whose From: names another spec is a DUPLICATE-ID",
+          "REQ-X-01" in dups, dups)
+    shutil.rmtree(d)
+    d = gaps_repo(specs=((SPEC60, "spec.md"), ("intent/2026-01-01-z/spec.md", "spec.md")))
+    check("REQ-USA-06 negative: two specs defining one ID is a DUPLICATE-ID", "REQ-X-01" in dup(d)[1], dup(d)[1])
+    shutil.rmtree(d)
+    t1 = "# Plan: t1\nTracker: ABC-3   From: spec.md\nRisk tier: 1\n\n| REQ ID | Requirement |\n| --- | --- |\n| REQ-Y-01 | plan-only |\n"
+    d = gaps_repo(plans=(("plan/ABC-3.md", t1), ("plan/ABC-4.md", t1.replace("ABC-3", "ABC-4"))))
+    check("REQ-USA-06 negative: two plans defining one plan-only ID is a DUPLICATE-ID", "REQ-Y-01" in dup(d)[1], dup(d)[1])
+    shutil.rmtree(d)
+    d = gaps_repo(plans=(("plan/ABC-3.md", t1),))
+    g, dups = dup(d)
+    r = run(["gaps"], d)
+    orphan = r.stdout.split("ORPHANED", 1)[1].split("\n\n", 1)[0] if "ORPHANED" in r.stdout else ""
+    check("REQ-USA-06 a Tier 1 plan-only ID is defined by the plan, not orphaned",
+          "REQ-Y-01" in g["requirements"] and "REQ-Y-01" not in dups and "REQ-Y-01" not in orphan, (dups, orphan))
+    shutil.rmtree(d)
+
+
 def main():
     d = repo()
     r = run(["change", "start", "ABC-7", "--tier", "1", "--kind", "feature"], d)
@@ -718,6 +881,7 @@ def main():
     shutil.rmtree(d)
     signed_terminal_tests()
     verify_range_tests()
+    gaps_tests()
     print(f"\n{res['pass']} passed, {res['fail']} failed")
     if os.environ.get("JUNIT_OUT"):
         from xml.sax.saxutils import escape, quoteattr
@@ -735,6 +899,10 @@ def main():
 if __name__ == "__main__":
     if sys.argv[1:] == ["verify-range"]:  # just the REQ-IMH-19 fixtures
         verify_range_tests()
+        print(f"\n{res['pass']} passed, {res['fail']} failed")
+        sys.exit(1 if res["fail"] else 0)
+    if sys.argv[1:] == ["gaps"]:  # just the PILOT-60 gaps fixtures
+        gaps_tests()
         print(f"\n{res['pass']} passed, {res['fail']} failed")
         sys.exit(1 if res["fail"] else 0)
     sys.exit(main())

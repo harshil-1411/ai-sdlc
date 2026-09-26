@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="fixture" tests="3" failures="0">
+  <testcase classname="fixture" name="REQ-X-01 works"></testcase>
+  <testcase classname="fixture" name="REQ-X-02 works"></testcase>
+  <testcase classname="fixture" name="REQ-V2C-09 works"></testcase>
+</testsuite>

@@ -1,0 +1,14 @@
+# PILOT-60 REQ-USA-05 fixture: inline comments on every value form.
+requirements_source: file_glob   # requirements live in files
+spec_glob:
+  - intent/*/spec.md   # specs
+  # a Tier 1 change has no spec
+  - plan/*.md   # tier 1 plans
+requirement_pattern: 'REQ-[A-Za-z0-9]+-[0-9]+'   # ids
+tracker_pattern: "[A-Z]+-[0-9]+"  # keys
+test_dir_segments: [tests]  # where tests live
+artifact_chain:
+  plan_glob: [intent/*/plan.md, plan/*.md]   # plans
+test_results_location: [validation/results]  # junit
+hash_quoted: 'a # not a comment'
+hash_unspaced: a#b
