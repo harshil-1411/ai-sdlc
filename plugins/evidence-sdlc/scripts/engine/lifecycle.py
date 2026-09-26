@@ -742,6 +742,7 @@ def _update_parent(root, parents, p, base):
 def _from_base_side(root, c, parents, path, base):
     """True when a merge commit's version of path is exactly a non-first parent's, and that parent
     is an update from the base: the content came in from the base, not from this PR."""
+    # REQ-CON-23: "" (git failed) is never equal to a parent's id, so the content is not from the base: stricter
     here = (_vg(root, ["rev-parse", "-q", "--verify", f"{c}:{path}"]) or "").strip()
     for p in parents[1:]:
         there = (_vg(root, ["rev-parse", "-q", "--verify", f"{p}:{path}"]) or "").strip()
@@ -1246,7 +1247,7 @@ def _verify_pr(root, F):
         if combined and not changes and all(_update_parent(root, parents, p, base) for p in parents[1:]):
             continue  # a clean "Update branch" merge of the base
         checked.append((c, changes))
-        msg = _vg(root, ["log", "-1", "--format=%B", c]) or ""
+        msg = _vg(root, ["log", "-1", "--format=%B", c]) or ""  # REQ-CON-23: "" has no key, so rule 1 fails
         if key and key not in st.find_keys(msg, pol):
             F.fail(1, f"commit {c[:12]} does not carry the change key {key}")
         agent, human = _AGENT_TRAILER.findall(msg), _HUMAN_TRAILER.findall(msg)

@@ -3,6 +3,53 @@
 All five plugins are versioned together. Every change to a plugin's files needs a
 version bump (enforced in CI by `scripts/ci/check-version-bump.sh`) and an entry here.
 
+## Unreleased — PILOT-59, part 1: the review deferrals (REQ-CON-14..23)
+
+The deferrals half of PILOT-59 (spec and plan: `intent/2026-09-25-concurrency-and-deferrals/`). The
+concurrency half (REQ-CON-01..13, `monitor.py`) and the version number follow in part 2, on the same branch.
+
+**Owner action:** set `approval.github_identities` in the org policy (git email → GitHub login) for everyone
+who starts Tier 3 changes. Until then, a Tier 3 GitHub approval is refused (see REQ-CON-16).
+
+### The Bash parser sees every command (REQ-CON-15)
+- `cmdparse` now lexes the command once, as a shell does: quotes, escapes, `$( )`, `${ }`, `$(( ))`, backticks, process substitution and heredocs. Newlines separate commands (except after `|`, `&&`, `||`, `(`), `\` + newline joins lines, and a `#` that starts a word starts a comment. Before, `echo hi⏎touch src/auth/login.py` was one `echo`, and `echo a#b; rm x` hid `rm x` (shlex ended the word at `#` and dropped the line).
+- A heredoc body is removed as data, and the rest of its operator's line is kept: `cat <<EOF | sh` pipes into `sh` (opaque), `cat <<EOF && touch …` judges the `touch`, and several heredocs on one line are read in order. `<<<` is a here-string. Substitutions inside an unquoted body are parsed (the shell runs them). A shell or `. /dev/stdin` fed a heredoc has its body parsed as commands.
+- Anything the scanner cannot place (an unterminated quote or substitution) makes the command `unparseable`.
+
+### PILOT-60 review items (routed to PILOT-59; each was confirmed allowed on 2.3.0)
+- **C2 (Critical), structural:** a program not known to leave its arguments alone (`cmdparse.may_write_args`: not a pure reader, not `sed` without `-i`/`-f`/`w`/`e`, not `awk` without `-f` or writes, not `find` without `-delete`/`-exec`/`-fprint`) has every path argument judged as a possible write, from every candidate working directory: one in the control plane (policy globs, `.git/**`, Claude Code's user configuration) is denied, and so is an existing or `dir/file`-named file outside the plan's claims (`uniq src/app.py .git/hooks/pre-commit`, `xxd -r a .git/hooks/x`, `mystery-tool src/other.py`). `writes_of` also knows `uniq`'s output operand, `sponge`, and `sort -o` in every spelling. `.git` and anything under it (any case) is now control plane for every write, Edit and Write included.
+- **P1:** process substitution `<( )` / `>( )` is parsed as commands of its own (a `>( )` command reads a pipe); `cat <(bash -c 'echo x > .git/hooks/pre-commit')` is denied. The temp relaxation still turns off when one is present.
+- **P2:** the program itself is judged (`/tmp/x`); a non-data program with a temporary directory as a candidate working directory is denied (`cd /tmp && make`, `(cd /tmp); ./run.sh`); relative arguments there are temp paths (`cd /tmp && cp x <repo>/src/app.py`).
+- **P3:** `cp`/`mv`/`install`/`ln` `-t DIR` in any form (`-rt`, `-tDIR`, `--target-directory[=]`) is parsed: every operand is a source that lands in DIR.
+- **P4:** `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT` and `DYLD_*` are denied in any env prefix, `env` or `export`/`declare` (rule `env-code-load`). Other code-loading variables (`*_CONFIG_PATH`, `PYTHONPATH`, `NODE_OPTIONS`, `BASH_ENV`, `HOME`, `XDG_CONFIG_HOME`, …) are denied when their value is computed, a temporary path, the control plane, or a file outside the claims.
+- **P5:** `curl -K`/`--config` with any value, `-O`, `--output-dir`, and `wget -e`/`--execute`/`-i`/`--config`/`-P` are opaque writes. curl's short clusters (`-sKcfg`, `-osrc/x`) are read as curl reads them, and `-c`, `-D`, `--trace`, `--stderr` and similar are writes.
+- **Stdin / file://:** `tee src/app.py < /tmp/x` was already denied in 2.3.0 (confirmed by test). A `file://` URL whose path is a temporary file or the control plane is now denied (`curl -o src/app.py file:///tmp/x`, `file://localhost/…`, any case).
+- **Logical `cd`:** a `cd` target is a candidate both as bash's logical path and as its real path, so `cd tests/L/.. && echo x > ../.git/hooks/pre-commit` (with `tests/L` linking out of the repository) is denied.
+
+### Approval (REQ-CON-16)
+- A GitHub approval must not come from the change's creator. The creator's logins come from the org policy's new `approval.github_identities` (git email → login or list of logins, case-insensitive). A repository policy cannot set it, and the engine does not capture a login from the session's own `gh` (the plan's other option): that login is whatever the agent's `gh` says, so it is not a trust anchor. `evidence approve --github-pr` refuses the creator's review, records `creator_login`, and for Tier 3 with no known creator login refuses outright (Tier 1–2: accepted, with a note). `tier3-same-person` now also covers recorded `github` approvals. **Existing Tier 3 GitHub approvals stop satisfying the gate until the map lists their creator.**
+
+### verify-range (the eight 2.1.0 review items)
+- Rule 4 containment is ordered, not by set, for the whole range and for a merge's other parents (REQ-CON-17, item 5).
+- A shared log (`approval-*`, `clear-violations`, `attestations`) in a merge passes when every parent's version is an ordered subsequence of the merged one and every merged line comes from a parent, so "base's lines first" passes (REQ-CON-18, item 1). One session's log appended on both sides of a merge still fails, now with a message naming the session and saying to rebase (item 4, unsupported: ADR-0004 rev. 3).
+- Rule 2 exempts only real records under `.evidence/changes/` and `.evidence/violations/`, and `*.jsonl` directly under `.evidence/audit/`; any other file there must be claimed (REQ-CON-19, item 3).
+- `.evidence/context/` and `.evidence/decisions/` stay claimed in CI; locally an unclaimed write is allowed with a note that `verify-range` requires the claim (REQ-CON-20, item 2).
+- CODEOWNERS patterns with no `/` except a trailing one match at any depth (`docs`, `*.js`); a leading or middle `/` anchors (REQ-CON-21, item 6).
+- After a post-hook timeout the watchdog is re-armed: the check gets 16 s, recording 4 s, and a second timeout writes only the `integrity-timeout` audit entry (4 s more), so the hook ends within 30 s (REQ-CON-14, item 7).
+- `git commit` long options are resolved as git does, any unique prefix (`--o` is `--only`, checked on git 2.46.0); an ambiguous prefix that could be a bypass option is denied too (REQ-CON-22, item 8). A value option's abbreviation (`--mess "…"`) no longer makes its value read as a pathspec.
+
+### Fail-open sweep (REQ-CON-23)
+- Fixed: `change advance … failing-test` refuses when git cannot read HEAD (it recorded `fix_base: ""`, which switched test-weakening protection off); `integrity._extras` records `git-unavailable` instead of hashing `<root>/config` and `<root>/hooks` when git cannot name its directory; a snapshot whose `git_dir` could not be read is `git-unavailable` at the post; `state._attr_source` pins the sha1 empty tree when git fails (it dropped `GIT_ATTR_SOURCE`, letting worktree attributes apply); `verify-range --push-report` fails rule 2 when git cannot list a commit's paths (it read "no paths"); a `git push` whose current branch the engine cannot read (bare, or `HEAD`) is denied.
+- Safe as written, with a comment: the `--amend --no-edit` message fallback (`""` has no key, so it is denied), `_scoped` in `_origin_repo` (no URL means no server gate), `_from_base_side` (no blob id means not from the base: stricter), and the commit-message reads in `verify-range` (`""` has no key: rule 1 fails). `state.current_branch` still returns `""` on failure; its callers deny without a branch (no key means no active change), and push is now handled explicitly.
+
+### Tests
+- `engine-tests.py`: new `suite_pilot59` (142 cases). `cli-lifecycle-tests.py`: `approve_github_59_tests()`, `fix_base_59_test()`, and `verify_range_59_tests()` (run by `verify-range` mode too).
+
+### Known issues
+- `sed`'s own `w file` command is not reported as a write; a `sed` whose script has a `w`, `W` or `e` is only judged through its path arguments (the file name inside the script is one word with the command, so it is not seen). The monitor records the write after the call.
+- The possible-write rule judges claims only once a change with a plan exists; before that, only the control plane.
+- The ADR-0006 concurrency design, docs for it, and the version bump are part 2.
+
 ## 2.3.0 — 2026-09-26 (PILOT-60)
 
 Usability: the defects that cost a human round trip on every change. Spec, plan and ADRs:

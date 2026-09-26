@@ -290,6 +290,12 @@ recorded with a name and a date.
       in managed settings to the model your tool risk assessment validated. Changing it
       then becomes a change under
       [governance/model-and-config-change-control.md](../governance/model-and-config-change-control.md).
+- [ ] **Map change creators to GitHub logins** (PILOT-59, REQ-CON-16): `approval.github_identities`
+      in the org policy, `{"<git email>": "<login>"}` (or a list of logins) for everyone who starts
+      Tier 3 changes, e.g. `{"alice@example.com": "alice-gh"}`. A GitHub approval by the creator is
+      refused; for a Tier 3 creator with no entry, every GitHub approval is refused. A repository
+      policy cannot set it, and the engine never takes the login from the session's own `gh`, which
+      the agent could influence.
 - [ ] **Configure approval identity.** For identity-bound approval, set
       `approval.github_allowed_approvers` in the org policy. Note that `approval.mode`
       isn't enforced by engine 2.0.0 (see [policy-reference.md](policy-reference.md#approval)).

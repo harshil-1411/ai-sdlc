@@ -145,7 +145,8 @@ user-level control plane.
 | 4 | `secret` | V2K-01 | Content that matches a secret pattern (see [Secrets](#secrets)) | "Possible secret in <path>: <rule> on line N (fingerprint …)…" | Load it from the environment. For a false positive, a human allowlists the fingerprint |
 | 5 | `self-approval` (approval line) | V2A-01 | Writing an approval line (`Approved by: <name>`, `Approver: …`, `\| Approved by \| … \|`, `Status: approved`) into an `intent`, `spec` or `plan` file. Placeholders like `<name>`, `[ASK]`, `PENDING` and `TBD` are fine | "<path>: approval is not written into planning artifacts. It is recorded only in .evidence/changes/<KEY>/approval.json by a human (`/evidence-sdlc:approve <KEY> <plan-sha>`)…" | The human sends the approve command |
 | 6 | `test-weakening` (legacy) | V2G-10 | With `FIX_TASK=1` set by the human: editing a test file that exists at HEAD | "This is a fix task (FIX_TASK=1) and <path> is an existing test. Fix the code, not the test." | Honoured for v1 compatibility. Prefer `--kind fix` |
-| — | *ungated → allow* | V2G-03 | — | Docs, `intent/**`, `plan/**`, `.evidence/context/**`, `.evidence/decisions/**`, licence files and the like need no change | — |
+| 2a | `control-plane` (git) | CON-15 | Writing `.git` or anything under it, in any letter case (hooks, config, refs, index) | "…is git's own metadata (hooks, config, refs, index), part of the control plane…" | A human does it |
+| — | *ungated → allow* | V2G-03, CON-20 | — | Docs, `intent/**`, `plan/**`, `.evidence/context/**`, `.evidence/decisions/**`, licence files and the like need no change. An unclaimed `.evidence/context/` or `.evidence/decisions/` write is allowed with a note: `verify-range` requires it in the plan's claims | — |
 | 7 | `no-active-change` | V2G-04 | A source write when neither the branch nor `EVIDENCE_ACTIVE_CHANGE` carries a tracker key | "Writing <path> needs an active change, and none was found (branch <b> carries no tracker key). Create or switch to a branch named with the key…, then run `evidence change start …`" | Branch `feature/KEY-slug`, then `evidence change start` |
 | 8 | `no-change-state` | V2S-01 | A key exists, but `.evidence/changes/<KEY>/state.json` doesn't | "…needs change KEY to be started. Run `evidence change start KEY --tier <1\|2\|3> --kind feature\|fix\|chore`…" | Start the change |
 | 9 | `missing-artifacts` | V2S-01 | The tier's artifacts are missing (T1: plan; T2: spec and plan; T3: intent, spec and plan) | "…change KEY is Tier N, which requires … Missing: spec.md." | Write them. Artifacts are found at `plan/KEY.md` or `intent/*/<name>.md` with `Tracker: KEY` in the header, or at the paths passed to `change start` |
@@ -153,6 +154,7 @@ user-level control plane.
 | 11 | `not-approved` | V2A-01 | There is no `approval.json` | "…the plan for KEY has not been approved. Ask a human to review <plan> and send `/evidence-sdlc:approve KEY <sha12>` (or run `evidence approve KEY <sha12>` in their own terminal). An agent cannot approve its own plan." | The human sends `/evidence-sdlc:approve KEY <sha-prefix>` |
 | 12 | `approval-stale` | V2A-01 | The plan's sha256 is no longer the one the human approved | "…the plan for KEY changed after it was approved, so the approval no longer applies. A human must re-read it and send `/evidence-sdlc:approve KEY <new sha12>`." | The human re-approves the new hash |
 | 13 | `tier-floor` | V2S-02 | The path's policy floor is above the change's tier (for example `**/auth/**` in a Tier 2 change) | "…policy sets a minimum of Tier 3 for this path, but change KEY is Tier 2. A human raises the tier with `evidence change set-tier KEY 3`…" | A human runs `set-tier` at their terminal |
+| 13a | `tier3-same-person` | V2S-03, CON-16 | Tier 3, `tier3_distinct_approver` on, and the approval was by the change's creator: `prompt`/`tty` by the same git email, or `github` by a login `approval.github_identities` maps to the creator (or no login is known for the creator) | "…change KEY is Tier 3, and its GitHub approval is by the person who started the change…" | Another person approves; the owner fills `approval.github_identities` |
 | 14 | `tier3-auto-mode` | V2S-03, LLA-08 | A Tier 3 source edit while `permission_mode` is `bypassPermissions` or `dontAsk` (always), or `acceptEdits` / `auto` unless the server gate is confirmed (2.2.0: `tier3_auto_modes_with_required_gate` on, a signed session, and `verify-range` required on the default branch and pinned to GitHub Actions, read from GitHub) | "…change KEY is Tier 3, which requires per-change human review, but this session is in 'auto' mode… <the missing condition and the owner action>" | Switch to default mode, or the owner pins the check and sets `approval.github_repo` |
 | 15 | `outside-claims` | V2G-12 | A path that no glob in the approved plan's `## Files claimed` matches | "…<path> is not in the approved plan's \"Files claimed\" for KEY. Add it to the plan (which voids the approval) and ask for re-approval, or leave the file alone." | Amend the plan and get re-approval |
 | 16 | `change-controlled` | V2G-08 | A `change_controlled` path (migrations, CI, infra, audit, signing, crypto, validation) without a valid `CHANGE_TICKET` | "…<path> is under formal change control… A human starts the session with CHANGE_TICKET set to an approved change record matching …" | The human sets `CHANGE_TICKET` |
@@ -167,10 +169,28 @@ floors aren't checked).
 `check_bash` first scans the whole command text for secrets. Then it applies these
 rules to each simple command, and runs every write target through the table above.
 
+**How the command is read (PILOT-59, REQ-CON-15).** `cmdparse` walks the command once as a
+shell lexer, tracking quotes, escapes, `$( )`, `${ }`, `$(( ))`, backticks, process
+substitution and heredocs:
+- every unquoted newline separates commands, except after `|`, `&&`, `||` or `(`; `\` + newline
+  joins lines; a `#` that starts a word starts a comment (`echo a#b; rm x` is two commands);
+- a heredoc body is data and is removed, but the rest of its operator's line is kept
+  (`cat <<EOF | sh`, `cat <<EOF && touch x`, several heredocs on one line); `<<<` is a
+  here-string. The `$( )` and backticks inside an unquoted body are parsed, as the shell runs
+  them. A shell or `source /dev/stdin` fed a heredoc has the body parsed as commands;
+- `$( )`, backticks, `<( )` and `>( )` are parsed as commands of their own (a `>( )` command
+  reads from a pipe); `source <( … )` is opaque;
+- an unterminated quote or substitution makes the command `unparseable`.
+
 | Rule (audit id) | REQ | Denies | Message gist |
 | --- | --- | --- | --- |
-| Bash writes | V2G-02 | Redirects (`>`, `>>`), `tee`, `cp`, `mv`, `rm`, `install`, `ln`, `touch`, `chmod`/`chown`, `sed -i`, `perl -pi`, `dd of=`, `truncate`, `curl -o path`, `git checkout -- path`, `git restore`, `git rm`, `git mv`. Each target goes through the write rules | "[via Bash: redirect] Writing src/x.py: …" |
-| `opaque-write` | V2G-02, USA-07/08 | Writes the engine can't inspect: inline interpreter code that writes files (`python -c` or a python heredoc, `node -e`, ruby, perl); `patch`; `git apply` and `git am`; `curl -O`; archive extraction (`tar`, `unzip` and similar). Also a write to a path computed at run time (`> $OUT`), and running code from a temporary directory (see [Temp-directory paths](#temp-directory-paths)) | "This command modifies files in a way the gates cannot inspect (…). Use the Edit or Write tools…" |
+| possible writes (`control-plane`, `outside-claims`) | CON-15 (PILOT-60 review C2) | A path argument (or `--opt=value` value) of any program that is not known to leave its arguments alone, from every candidate working directory, when it is in the control plane (`.git/**` included) or Claude Code's user configuration, or is an existing or `dir/file`-named file outside the active plan's claims. Known readers (`cat`, `grep`, `ls`, `jq`, `git`, …, `sed` without `-i`/`-f`/`w`/`e`, `awk` without `-f` or writes, `find` without `-delete`/`-exec`/`-fprint`) are exempt; `mkdir` is judged only against the control plane; with no change started, only the control plane | "[via Bash: `<prog>` may write its argument <path>] …" |
+| `env-code-load` | CON-15 (PILOT-60 review P4) | `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT` or any `DYLD_*` set on a command, through `env` or by `export`/`declare`, whatever the value; other code-loading variables (`*_CONFIG_PATH`, `PYTHONPATH`, `NODE_OPTIONS`, `BASH_ENV`, `HOME`, `XDG_CONFIG_HOME`, …) whose value is computed at run time, a temporary path, the control plane, or a file outside the claims | "Setting LD_PRELOAD makes every program in this command load a library it names…" |
+
+| Rule (audit id) | REQ | Denies | Message gist |
+| --- | --- | --- | --- |
+| Bash writes | V2G-02, CON-15 | Redirects (`>`, `>>`), `tee`, `cp`, `mv` (including `-t DIR` in any form), `rm`, `install`, `ln`, `touch`, `chmod`/`chown`, `sed -i`, `perl -pi`, `dd of=`, `truncate`, `uniq`'s output operand, `sponge`, `sort -o`, `curl -o`/`-c`/`-D`/`--trace` and the like (clusters such as `-sofile` read as curl does), `wget -O`/`-o`/`-a`, `git checkout -- path`, `git restore`, `git rm`, `git mv`. Each target goes through the write rules | "[via Bash: redirect] Writing src/x.py: …" |
+| `opaque-write` | V2G-02, USA-07/08 | Writes the engine can't inspect: inline interpreter code that writes files (`python -c` or a python heredoc, `node -e`, ruby, perl); `patch`; `git apply` and `git am`; `curl -O`, `curl -K`/`--config` (any value), `wget -e`/`--execute`/`-i`/`--config`/`-P`; archive extraction (`tar`, `unzip` and similar). Also a write to a path computed at run time (`> $OUT`), and running code from a temporary directory (see [Temp-directory paths](#temp-directory-paths)) | "This command modifies files in a way the gates cannot inspect (…). Use the Edit or Write tools…" |
 | `self-approval` | V2A-01 | `evidence approve` (except `--github-pr`), `evidence change set-tier` and `evidence change release`, in any form (including `python3 …/evidence …`). Also `gh pr review --approve`, a `gh pr/issue comment` containing `/approve-plan`, and `gh api` calls that submit an APPROVE review or post `/approve-plan` | "Approving a plan (and changing a change's tier) is a human action. Ask the human to run `/evidence-sdlc:approve <KEY> <plan-sha>`…" |
 | `git-config` | V2K-02 | `git -c <key>=…` or `git config <key> <value>` for `deny_git_config_keys` (`alias.*`, `core.hooksPath`, `core.sshCommand`, `credential.*`, `include.path`, `filter.*`, …); any `git --config-env` | "`git -c alias.x=…` can run arbitrary programs or change how git authenticates…" |
 | `protected-push` | V2G-05 | A push whose **target** ref is protected, from any branch. Forms covered: `HEAD:main`, `+x:main`, `refs/heads/main`, `:main`, `--delete`, `--mirror`, `--all`, `git -C`/`-c`, `env`/`command`/`sudo` wrappers, `/usr/bin/git` | "This push would update main, which is protected. An agent has no route to a protected branch…" |
@@ -215,6 +235,10 @@ There are three human-only channels:
    plan, and the approver must not be the PR author. Agents may run this one. Since 2.1.0
    the repository must be pinned in policy (`approval.github_repo`); `gh` is always called
    with `--repo`, never left to resolve it from the working copy's remotes (REQ-IMH-24).
+   Since PILOT-59 (REQ-CON-16) the approver must not be the change's creator either: their
+   GitHub logins come from the org policy's `approval.github_identities` (git email → login).
+   For Tier 3, a creator with no entry makes the GitHub approval refused, and the write rule
+   `tier3-same-person` applies the same check to a recorded GitHub approval.
 
 This local record is evidence, not the merge decision: `verify-range` requires a code-owner
 review on the PR's head commit whatever `approval.json` says (see "Where the authority is").
@@ -369,7 +393,16 @@ repository: `mv src/app.py /tmp/y`, `cp /tmp/x /tmp/y`.
 session's cwd and every `cd`/`pushd` target, plus the repository root and HOME after `cd -`, `popd`
 or a bare `cd`. Only a plain `a && b` chain is followed exactly (`cd src && echo x > app.py` writes
 `src/app.py`). After a `cd` to a computed path, a relative write is denied: "the working directory
-cannot be determined".
+cannot be determined". Since PILOT-59 a `cd` target is a candidate both as the shell's logical path
+(`tests/L/..` is `tests`, whatever `L` links to) and as its real path.
+
+**Temporary working directories and programs (PILOT-59, PILOT-60 review P2).** The program itself is
+judged like a script (`/tmp/x`, `./x` after `cd /tmp`). A program that is not a data program, run with
+a temporary directory outside the repository as a candidate working directory (`cd /tmp && make`,
+`(cd /tmp); ./run.sh`), is denied: it can load a Makefile, `package.json` or config from there. A data
+program's relative arguments there are temp paths (`cd /tmp && cp x <repo>/src/app.py` is denied). A
+`file://` URL whose path is a temporary file or the control plane is denied (`curl -o src/app.py
+file:///tmp/x`).
 
 These stay denied as `opaque-write`, because they run code the gates never saw written, or carry
 temp content into the repository:
