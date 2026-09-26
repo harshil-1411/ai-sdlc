@@ -26,12 +26,14 @@ and a dated revision note to `.evidence/decisions/0003-hook-git-is-neutralised.m
 - **Plan references** (REQ-USA-06). Specs are read before plans. When a plan's Proof row repeats an ID that its `From:` spec (or that spec's directory) defines, the row is a reference, not a `DUPLICATE-ID`. Genuine duplicates still fail, and Tier 1 plan-only IDs are still defined.
 
 ### Gate engine (evidence-sdlc)
-- **Temp-directory paths are judged as paths** (REQ-USA-07, 08). `cat`, `ls`, `tail`, `mkdir`, `grep`/`rg`, `sort`, `curl -o`, `cp`/`mv` out of the repository and the other `_TEMP_DATA_PROGS` no longer trip "Running … from a temporary directory".
-  - These stay denied: running code from a temp directory; a temp path given to a code-running option (`rg --pre`, `sort --compress-program`, `curl -K`/`--config`, `wget -e`/`--execute`/`--config`, including `--opt=value`); a copy into the repository.
+- **Temp-directory paths are judged as paths** (REQ-USA-07, 08). `cat`, `ls`, `tail`, `mkdir`, `grep`/`rg`, `cp`/`mv` *to* a temp directory and the other `_TEMP_DATA_PROGS` no longer trip "Running … from a temporary directory".
+  - These stay denied: running code from a temp directory; a temp path given to a code-running option (`rg --pre`, `sort --compress-program`, `curl -K`/`--config`, `wget -e`/`--execute`/`--config`, including `--opt=value`, its abbreviations and `-qKvalue` clusters); a copy into the repository.
+  - **Review fixes (M1).** `sort`, `curl`, `wget` and `chmod` are not data programs: a program that needs a code-running-option table can run code. `cp`/`mv` are relaxed only when the temp path is the destination, never a source, and never with `-t` in any form (`-rt`, `-vt`, `--target`). The relaxation never applies when any word is a process substitution (`<(`, `>(`), or when any write of the whole command is inside the repository, opaque or computed (`cat /tmp/x > src/app.py`, `cat /tmp/x | tee -a src/app.py`).
+  - **Spec deviation (L1).** The spec's REQ-USA-07 acceptance list names `curl -o $TMPDIR/x.json https://example.com`, `cp src/app.py $TMPDIR/app.bak` and `sort /tmp/a > /tmp/b` as allowed. With the literal `$TMPDIR` the first two are denied ("path computed at run time"): the hook cannot know the shell's `TMPDIR` (the sandbox sets its own), so it does not resolve it. `cp src/app.py /tmp/app.bak` (an expanded path) is allowed. `curl -o` and `sort` are denied with any path, since both are off the data list.
   - `sort --compress-program=/tmp/x`, allowed before, is now denied.
   - Prefixes compare real paths with a trailing `/`.
   - The sandbox-safe form is `mktemp "$TMPDIR/x.XXXXXX"`.
-- **Git config split** (REQ-USA-10, 11). The engine's own check no longer refuses `git_config_engine_ignored` keys at **global or system** scope. The new policy key defaults to `alias.*`, `core.editor`, `core.pager`, `pager.*`, `sequence.editor`, `interactive.diffFilter` and `*tool.*.cmd`; a repository policy may only remove entries.
+- **Git config split** (REQ-USA-10, 11). The engine's own check no longer refuses `git_config_engine_ignored` keys at **global or system** scope, read from a file the integrity monitor watches (`~/.gitconfig`, `~/.config/git/config`) or a system file the user cannot write (review fix M2; an unwatched `$XDG_CONFIG_HOME/git/config` or a user-owned `/opt/homebrew/etc/gitconfig` is still refused). The new policy key defaults to `alias.*`, `core.editor`, `core.pager`, `pager.*`, `sequence.editor`, `interactive.diffFilter` and `*tool.*.cmd`; a repository policy may only remove entries.
   - `ENGINE_ALWAYS_REFUSED`, in code, keeps every command-running key refused at every scope, whatever the policy says. That includes PILOT-62's `remote.*.url`, `remote.*.pushurl`, `url.*.insteadOf` and `url.*.pushInsteadOf`, and `gpg.*`: `log.showSignature` makes `git log` run `gpg.program`, checked on git 2.46.0.
   - Ignored keys at local or worktree scope are still refused.
   - What an agent may set with `git -c` / `git config` is unchanged.
@@ -45,6 +47,13 @@ and a dated revision note to `.evidence/decisions/0003-hook-git-is-neutralised.m
 - **Proposed as PILOT-64** (key not yet allocated): a plan re-approval missing from `state.json`'s history, and watching `CLAUDE_CONFIG_DIR`.
 - A temp path handed to a program that is *not* a data program through `--opt=value` (`make --file=/tmp/x`) is still judged only in its space-separated form (`make -f /tmp/x` is denied), as in 2.2.0.
 - `cp -t DIR` into a temp directory is denied: `writes_of` reads the last operand as the destination. It fails closed.
+- **For PILOT-59** (`cmdparse.py`, not changed here), found in the PILOT-60 review:
+  - process substitution `<(…)`/`>(…)` is not analysed by `cmdparse`: `cat <(bash -c 'echo x > .git/hooks/pre-commit')` is allowed. The temp relaxation adds nothing to it (a command with one is judged as before);
+  - the temp rule checks only `argv[1:]`: a temp path as argv[0] (`/tmp/x`) and a relative path after `cd /tmp && …` (`cd /tmp && ./x`) are not judged as temp scripts;
+  - environment code injection is not judged: `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `RIPGREP_CONFIG_PATH` set on a command;
+  - `writes_of` misparses bundled `cp -t` in general (`cp -rt src other.txt` reads `other.txt` as the destination) (P3);
+  - temp content read through stdin (`tee src/app.py < /tmp/x`) or a `file://` URL (`curl -o src/app.py file:///tmp/x`) is judged only by the write's claims, as in 2.2.0.
+- **L3.** `run-tests.sh` refuses an `EVIDENCE_RESULTS_DIR` whose real path is inside the working tree (exit 2, before any `rm -f`). The GitLab template's tracked-results guard fails the job when `git ls-files` itself fails (L2).
 
 ## 2.2.0 — 2026-09-25 (PILOT-62)
 

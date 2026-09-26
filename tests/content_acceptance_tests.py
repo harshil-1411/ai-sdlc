@@ -490,6 +490,16 @@ check("REQ-USA-12 the YAML comment rule, plan references and -k/--suite are docu
 check("REQ-USA-12 gates reference: temp paths judged as paths, what stays denied, and the sandbox-safe mktemp form",
       "## Temp-directory paths" in gr60 and 'mktemp "$TMPDIR/x.XXXXXX"' in gr60 and "--compress-program" in gr60
       and "`make -f /tmp/Makefile`" in gr60)
+_gr_tmp = gr60.split("## Temp-directory paths", 1)[1].split("\n## ", 1)[0] if "## Temp-directory paths" in gr60 else ""
+_gr_list = _gr_tmp.split("These stay denied", 1)[0]
+check("REQ-USA-12 review M1/L1: sort, curl, wget and chmod are not data programs in the docs; the literal $TMPDIR "
+      "cases, the watched-file rule and the PILOT-59 known issues are stated",
+      _gr_list and not any(f"`{p}`" in _gr_list for p in ("sort", "curl", "wget", "chmod"))
+      and "destination" in _gr_list and "process substitution" in _gr_tmp
+      and all(x in cl23 for x in ("process substitution", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "RIPGREP_CONFIG_PATH",
+                                  "argv[0]", "cp -t", "literal `$TMPDIR`", "PILOT-59"))
+      and "literal `$TMPDIR`" in ho60 and "integrity monitor watches" in pr60 and "integrity monitor watches" in cl23,
+      _gr_list[:300])
 check("REQ-USA-12 both git config sets are documented with their reasons; the known-issue sentence is gone",
       "git_config_engine_ignored" in pr60 and "ENGINE_ALWAYS_REFUSED" in pr60 and "shadows a built-in" in pr60
       and "**Intersection**" in pr60 and "PILOT-60 splits the list" not in pr60

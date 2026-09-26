@@ -350,21 +350,32 @@ also runs a live canary against the shipped engine: in a throwaway repo, it must
 
 Since 2.3.0 (PILOT-60, REQ-USA-07/08) a path under a temporary directory (`/tmp/`, `/private/tmp/`,
 `/var/tmp/`, `/var/folders/`, `$TMPDIR`, compared as real paths with a trailing `/`) is judged as a
-**path**, like any other, when the program only reads, lists, creates or downloads it:
-`cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file`, `du`, `mkdir`, `rmdir`, `rm`, `touch`, `chmod`, `tee`,
-`mktemp`, `grep`, `egrep`, `fgrep`, `rg`, `sort`, `uniq`, `cut`, `tr`, `diff`, `cmp`, `md5sum`,
+**path**, like any other, when the program only reads, lists or creates it:
+`cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file`, `du`, `mkdir`, `rmdir`, `rm`, `touch`, `tee`,
+`mktemp`, `grep`, `egrep`, `fgrep`, `rg`, `uniq`, `cut`, `tr`, `diff`, `cmp`, `md5sum`,
 `sha256sum`, `shasum`, `jq`, `basename`, `dirname`, `realpath`, `readlink`, `echo`, `printf`, `test`,
-`[`, `curl`, `wget`, `cp` and `mv`. Their writes are still judged by the usual rules (claims, control
-plane, secrets).
+`[`, and `cp` and `mv` with the temp path as the **destination** only (`cp src/app.py /tmp/app.bak`).
+Their writes are still judged by the usual rules (claims, control plane, secrets). The relaxation
+never applies to a command that has a process substitution (`<(…)`, `>(…)`) anywhere, or any write
+(a redirect, `tee`, a copy's destination) that is inside the repository, opaque or computed at run
+time: `cat /tmp/x > src/app.py` and `cat /tmp/x | tee -a src/app.py` are denied.
 
-These stay denied as `opaque-write`, because they run code the gates never saw written:
+These stay denied as `opaque-write`, because they run code the gates never saw written, or carry
+temp content into the repository:
 
 - running a script from a temp directory (`python3 /tmp/x.py`, `bash /tmp/x.sh`, `source /tmp/x`,
   `make -f /tmp/Makefile`, `go run /tmp/x.go`, `awk -f`, `sed -f`), or any temp path given to a
-  program not on the list;
+  program not on the list. Since the PILOT-60 review, `sort` (`--compress-program`), `curl` (`-K`),
+  `wget` (`-e`) and `chmod` (it makes a temp file executable) are not on it, so `sort /tmp/a`,
+  `curl -o /tmp/x.json …` and `chmod +x /tmp/x` are denied;
 - a temp path given to a code-running option: `rg --pre`, `sort --compress-program`,
-  `curl -K`/`--config`, `wget -e`/`--execute`/`--config` (`--opt value`, `--opt=value` and `-Kvalue`);
-- `cp` or `mv` from a temp directory into the repository (including `-t`/`--target-directory`).
+  `curl -K`/`--config`, `wget -e`/`--execute`/`--config` (`--opt value`, `--opt=value` and its
+  abbreviations, and `-Kvalue` alone or in a cluster such as `-qK/tmp/cfg`);
+- `cp` or `mv` with a temp **source** (`cp /tmp/x src/app.py`, `cp /tmp/a /tmp/b`), and any `cp`/`mv`
+  with `-t` in any form (`-t`, a cluster such as `-rt`, `--target-directory`, `--target`).
+
+A path written as the literal `$TMPDIR/…` is computed at run time: a write to it
+(`cp src/app.py $TMPDIR/app.bak`) is denied as such. Write the expanded path instead.
 
 The deny message adds: "To read or list a temp file, use cat, ls or the Read tool."
 
