@@ -35,6 +35,12 @@ decision is a new ADR.
    - It refuses any key in the command-executing deny set at **any scope except `command`**. `credential.*` is allowed at global or system scope only, since the engine's git calls make no network use.
    - It refuses if an allow-listed key's value contains a newline or carriage return.
    - An exact key=value in the org `git_allowed_config` passes (the git-lfs defaults).
+   - **Revision note, 2026-09-26 (PILOT-60, REQ-USA-10/11).** §2 is narrowed for keys the engine's git never reads. At **global or system scope only**, a key matching `git_config_engine_ignored` (default `alias.*`, `core.editor`, `core.pager`, `pager.*`, `sequence.editor`, `interactive.diffFilter`, `*tool.*.cmd`) is not refused, because:
+     - the engine runs only built-in subcommands, and git never expands an alias that shadows a built-in;
+     - none of those subcommands opens an editor or runs `add -p`, `difftool` or `mergetool`;
+     - output is captured and `GIT_NEUTRAL` sets `core.pager=cat`, so no pager runs.
+
+     Every key that can make the engine's git run a program, or repoint where it talks to, is in `state.ENGINE_ALWAYS_REFUSED`, in code. No policy entry can exempt one at any scope. The set includes PILOT-62's `remote.*.url`, `remote.*.pushurl`, `url.*.insteadOf` and `url.*.pushInsteadOf`, and `gpg.*`: `log.showSignature=true` makes `git log`, even with `--format=%H`, run `gpg.program` (checked with git 2.46.0, 2026-09-26). An ignored key at local or worktree scope is still refused, because the agent can write `.git/config`. `~/.gitconfig` and `~/.config/git/config` are watched by the integrity monitor. The org may add entries to `git_config_engine_ignored`; a repository policy may only remove them. What an agent may set (`git -c`, `git config`) is unchanged.
 3. **Git failure fails closed.** If the pre-snapshot saw a repository and git now fails, the monitor records `git-unavailable` and still restores the control plane and checks audit prefixes through the filesystem. A `.git` entry at or above the root with git failing is a deny.
 4. **Residual risk, accepted and stated.** The key can be exposed to the agent in two ways:
    - **A race.** A command the agent started can change repository config or attributes between the hook's check and its git call, so git runs a command. Removing the key from child environments means that command doesn't inherit it.

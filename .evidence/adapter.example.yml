@@ -3,6 +3,11 @@
 # matches this repo below into .evidence/adapter.yml and fill in the [ASK] fields;
 # do not guess a value you have not confirmed from a file, a command, or a person.
 #
+# Comments (2.3.0): a `#` at the start of a value or after whitespace, outside quotes,
+# starts a comment, as in YAML: `- intent/*/spec.md   # specs` is the glob
+# `intent/*/spec.md`. A `#` inside quotes ('REQ-#-[0-9]+') or with no space before it
+# (a#b) is part of the value.
+#
 # Every field, in full, with what it controls:
 #
 #   requirements_source: file_glob | tracker

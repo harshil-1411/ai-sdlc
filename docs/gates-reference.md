@@ -170,7 +170,7 @@ rules to each simple command, and runs every write target through the table abov
 | Rule (audit id) | REQ | Denies | Message gist |
 | --- | --- | --- | --- |
 | Bash writes | V2G-02 | Redirects (`>`, `>>`), `tee`, `cp`, `mv`, `rm`, `install`, `ln`, `touch`, `chmod`/`chown`, `sed -i`, `perl -pi`, `dd of=`, `truncate`, `curl -o path`, `git checkout -- path`, `git restore`, `git rm`, `git mv`. Each target goes through the write rules | "[via Bash: redirect] Writing src/x.py: …" |
-| `opaque-write` | V2G-02 | Writes the engine can't inspect: inline interpreter code that writes files (`python -c` or a python heredoc, `node -e`, ruby, perl); `patch`; `git apply` and `git am`; `curl -O`; archive extraction (`tar`, `unzip` and similar). Also a write to a path computed at run time (`> $OUT`) | "This command modifies files in a way the gates cannot inspect (…). Use the Edit or Write tools…" |
+| `opaque-write` | V2G-02, USA-07/08 | Writes the engine can't inspect: inline interpreter code that writes files (`python -c` or a python heredoc, `node -e`, ruby, perl); `patch`; `git apply` and `git am`; `curl -O`; archive extraction (`tar`, `unzip` and similar). Also a write to a path computed at run time (`> $OUT`), and running code from a temporary directory (see [Temp-directory paths](#temp-directory-paths)) | "This command modifies files in a way the gates cannot inspect (…). Use the Edit or Write tools…" |
 | `self-approval` | V2A-01 | `evidence approve` (except `--github-pr`), `evidence change set-tier` and `evidence change release`, in any form (including `python3 …/evidence …`). Also `gh pr review --approve`, a `gh pr/issue comment` containing `/approve-plan`, and `gh api` calls that submit an APPROVE review or post `/approve-plan` | "Approving a plan (and changing a change's tier) is a human action. Ask the human to run `/evidence-sdlc:approve <KEY> <plan-sha>`…" |
 | `git-config` | V2K-02 | `git -c <key>=…` or `git config <key> <value>` for `deny_git_config_keys` (`alias.*`, `core.hooksPath`, `core.sshCommand`, `credential.*`, `include.path`, `filter.*`, …); any `git --config-env` | "`git -c alias.x=…` can run arbitrary programs or change how git authenticates…" |
 | `protected-push` | V2G-05 | A push whose **target** ref is protected, from any branch. Forms covered: `HEAD:main`, `+x:main`, `refs/heads/main`, `:main`, `--delete`, `--mirror`, `--all`, `git -C`/`-c`, `env`/`command`/`sudo` wrappers, `/usr/bin/git` | "This push would update main, which is protected. An agent has no route to a protected branch…" |
@@ -180,7 +180,7 @@ rules to each simple command, and runs every write target through the table abov
 | `agent-trailer` | V2A-03 | A message without `Agent-Session: <this session's id>` | "Commits made by an agent must say which session made them. End the commit message with the trailer line: Agent-Session: …" |
 | `secret` | V2K-01 | Secrets in the staged diff (plus the working tree for `-a`) or in the commit message | as above |
 | `commit-bypass` | IMH-10 | `git commit` with a pathspec, `--only`/`-o`, `--include`/`-i`, `--patch`/`-p`, `--interactive` or `--pathspec-from-file`; `git commit` in the same command as an index-changing git command (`git add … && git commit`); `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` or `GIT_ALTERNATE_OBJECT_DIRECTORIES` on a command (rule `identity`) | "`git commit` with a pathspec commits files other than the staged index the gates check. Stage … then run a plain `git commit -m …`." |
-| `git-config-refused` | IMH-09 | Any call, when the git config the engine would run with (any scope but `command`, includes followed) sets a key in `deny_git_config_keys`, other than `credential.*` at global or system scope, or an exact `git_allowed_config` value | "git config core.fsmonitor (local, file:.git/config) can make git run a command… A human removes it, or the organisation allow-lists the exact value…" |
+| `git-config-refused` | IMH-09, USA-10/11 | Any call, when the git config the engine would run with (any scope but `command`, includes followed) sets a key in `deny_git_config_keys`, other than `credential.*` at global or system scope, a `git_config_engine_ignored` key (aliases, editors, pagers, `*tool.*.cmd`) at global or system scope (2.3.0), or an exact `git_allowed_config` value. Two sets: the ignored keys are read only by interactive git, which the engine never runs; `ENGINE_ALWAYS_REFUSED` (in code: `core.fsmonitor`, `core.hooksPath`, `core.sshCommand`, `filter.*`, `diff.*.textconv`, `gpg.*`, `include.path`, `includeIf.*`, `remote.*.url`, `remote.*.pushurl`, `url.*.insteadOf`, `url.*.pushInsteadOf`, …) can make the engine's own git run a program or repoint a remote and is refused at every scope whatever the policy says. An ignored key at local or worktree scope is still refused (the agent can write `.git/config`) | "git config core.fsmonitor (local, file:.git/config) can make git run a command… A human removes it, or the organisation allow-lists the exact value…" |
 | `git-unavailable` | IMH-23 | Any call inside a repository git cannot read; a commit whose staged listing or diff git could not produce | "This directory is inside a git repository that git cannot read…" |
 | `audit-oversize` | IMH-20 | Any call while an audit log is over 64 MiB (checked by size only) | "Audit log … is larger than the 64 MiB the gates can check in time…" |
 | `audit-unwritable` | IMH-06 | Any call while an earlier call's own audit entry could not be written (an open violation) | "An earlier call's audit entry could not be written…" |
@@ -345,3 +345,29 @@ are not the agent's doing or that it has already undone.
 To find the case for a rule, run `engine-tests.py -v -k V2G-05`. `evidence doctor`
 also runs a live canary against the shipped engine: in a throwaway repo, it must deny
 `src/__canary__.py` and allow `docs/__canary__.md`.
+
+## Temp-directory paths
+
+Since 2.3.0 (PILOT-60, REQ-USA-07/08) a path under a temporary directory (`/tmp/`, `/private/tmp/`,
+`/var/tmp/`, `/var/folders/`, `$TMPDIR`, compared as real paths with a trailing `/`) is judged as a
+**path**, like any other, when the program only reads, lists, creates or downloads it:
+`cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file`, `du`, `mkdir`, `rmdir`, `rm`, `touch`, `chmod`, `tee`,
+`mktemp`, `grep`, `egrep`, `fgrep`, `rg`, `sort`, `uniq`, `cut`, `tr`, `diff`, `cmp`, `md5sum`,
+`sha256sum`, `shasum`, `jq`, `basename`, `dirname`, `realpath`, `readlink`, `echo`, `printf`, `test`,
+`[`, `curl`, `wget`, `cp` and `mv`. Their writes are still judged by the usual rules (claims, control
+plane, secrets).
+
+These stay denied as `opaque-write`, because they run code the gates never saw written:
+
+- running a script from a temp directory (`python3 /tmp/x.py`, `bash /tmp/x.sh`, `source /tmp/x`,
+  `make -f /tmp/Makefile`, `go run /tmp/x.go`, `awk -f`, `sed -f`), or any temp path given to a
+  program not on the list;
+- a temp path given to a code-running option: `rg --pre`, `sort --compress-program`,
+  `curl -K`/`--config`, `wget -e`/`--execute`/`--config` (`--opt value`, `--opt=value` and `-Kvalue`);
+- `cp` or `mv` from a temp directory into the repository (including `-t`/`--target-directory`).
+
+The deny message adds: "To read or list a temp file, use cat, ls or the Read tool."
+
+**Sandbox note:** in the Claude Code sandbox on macOS a bare `mktemp` fails ("mkstemp failed …
+Operation not permitted") because it ignores `TMPDIR`. The gate allows it; use the sandbox-safe form
+`mktemp "$TMPDIR/x.XXXXXX"` (or `mktemp -d "$TMPDIR/x.XXXXXX"`).

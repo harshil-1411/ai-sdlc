@@ -418,9 +418,11 @@ vers = {p: json.load(open(p)).get("version") for p in glob.glob(P("plugins", "*"
 mk = json.load(open(P(".claude-plugin", "marketplace.json")))
 mvers = [x.get("version") for x in mk.get("plugins", [])] + [mk.get("version") or (mk.get("metadata") or {}).get("version")]
 import state as _st  # noqa: E402
-check("REQ-LLA-11 all five plugins, the marketplace and the engine are version 2.2.0",
-      len(vers) == 5 and set(vers.values()) == {"2.2.0"} and set(v for v in mvers if v) == {"2.2.0"}
-      and _st.ENGINE_VERSION == "2.2.0", (vers, mvers, _st.ENGINE_VERSION))
+# Since PILOT-60 (2.3.0) this checks the versions agree at 2.2.0 or later, instead of pinning 2.2.0.
+_v22 = set(vers.values()) | set(v for v in mvers if v) | {_st.ENGINE_VERSION}
+check("REQ-LLA-11 all five plugins, the marketplace and the engine agree on one version, 2.2.0 or later",
+      len(vers) == 5 and len(_v22) == 1 and tuple(int(x) for x in next(iter(_v22)).split(".")) >= (2, 2, 0),
+      (vers, mvers, _st.ENGINE_VERSION))
 
 # ------------------------------------------------------------ PILOT-60
 rt = read("scripts", "ci", "run-tests.sh")
@@ -457,6 +459,39 @@ check("REQ-USA-04 adopter templates sign only downloaded results; GitLab refuses
       and '--only-results --results "$RUNNER_TEMP/test-results"' in ev and "sign test-results/" not in ev
       and re.search(r"git ls-files[^\n]*test-results", gl) and "--only-results --results test-results" in gl,
       (ev[:300], gl[-300:]))
+
+# REQ-USA-12: docs, governance, HANDOFF, CHANGELOG and versions match the shipped behaviour
+cl23 = cl.split("## 2.3.0", 1)[1].split("\n## ", 1)[0] if "## 2.3.0" in cl else ""
+adr2 = read(".evidence", "decisions", "0002-ci-owns-test-results.md")
+adr3 = read(".evidence", "decisions", "0003-hook-git-is-neutralised.md")
+clir = read("cli", "README.md")
+gr60, pr60 = read("docs", "gates-reference.md"), read("docs", "policy-reference.md")
+ho60, contrib = read("HANDOFF.md"), read("CONTRIBUTING.md")
+check("REQ-USA-12 ADR-0002 is revision 2 and ADR-0003 §2 carries the dated PILOT-60 revision note",
+      "revision 2" in adr2 and "--only-results" in adr2 and re.search(r"Revision note, 2026-09-\d\d \(PILOT-60", adr3)
+      and "ENGINE_ALWAYS_REFUSED" in adr3, adr3[:200])
+check("REQ-USA-12 CI's signed artifact is the test evidence; validation/results is historical; one run; --results <dir>",
+      all("historical" in t for t in (cl23, ho60, sap)) and "freshly downloaded" in cm and "--results <dir>" in clir
+      and "One run is enough" in ho60 and "one run is enough" in contrib
+      and "--self-check" in clir and "--only-results" in clir, (len(cl23), "historical" in sap))
+check("REQ-USA-12 the YAML comment rule, plan references and -k/--suite are documented",
+      re.search(r"Comments \(2\.3\.0\)", clir) and re.search(r"Comments \(2\.3\.0\)", read(".evidence", "adapter.example.yml"))
+      and re.search(r"\*\*reference\*\*", clir) and re.search(r"\*\*reference\*\*", read("docs", "concepts.md"))
+      and "--suite" in contrib and "0 cases matched" in contrib and "--suite" in ho60)
+check("REQ-USA-12 gates reference: temp paths judged as paths, what stays denied, and the sandbox-safe mktemp form",
+      "## Temp-directory paths" in gr60 and 'mktemp "$TMPDIR/x.XXXXXX"' in gr60 and "--compress-program" in gr60
+      and "`make -f /tmp/Makefile`" in gr60)
+check("REQ-USA-12 both git config sets are documented with their reasons; the known-issue sentence is gone",
+      "git_config_engine_ignored" in pr60 and "ENGINE_ALWAYS_REFUSED" in pr60 and "shadows a built-in" in pr60
+      and "**Intersection**" in pr60 and "PILOT-60 splits the list" not in pr60
+      and all(k in pr60 for k in ("remote.*.url", "remote.*.pushurl", "url.*.insteadOf", "url.*.pushInsteadOf"))
+      and "ENGINE_ALWAYS_REFUSED" in gr60)
+check("REQ-USA-12 CHANGELOG 2.3.0 states the owner actions and PILOT-64; HANDOFF carries the ci.yml diff",
+      cl23 and "ci.yml" in cl23 and "git_allowed_config" in cl23 and "PILOT-64" in cl23 and "MAN-USA-01" in cl23
+      and "## PILOT-60 owner actions" in ho60 and "```diff\n--- a/.github/workflows/ci.yml" in ho60, cl23[:200])
+check("REQ-USA-12 all five plugins, the marketplace and the engine are version 2.3.0",
+      set(vers.values()) == {"2.3.0"} and set(v for v in mvers if v) == {"2.3.0"} and _st.ENGINE_VERSION == "2.3.0",
+      (vers, mvers, _st.ENGINE_VERSION))
 
 fails = sum(1 for _, ok, _ in res if not ok)
 print(f"\n{len(res) - fails} passed, {fails} failed")

@@ -22,13 +22,27 @@ python3 cli/evidence doctor
 | --- | --- | --- |
 | `doctor [--strict]` | Preflight checks for the gate environment | 0 = no FAIL; 1 = a FAIL (or any WARN with `--strict`) |
 | `scan [--repos A,B\|DIR] [--results P]` | Builds and prints the graph | 0 |
-| `gaps [--strict] [--repos A,B\|DIR] [--parent KEY] [--results P]` | Reports gap categories | 0 = no blocking gap; 1 = blocking gap; 2 = nothing to assess |
+| `gaps [--strict] [--repos A,B\|DIR] [--parent KEY] [--results P] [--only-results] [--self-check]` | Reports gap categories | 0 = no blocking gap; 1 = blocking gap; 2 = nothing to assess |
 | `export [--format csv\|md] [--write] [--conflicts-only] [--github] [--results P]` | Merges the matrix | 0; `--conflicts-only` exits 1 while any conflict exists |
 | `tracker check <KEY>` / `tracker link <KEY> <url-or-text>` | GitHub Issues through `gh` | 0 = ok; 1 = not found or write failed; 2 = not configured |
 
 `--results PATH` can be repeated. It adds a JUnit XML file, a `claude plugin eval`
 `aggregate-result.json`, or a directory of either, to the results named by
 `test_results_location`.
+
+`gaps --only-results` (2.3.0) reads **only** the `--results` paths and ignores the
+adapter's `test_results_location`, so a stale or committed result can't prove anything.
+Without `--results` it exits 2 before reading anything. CI's `sign-and-gate` job uses it on
+the freshly downloaded artifact (ADR-0002).
+
+`gaps --self-check` (2.3.0) is for this repository's own `scripts/ci/run-tests.sh`, whose
+last step runs `gaps --strict --self-check --only-results --results "$out"`. It exempts
+exactly one requirement, `REQ-V2C-09` (`SELF_CHECK_REQUIREMENT`, hard-coded in the CLI),
+because that run is its proof, and it says so in the output. No adapter key can name or change
+the exempt ID. The authoritative `gaps --strict` in CI runs without it.
+
+After a local `bash scripts/ci/run-tests.sh`, pass the directory it printed:
+`evidence gaps --strict --results <dir>`. Test results are CI artifacts; nobody commits them.
 
 ### `evidence doctor`
 
@@ -71,7 +85,7 @@ never proves anything.
 | `UNVERIFIED-RESULT` | Covered, but there is no result of any kind (no ingested result and no CSV `result`) | no | yes |
 | `ORPHANED` | A structural tag names a requirement ID that no spec defines | no | no |
 | `UNTRACED` | A commit carries no tracker key | no | no |
-| `DUPLICATE-ID` | A requirement ID is defined more than once (the first definition is kept) | no | yes |
+| `DUPLICATE-ID` | A requirement ID is defined more than once (the first definition is kept). Specs are read before plans; a plan row (a `spec_glob` file that also matches `artifact_chain.plan_glob`) repeating an ID its `From:` spec (or that spec's directory) defines is a **reference**, not a definition (2.3.0). A plan-only ID (Tier 1) is still defined by its plan | no | yes |
 
 Each requirement lands in at most one of `PROVEN` / `FAILED` / `SELF-ASSERTED` /
 `UNPROVEN` / `UNVERIFIED-RESULT`. `--strict` therefore means **every requirement
@@ -207,7 +221,12 @@ curl -sf -u "$JIRA_USER:$JIRA_API_TOKEN" -X POST -H 'Content-Type: application/j
 ### Adapter (`.evidence/adapter.yml`)
 
 The adapter is a flat `key: value` file. It supports indented `- item` lists,
-inline `[a, b]` lists, and quoted values. Keys: `requirements_source`,
+inline `[a, b]` lists, one level of nested mapping (`artifact_chain:` with `plan_glob:`), and quoted
+values. **Comments (2.3.0):** a `#` at the start of a value or after whitespace, outside single or
+double quotes, starts a YAML comment and ends the value, for scalars, `- item` entries and inline
+lists alike (`- intent/*/spec.md   # specs` is the glob `intent/*/spec.md`). A `#` inside quotes
+(`'REQ-#-[0-9]+'`) or with no whitespace before it (`a#b`) is part of the value. Eval `covers:`
+lines follow the same rule. Keys: `requirements_source`,
 `spec_glob`, `requirement_pattern`, `tracker_pattern`, `test_dir_segments`,
 `eval_glob`, `test_results_location`, `tracker`, `tracker_key_to_issue`. See
 `.evidence/adapter.example.yml`.

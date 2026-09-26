@@ -62,6 +62,18 @@ bash scripts/ci/check-version-bump.sh origin/main
 claude plugin validate .
 ```
 
+Or run every suite at once with `bash scripts/ci/run-tests.sh` (one run is enough). It writes
+JUnit and logs to `EVIDENCE_RESULTS_DIR`, by default a directory outside the working tree that it
+prints, and nothing under version control. Its last step is this repository's own
+`evidence gaps --strict --self-check --only-results` over that run's results (REQ-V2C-09). To check
+traceability locally afterwards, pass that directory: `evidence gaps --strict --results <dir>`.
+Never commit test results: CI's signed artifact is the evidence (ADR-0002).
+
+For a fast subset of the engine suite, `engine-tests.py --suite NAME` (repeatable) runs only the
+named suite functions, and `-k SUBSTR` reports only the matching cases while every other case still
+runs its hook call, so outcomes match a full run. A `-k` that selects nothing exits 1 with
+`0 cases matched`; an unknown suite exits 2.
+
 A hook change must also be tested **through Claude Code itself**: start a session,
 confirm the `Evidence Chain gates live` canary line, and trigger one deny. Running a
 script by hand doesn't exercise the `hooks.json` contract. See

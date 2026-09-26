@@ -39,16 +39,17 @@ The work since the v1 audit is recorded as intent/spec/plan in:
   - Lifecycle: `change start|status|list|advance|set-tier|release|clear-violations`, `approve`, `audit verify`, `metrics`.
   - Traceability: `doctor`, `scan`, `gaps`, `export`, `results sign`, `tracker`.
 - **Governance**, `governance/`. `control-mapping.md` maps SOC 2, ISO 27001:2022 and NIST SSDF to mechanisms. Every enforcement claim cites a test.
-- **CI**, `.github/workflows/ci.yml`. The `checks` job runs every suite without the key. The `sign-and-gate` job signs results with the *base branch's* CLI and runs `gaps --strict`. Evals run on manual dispatch only.
+- **CI**, `.github/workflows/ci.yml`. The `checks` job runs every suite without the key. The `sign-and-gate` job signs results with the *base branch's* CLI and runs `gaps --strict`. Since 2.3.0 (ADR-0002, once the owner applies the `ci.yml` diff under "PILOT-60 owner actions") both use only `${{ runner.temp }}/results`: the fresh artifact is the test evidence, and `validation/results/` is historical. Evals run on manual dispatch only.
 - **The merge gate (2.1.0)**, `.github/workflows/verify-range.yml`: a `pull_request_target` job that runs `evidence verify-range` from the base branch against the PR's commits (ADR-0004). It is authoritative; the local hooks are advisory (ADR-0003 §4 states the residual risk). It needs to be a required check on `main`, and must be re-run after approving.
 - **Adopter templates**: `managed-settings.json`, `pipelines/` (GitHub Actions, GitLab, CI-hosted agent, CODEOWNERS example), `docs/managed-hooks.example.json`.
 
 ## Run and verify
 
 ```bash
-bash scripts/ci/run-tests.sh                # every suite -> JUnit in validation/results/
-python3 cli/evidence gaps --strict          # this repo's own traceability (run twice after big changes:
-                                            # the content suite reads the previous run's results)
+bash scripts/ci/run-tests.sh                # every suite + the self-check -> JUnit in $EVIDENCE_RESULTS_DIR
+                                            # (default outside the repo; the script prints it). One run is enough.
+python3 cli/evidence gaps --strict --results <printed dir>   # this repo's own traceability, locally
+python3 plugins/evidence-sdlc/scripts/tests/engine-tests.py --suite suite_pilot60 -k REQ-USA  # a fast subset
 python3 cli/evidence doctor                 # includes a live gate canary
 bash scripts/ci/check-version-bump.sh main  # before merging any plugin change
 claude plugin validate . && for p in plugins/*/; do claude plugin validate "$p"; done
@@ -109,10 +110,11 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
                 persist-credentials: false
      ```
      Keep `.github/**` under code-owner review: a PR that edits this file, or adds a `pull_request` workflow with a job named `verify-range`, can still produce a GitHub Actions check under that name, and only the code owner's review stops it.
-   - **`ci_gate_gh_path` is trusted as set** (PILOT-62 re-review item 4, not done): applying the not-user-writable check to it would need a root-owned fake gh in the hook-level tests (ownership, not mode, is what the check tests), so it is left for PILOT-60/61. Until then the org must point it at a root-owned gh.
+   - **`ci_gate_gh_path` is trusted as set** (PILOT-62 re-review item 4, not done): applying the not-user-writable check to it would need a root-owned fake gh in the hook-level tests (ownership, not mode, is what the check tests), so it is left for PILOT-61 (not in PILOT-60's scope). Until then the org must point it at a root-owned gh.
    - **PILOT-63, release automation (deferred from PILOT-62):** `verify-range --push-report` records "merged" in a signed CI artifact that the release command reads. Writing a signed `released` state from CI needs a commit on protected `main` and a human-authored workflow, so it is its own change.
    - **PILOT-59, concurrency and monitor gaps:** attested writes, a signed lease, chained snapshots, a pre-call `tool-start` audit entry (review A4), FIFO/device hashing in `_dirty` (B1), snapshot root mismatch (B2), snapshot directory 0700 plus an owner check (B3), `file_in_commit`-style fail-open sweeps. Also `cmdparse` merges the line after a heredoc into the previous command's argv, and the GitHub approval route doesn't compare the approver with the change's creator.
-   - **PILOT-60, usability:** CI owns test results (ADR-0002), YAML comments, DUPLICATE-ID, the temp-dir false positives, `engine-tests.py -k` crash, split `deny_git_config_keys` so harmless global keys (`alias.*`, `core.editor`) aren't refused.
+   - **PILOT-60, usability:** done in 2.3.0 (CHANGELOG). Owner actions are under "PILOT-60 owner actions" below.
+   - **PILOT-64 (proposed, key not yet allocated):** a plan re-approval missing from `state.json`'s history, and watching `CLAUDE_CONFIG_DIR`. Both touch `lifecycle.py` / `integrity.py`.
    - **PILOT-61, key isolation:** a signer that never runs git or exposes the key, which retires ADR-0003 §4.
 1. **Inline interpreter code** (`python -c`, `node -e`) is judged by a keyword denylist
    (`cmdparse._WRITE_HINTS`), so string tricks get past the pre-check. Replace it with an
@@ -164,6 +166,66 @@ changes. Engine changes are Tier 3 by the framework's own rules. Before that wor
 - **Absolute paths in permission rules need `//`.** `Read(/Library/…)` is project-relative; `Read(//Library/…)` is the real path. This is how the first signing key leaked (PILOT-54).
 - **Run review agents one at a time.** Parallel subagents made the integrity monitor attribute one agent's writes to another, restore over a real violation record, and fork the audit log (PILOT-57). Monitor concurrency is PILOT-58.
 - **Human terminal actions need the key for that one command:** `EVIDENCE_SIGNING_KEY="$(…)" evidence …` (docs/managed-settings.md). Plan approval goes through the prompt and needs no key.
-- **Content-suite-only requirements need `validation/results/content.xml` committed.** The suite's own `gaps --strict` check reads the committed file before the suite writes a fresh one. Run `bash scripts/ci/run-tests.sh` twice in your terminal and commit the results. Agents can't write `validation/`. Fix tracked for PILOT-58.
+- **Test results are CI artifacts (2.3.0, ADR-0002).** Nobody commits result files. `bash scripts/ci/run-tests.sh` writes to `EVIDENCE_RESULTS_DIR` (default outside the repo, printed), ends with the self-check that proves REQ-V2C-09, and leaves `git status` clean, so an agent may run it too. One run is enough. `validation/results/` is historical.
 - **The agent sandbox can't open PRs:** `gh` fails TLS verification there. The agent pushes, and a human runs `gh pr create`/`merge`.
 - **Personal files** moved out of the repo are in `~/Desktop/evidence-chain-extras/` on the maintainer's machine.
+
+## PILOT-60 owner actions
+
+1. **Apply the `.github/workflows/ci.yml` change below** (change-controlled, human-authored; REQ-USA-04) and commit it on the PILOT-60 branch before merging. The content check "REQ-USA-04 sign-and-gate signs and gates only runner.temp results" fails until it is applied. Save the block to a file and run `git apply <file>`. The `else` branch runs the 2.1.0 command on the downloaded directory for the one PR whose base CLI predates `--only-results`. Once the base CLI is 2.3.0, a human can drop it.
+2. **MAN-USA-01:** run `bash scripts/ci/run-tests.sh` once in your terminal, and confirm that it prints the results directory and `self-check: passed`, and that `git status --short` shows nothing new.
+3. **MAN-USA-02:** confirm that the first `main` CI run after the merge signs files under `$RUNNER_TEMP` and that `sign-and-gate` passes.
+4. Remove any org `git_allowed_config` entries that were added only so a global alias or editor would pass.
+
+```diff
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -41,13 +41,16 @@
+       - name: Python compiles
+         run: python3 -m py_compile plugins/evidence-sdlc/scripts/engine/*.py plugins/evidence-quality/scripts/*.py plugins/evidence-sdlc/scripts/cli/*.py
+ 
+-      - name: All suites (engine, lifecycle, sensor, CLI, content) -> fresh JUnit in validation/results
++      - name: All suites (engine, lifecycle, sensor, CLI, content) and the self-check -> fresh JUnit in runner.temp/results
++        env:
++          EVIDENCE_RESULTS_DIR: ${{ runner.temp }}/results
+         run: bash scripts/ci/run-tests.sh
+ 
+       - uses: actions/upload-artifact@v4
++        if: always()
+         with:
+           name: validation-results
+-          path: validation/results/
++          path: ${{ runner.temp }}/results/
+ 
+       - name: Version bump check
+         if: github.event_name == 'pull_request'
+@@ -82,7 +85,7 @@
+       - uses: actions/download-artifact@v4
+         with:
+           name: validation-results
+-          path: validation/results/
++          path: ${{ runner.temp }}/results/
+       - name: Trusted signer = the base branch's CLI, never the PR's own copy
+         run: |
+           base="${{ github.base_ref || github.event.repository.default_branch }}"
+@@ -98,11 +101,16 @@
+         env:
+           EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+         run: |
+-          if [ -n "$EVIDENCE_SIGNING_KEY" ]; then python3 ../trusted/plugins/evidence-sdlc/bin/evidence results sign validation/results/*.xml; fi
+-      - name: Traceability gaps (strict, trusted CLI)
++          if [ -n "$EVIDENCE_SIGNING_KEY" ]; then python3 ../trusted/plugins/evidence-sdlc/bin/evidence results sign "$RUNNER_TEMP"/results/*.xml; fi
++      - name: Traceability gaps (strict, trusted CLI, only this run's downloaded results)
+         env:
+           EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
+-        run: python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --strict
++        run: |
++          if python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --help | grep -q -- --only-results; then
++            python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --strict --only-results --results "$RUNNER_TEMP/results"
++          else
++            python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --strict --results "$RUNNER_TEMP/results"
++          fi
+ 
+   evals:
+     if: github.event_name == 'workflow_dispatch' && inputs.run_evals
+```

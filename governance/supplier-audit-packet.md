@@ -62,6 +62,13 @@ platform remains the authoritative merge control**, configured by us, not by the
 plugin. Automated test and lint gates run in repository CI once the provided workflow
 (`.github/workflows/ci.yml`) is enabled on the host.
 
+Since 2.3.0 (ADR-0002), **the test evidence is CI's signed artifact, not committed files.** The
+`checks` job writes every suite's JUnit, plus this repository's own `gaps --strict` self-check,
+to the runner's temp directory and uploads it. The `sign-and-gate` job downloads that artifact,
+signs it with the base branch's CLI (bound to the commit and run), and gates with
+`evidence gaps --strict --only-results` on those files alone. A result file committed by a pull
+request is never signed or read. `validation/results/` in the repository is historical.
+
 Since 2.1.0, **change control rests on the `verify-range` check**, not on the local gates. It is
 a `pull_request_target` job that runs the base branch's copy of the workflow, so a pull request
 can't alter the check that judges it. It reads every commit with git plumbing and fails the PR

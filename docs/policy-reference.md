@@ -45,6 +45,7 @@ When `.evidence/policy.json` is merged:
 | `ungated` | | **Can only shrink**: repo entries that aren't already ungated are dropped. The exception is when the org policy sets `allow_repo_ungated_additions: true`; then they are unioned |
 | `tier_floors` | | Per glob, the **higher** tier wins, and new globs are added |
 | `required_agents` | | Per tier, the agent lists are **unioned** |
+| `git_config_engine_ignored` (2.3.0) | | **Intersection**: a repository policy may only remove entries, never add one |
 | `auto_resolve_max_per_session` (2.2.0) | | **Minimum**: the repo can only lower the cap (a non-integer or negative value is ignored) |
 | `tier3_auto_modes_with_required_gate` (2.2.0) | | **Can only become false**: a repo can switch Tier 3 auto modes off, never on |
 | Patterns and approval | `key_pattern`, `change_ticket_pattern`, `release_approval_pattern`, `approval` | **Replaced** by the repo value (see the note below) |
@@ -92,7 +93,7 @@ repo-relative form with `realpath` before matching.
 | `deny_agent_merge` | `true` | Denies `gh pr merge`, and `gh api` writes to merge, protection, rulesets or refs endpoints. (`gh pr merge --admin` is always denied) |
 | `prod_words` | `prod`, `production`, `prd`, `live`, `prod1`, `prod2` | Words that mark a deploy target as production. Matched case-insensitively |
 | `treat_unknown_deploy_target_as_production` | `true` | Treats a target computed at run time (`$ENV`) as production |
-| `deny_git_config_keys` | `alias.*`, `core.hooksPath`, `core.sshCommand`, `core.fsmonitor`, `core.editor`, `core.pager`, `credential.*`, `include.path`, `includeIf.*`, `filter.*`, `diff.*.textconv`, `sequence.editor`, `gpg.program`, and since 2.1.0 `diff.*.command`, `merge.*.driver`, `core.askPass`, `core.gitProxy`, `core.worktree`, `core.attributesFile`, `gpg.*program`, `ssh.variant`, `remote.*.uploadpack`, `remote.*.receivepack`, `uploadpack.*`, `*tool.*.cmd`, `interactive.diffFilter`, `pager.*`, `url.*.insteadOf`, `submodule.*.update`, `lfs.extension.*`, `lfs.customtransfer.*`, `lfs.standalonetransferagent` | Config keys an agent may not set through `git -c` or `git config`, because each can run arbitrary programs or change authentication. Since 2.1.0 the same list is checked against the config the engine's own git would use: a key in it at any scope except `command` refuses every call (`git-config-refused`), except `credential.*` at global or system scope and exact `git_allowed_config` values. **Known issue:** this also refuses harmless global keys such as `alias.*` and `core.editor`; PILOT-60 splits the list |
+| `deny_git_config_keys` | `alias.*`, `core.hooksPath`, `core.sshCommand`, `core.fsmonitor`, `core.editor`, `core.pager`, `credential.*`, `include.path`, `includeIf.*`, `filter.*`, `diff.*.textconv`, `sequence.editor`, `gpg.program`, and since 2.1.0 `diff.*.command`, `merge.*.driver`, `core.askPass`, `core.gitProxy`, `core.worktree`, `core.attributesFile`, `gpg.*program`, `ssh.variant`, `remote.*.uploadpack`, `remote.*.receivepack`, `uploadpack.*`, `*tool.*.cmd`, `interactive.diffFilter`, `pager.*`, `url.*.insteadOf`, `submodule.*.update`, `lfs.extension.*`, `lfs.customtransfer.*`, `lfs.standalonetransferagent` | Config keys an agent may not set through `git -c` or `git config`, because each can run arbitrary programs or change authentication. Since 2.1.0 the same list is checked against the config the engine's own git would use: a key in it at any scope except `command` refuses every call (`git-config-refused`), except `credential.*` at global or system scope, `git_config_engine_ignored` keys at global or system scope (2.3.0) and exact `git_allowed_config` values. What an agent may set is always judged against this whole list |
 | `git_allowed_config` | the four `git lfs install` values: `filter.lfs.clean=git-lfs clean -- %f`, `filter.lfs.smudge=git-lfs smudge -- %f`, `filter.lfs.process=git-lfs filter-process`, `filter.lfs.required=true` | Exact `key=value` pairs that pass the engine's config check although the key is in `deny_git_config_keys`. A value containing a newline or carriage return never passes. Org policy only: a repository policy can't add to it (2.1.0) |
 
 ### Changes, reviews and agents
@@ -194,6 +195,26 @@ strictness flag off.
 | `git_allowed_config` | the four git-lfs values | See [Git, merges and production](#git-merges-and-production). |
 | `verify_range_blob_cap_mb` | `20` | `verify-range` rule 3: a blob added in a PR larger than this fails, unless its path is on `verify_range_allow_large`. Blobs under the cap are scanned for secrets. Read from the base commit's policy plus the org policy, never from the PR. |
 | `verify_range_allow_large` | `[]` | Globs of paths allowed to exceed `verify_range_blob_cap_mb` (for example `assets/**/*.png`). Org policy only; a repository policy can't loosen it. |
+
+## Keys added in 2.3.0 (PILOT-60)
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `git_config_engine_ignored` | `alias.*`, `core.editor`, `core.pager`, `pager.*`, `sequence.editor`, `interactive.diffFilter`, `*tool.*.cmd` | Keys in `deny_git_config_keys` that the engine's own config check (`git-config-refused`) does **not** refuse at **global or system** scope. Why each is safe there: the engine runs only built-in subcommands (`rev-parse`, `status`, `ls-files`, `ls-tree`, `show`, `diff`, `diff-tree`, `log`, `cat-file`, `merge-base`, `rev-list`, `config`), and git never expands an alias that shadows a built-in; none of them opens an editor (`core.editor`, `sequence.editor`) or runs `add -p` (`interactive.diffFilter`), `difftool` or `mergetool` (`*tool.*.cmd`); output is captured and the engine sets `core.pager=cat`, so no pager runs (`core.pager`, `pager.*`). At local or worktree scope they are still refused: an agent can write `.git/config`, and a human would later run what it planted. The org policy may add entries; a repository policy may only remove them. `git -c` and `git config` by an agent still deny the whole `deny_git_config_keys` list. |
+
+**`ENGINE_ALWAYS_REFUSED`** (in `state.py`, not policy) lists the keys that can make the engine's
+own git run a program or repoint where it talks to: `core.fsmonitor`, `core.hooksPath`,
+`core.sshCommand`, `core.askPass`, `core.gitProxy`, `core.worktree`, `core.attributesFile`,
+`include.path`, `includeIf.*`, `filter.*`, `diff.*.textconv`, `diff.*.command`, `merge.*.driver`,
+`gpg.program`, `gpg.*program`, `ssh.variant`, `remote.*.uploadpack`, `remote.*.receivepack`,
+`uploadpack.*`, `url.*.insteadOf`, `url.*.pushInsteadOf`, `remote.*.url`, `remote.*.pushurl`,
+`submodule.*.update`, `lfs.extension.*`, `lfs.customtransfer.*`, `lfs.standalonetransferagent` and
+`credential.*` (the last refused at local and worktree scope only, as in 2.1.0). No
+`git_config_engine_ignored` entry, org or repository, can exempt one at any scope. `gpg.*` is
+here because `log.showSignature=true` makes `git log` run `gpg.program`.
+
+**Owner action:** remove any org `git_allowed_config` entries that were added only so a global
+alias or editor would pass; they are no longer needed.
 
 ## Keys added in 2.2.0 (PILOT-62, ADR-0005)
 

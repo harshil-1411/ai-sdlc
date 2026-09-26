@@ -3,6 +3,49 @@
 All five plugins are versioned together. Every change to a plugin's files needs a
 version bump (enforced in CI by `scripts/ci/check-version-bump.sh`) and an entry here.
 
+## 2.3.0 — 2026-09-26 (PILOT-60)
+
+Usability: the defects that cost a human round trip on every change. Spec, plan and ADRs:
+`intent/2026-09-25-usability/`, `.evidence/decisions/0002-ci-owns-test-results.md` (revision 2),
+and a dated revision note to `.evidence/decisions/0003-hook-git-is-neutralised.md` §2.
+
+**Owner actions** (details and the exact diff in HANDOFF.md, "PILOT-60 owner actions"):
+- apply the `.github/workflows/ci.yml` diff (change-controlled; REQ-USA-04). The content check for it fails until you do;
+- run `bash scripts/ci/run-tests.sh` once and confirm a clean `git status` (MAN-USA-01);
+- confirm that the first `main` run signs files under `$RUNNER_TEMP` and that `sign-and-gate` passes (MAN-USA-02);
+- remove any org `git_allowed_config` entries added only for aliases or editors.
+
+### Test results are CI's signed artifact (ADR-0002)
+- `scripts/ci/run-tests.sh` writes to `EVIDENCE_RESULTS_DIR` (REQ-USA-01). The default is outside the working tree, `${TMPDIR:-/tmp}/evidence-chain-results/<repo>-<hash>`, and the script prints it. It clears stale `*.xml`, `*.log` and `*.sig` first, so one run is enough and an agent may run it. `validation/results/` is historical, and nobody commits results.
+- The self-check is `run-tests.sh`'s last step (REQ-USA-02): `evidence gaps --strict --self-check --only-results --results "$out"`, written to `self-check.xml` as the proof of REQ-V2C-09. `--self-check` exempts only `REQ-V2C-09`, which is hard-coded in the CLI; no adapter key can change it. The content suite no longer runs `gaps --strict`.
+- `evidence gaps --only-results` reads only the `--results` paths (REQ-USA-03). Without `--results`, it exits 2.
+- After the `ci.yml` change, `sign-and-gate` downloads the artifact to `${{ runner.temp }}/results` and signs and gates only those files. For the one PR whose base CLI predates `--only-results`, it feature-detects the flag. The adopter GitHub template does the same, and pins v2.3.0. The GitLab template refuses a tracked `test-results/` (REQ-USA-04).
+
+### Traceability CLI
+- **YAML comments** (REQ-USA-05). In `.evidence/adapter.yml` values, list items, inline lists and eval `covers:` lines, a `#` that starts the value or follows whitespace, outside quotes, starts a comment. The reader also takes one level of nested mapping, so `artifact_chain.plan_glob` is read; before, it was dropped.
+- **Plan references** (REQ-USA-06). Specs are read before plans. When a plan's Proof row repeats an ID that its `From:` spec (or that spec's directory) defines, the row is a reference, not a `DUPLICATE-ID`. Genuine duplicates still fail, and Tier 1 plan-only IDs are still defined.
+
+### Gate engine (evidence-sdlc)
+- **Temp-directory paths are judged as paths** (REQ-USA-07, 08). `cat`, `ls`, `tail`, `mkdir`, `grep`/`rg`, `sort`, `curl -o`, `cp`/`mv` out of the repository and the other `_TEMP_DATA_PROGS` no longer trip "Running … from a temporary directory".
+  - These stay denied: running code from a temp directory; a temp path given to a code-running option (`rg --pre`, `sort --compress-program`, `curl -K`/`--config`, `wget -e`/`--execute`/`--config`, including `--opt=value`); a copy into the repository.
+  - `sort --compress-program=/tmp/x`, allowed before, is now denied.
+  - Prefixes compare real paths with a trailing `/`.
+  - The sandbox-safe form is `mktemp "$TMPDIR/x.XXXXXX"`.
+- **Git config split** (REQ-USA-10, 11). The engine's own check no longer refuses `git_config_engine_ignored` keys at **global or system** scope. The new policy key defaults to `alias.*`, `core.editor`, `core.pager`, `pager.*`, `sequence.editor`, `interactive.diffFilter` and `*tool.*.cmd`; a repository policy may only remove entries.
+  - `ENGINE_ALWAYS_REFUSED`, in code, keeps every command-running key refused at every scope, whatever the policy says. That includes PILOT-62's `remote.*.url`, `remote.*.pushurl`, `url.*.insteadOf` and `url.*.pushInsteadOf`, and `gpg.*`: `log.showSignature` makes `git log` run `gpg.program`, checked on git 2.46.0.
+  - Ignored keys at local or worktree scope are still refused.
+  - What an agent may set with `git -c` / `git config` is unchanged.
+- `ENGINE_VERSION` 2.3.0.
+
+### Tests
+- `engine-tests.py`: `-k` now selects which cases are reported, and unselected cases still run their hooks, so the `suite_round4` crash is gone. `--suite NAME` runs a subset. `0 cases matched` exits 1, and an unknown suite exits 2 (REQ-USA-09). New `suite_pilot60`.
+- `cli-lifecycle-tests.py gaps` runs the new `gaps_tests()` (fixtures in `scripts/tests/fixtures/pilot60/`).
+
+### Known issues
+- **Proposed as PILOT-64** (key not yet allocated): a plan re-approval missing from `state.json`'s history, and watching `CLAUDE_CONFIG_DIR`.
+- A temp path handed to a program that is *not* a data program through `--opt=value` (`make --file=/tmp/x`) is still judged only in its space-separated form (`make -f /tmp/x` is denied), as in 2.2.0.
+- `cp -t DIR` into a temp directory is denied: `writes_of` reads the last operand as the destination. It fails closed.
+
 ## 2.2.0 — 2026-09-25 (PILOT-62)
 
 The local layer is advisory in practice. Spec, plan and ADR-0005:

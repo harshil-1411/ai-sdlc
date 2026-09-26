@@ -209,6 +209,11 @@ the graph: key → requirement → test → result → commit. `gaps` reports ca
 as `NO COVERAGE`, `FAILED`, `SELF-ASSERTED`, `UNPROVEN`, `UNVERIFIED-RESULT`,
 `ORPHANED`, `UNTRACED`, `DUPLICATE-ID` and `MISSING-CHILD`. A requirement is proven
 only by an ingested, machine-readable passing result. A hand-typed `PASS` never counts.
+`DUPLICATE-ID` means one ID is defined in two places. A Tier 2+ plan's Proof table that repeats
+the IDs of the spec its `From:` header names is a **reference**, not a second definition; a
+Tier 1 plan's own IDs are still defined by the plan (2.3.0).
+Test results are CI's signed artifacts, never committed files (ADR-0002):
+`gaps --only-results --results <dir>` reads only a given run's results.
 `export` merge-writes the matrix. The exit codes and categories are in
 [cli/README.md](../cli/README.md). Before relying on the CLI for anything that matters,
 read [cli/REVIEW-BRIEF.md](../cli/REVIEW-BRIEF.md).
