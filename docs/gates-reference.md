@@ -354,11 +354,22 @@ Since 2.3.0 (PILOT-60, REQ-USA-07/08) a path under a temporary directory (`/tmp/
 `cat`, `head`, `tail`, `wc`, `ls`, `stat`, `file`, `du`, `mkdir`, `rmdir`, `rm`, `touch`, `tee`,
 `mktemp`, `grep`, `egrep`, `fgrep`, `rg`, `uniq`, `cut`, `tr`, `diff`, `cmp`, `md5sum`,
 `sha256sum`, `shasum`, `jq`, `basename`, `dirname`, `realpath`, `readlink`, `echo`, `printf`, `test`,
-`[`, and `cp` and `mv` with the temp path as the **destination** only (`cp src/app.py /tmp/app.bak`).
+`[`, `cp` and `mv` (for example `cp src/app.py /tmp/app.bak`, the temp path as the **destination**).
 Their writes are still judged by the usual rules (claims, control plane, secrets). The relaxation
 never applies to a command that has a process substitution (`<(…)`, `>(…)`) anywhere, or any write
 (a redirect, `tee`, a copy's destination) that is inside the repository, opaque or computed at run
-time: `cat /tmp/x > src/app.py` and `cat /tmp/x | tee -a src/app.py` are denied.
+time: `cat /tmp/x > src/app.py` and `cat /tmp/x | tee -a src/app.py` are denied. A stdin source
+(`< /tmp/x`, `0<`, `<>`) is judged the same way (`tee src/app.py < /tmp/x` is denied). It also never
+applies to `rg` with `--pre`/`--pre-glob` in any spelling, or to a program run with a `VAR=value`
+prefix (`RIPGREP_CONFIG_PATH`, `LD_PRELOAD`), or in a command that runs `export`, `declare`, `set` or
+`source`. A temp path that is only read or only a destination is allowed when no write reaches the
+repository: `mv src/app.py /tmp/y`, `cp /tmp/x /tmp/y`.
+
+**Working directory.** A relative write is judged from every directory the shell could be in: the
+session's cwd and every `cd`/`pushd` target, plus the repository root and HOME after `cd -`, `popd`
+or a bare `cd`. Only a plain `a && b` chain is followed exactly (`cd src && echo x > app.py` writes
+`src/app.py`). After a `cd` to a computed path, a relative write is denied: "the working directory
+cannot be determined".
 
 These stay denied as `opaque-write`, because they run code the gates never saw written, or carry
 temp content into the repository:
@@ -371,7 +382,7 @@ temp content into the repository:
 - a temp path given to a code-running option: `rg --pre`, `sort --compress-program`,
   `curl -K`/`--config`, `wget -e`/`--execute`/`--config` (`--opt value`, `--opt=value` and its
   abbreviations, and `-Kvalue` alone or in a cluster such as `-qK/tmp/cfg`);
-- `cp` or `mv` with a temp **source** (`cp /tmp/x src/app.py`, `cp /tmp/a /tmp/b`), and any `cp`/`mv`
+- `cp` or `mv` from a temp directory into the repository (`cp /tmp/x src/app.py`), and any `cp`/`mv`
   with `-t` in any form (`-t`, a cluster such as `-rt`, `--target-directory`, `--target`).
 
 A path written as the literal `$TMPDIR/…` is computed at run time: a write to it

@@ -14,6 +14,8 @@ out="${EVIDENCE_RESULTS_DIR:-${TMPDIR:-/tmp}/evidence-chain-results/$name}"
 # rm -f below would delete files there: refuse it (real paths, so a link or ../ cannot hide it)
 real_out="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$out")" || exit 2
 real_root="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$root")" || exit 2
+# macOS file systems are case-insensitive by default: compare lowercased paths there
+if [ "$(uname)" = Darwin ]; then real_out="$(printf '%s' "$real_out" | tr '[:upper:]' '[:lower:]')"; real_root="$(printf '%s' "$real_root" | tr '[:upper:]' '[:lower:]')"; fi
 case "$real_out/" in "$real_root"/*) echo "EVIDENCE_RESULTS_DIR ($out) is inside the working tree ($root); use a directory outside it" >&2; exit 2;; esac
 mkdir -p "$out"
 # a stale suite from an earlier run must never count

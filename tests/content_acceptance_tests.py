@@ -466,7 +466,8 @@ _rm_at = next((i for i, l in enumerate(_rt_code) if l.startswith("rm -f")), -1)
 check("REQ-USA-01 run-tests.sh refuses an EVIDENCE_RESULTS_DIR inside the working tree (realpath) before any rm -f",
       0 <= _guard_at < _rm_at
       and any(l.startswith("real_out=") and "realpath" in l and '"$out"' in l for l in _rt_code[:_guard_at])
-      and any(l.startswith("real_root=") and "realpath" in l and '"$root"' in l for l in _rt_code[:_guard_at]),
+      and any(l.startswith("real_root=") and "realpath" in l and '"$root"' in l for l in _rt_code[:_guard_at])
+      and any("uname" in l and "Darwin" in l and "[:upper:]" in l and "[:lower:]" in l for l in _rt_code[:_guard_at]),
       _rt_code[:14])
 
 # REQ-USA-12: docs, governance, HANDOFF, CHANGELOG and versions match the shipped behaviour
@@ -500,6 +501,12 @@ check("REQ-USA-12 review M1/L1: sort, curl, wget and chmod are not data programs
                                   "argv[0]", "cp -t", "literal `$TMPDIR`", "PILOT-59"))
       and "literal `$TMPDIR`" in ho60 and "integrity monitor watches" in pr60 and "integrity monitor watches" in cl23,
       _gr_list[:300])
+check("REQ-USA-12 verification: rg --pre, env prefixes, stdin, candidate working directories and the Critical C2 "
+      "known issue for PILOT-59 are documented",
+      all(x in cl23 for x in ("--pre-glob", "candidate working directories", "cannot be determined", "sponge",
+                              "Critical (C2)", "< /tmp/x"))
+      and all(x in _gr_tmp for x in ("--pre-glob", "cannot be determined", "RIPGREP_CONFIG_PATH", "< /tmp/x")),
+      cl23[:200])
 check("REQ-USA-12 both git config sets are documented with their reasons; the known-issue sentence is gone",
       "git_config_engine_ignored" in pr60 and "ENGINE_ALWAYS_REFUSED" in pr60 and "shadows a built-in" in pr60
       and "**Intersection**" in pr60 and "PILOT-60 splits the list" not in pr60
