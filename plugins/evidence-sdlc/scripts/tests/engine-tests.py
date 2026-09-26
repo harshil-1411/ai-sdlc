@@ -2656,6 +2656,30 @@ def suite_pilot62():
              rule_hint="remote")
     t, i = bash("git config --get remote.origin.url")
     case("REQ-LLA-09 control: reading remote.origin.url is allowed", rg, t, i, "allow")
+    # fix 3: whole-section operations turn per-key-allowed settings into a remote or an include
+    for c in ("git config --remove-section remote.origin", "git config --rename-section submodule.x remote.origin",
+              "git config --rename-section y include", "git config --remove-section foo",
+              "git config --rename-section=submodule.x remote.origin", "git config --ren submodule.x remote.origin",
+              "git config rename-section submodule.x remote.origin", "git config remove-section foo",
+              "git config --global --rename-section y include", "git config -f .git/config --rename-section y include",
+              "git config --file=.git/config remove-section foo", "git -C . config --remove-section foo",
+              "git config --edit", "git config -e", "git config --global -e", "git config edit",
+              "git config -f .git/config --edit"):
+        t, i = bash(c)
+        case(f"REQ-LLA-09 a whole-section or editor git config is denied (git-config-section): {c[:60]}", rg, t, i,
+             "deny", rule_hint="whole config sections")
+    for c in ("git config submodule.x.url https://github.com/evil/x.git", "git config --remove-section remote.origin",
+              "git config --rename-section submodule.x remote.origin"):
+        t, i = bash(c)
+        if "rename" in c:
+            case("REQ-LLA-09 the submodule-to-remote bypass is denied at the rename step", rg, t, i, "deny",
+                 rule_hint="whole config sections")
+    t, i = bash("git config y.path cfg/extra && git config --rename-section y include")
+    case("REQ-LLA-09 y.path then --rename-section y include in one command is denied", rg, t, i, "deny",
+         rule_hint="whole config sections")
+    for c in ("git config --list", "git config --get-regexp '^remote\\.'", "git config get core.bare"):
+        t, i = bash(c)
+        case(f"REQ-LLA-09 control: reading git config is allowed: {c[:50]}", rg, t, i, "allow")
     shutil.rmtree(rg)
 
     # ---------------- REQ-LLA-08: Tier 3 auto modes follow the confirmed gate
@@ -2730,6 +2754,7 @@ def suite_pilot62():
               "gh api graphql -F query=@mutation.graphql",
               "gh api graphql --input q.json",
               "gh api graphql -Fquery=@m.graphql",
+              "gh api graphql -F=query=@m.graphql",
               "gh run -R o/r rerun 42",
               "gh run --repo o/r rerun 42"):
         t, i = bash(c)

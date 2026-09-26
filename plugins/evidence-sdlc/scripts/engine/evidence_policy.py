@@ -595,6 +595,41 @@ def _review_gate(ctx, action):
 
 
 _REMOTE_CONFIG_KEYS = ("remote.*.url", "remote.*.pushurl", "url.*.insteadof", "url.*.pushinsteadof")
+_CONFIG_SECTION_OPS = ("rename-section", "remove-section", "edit")
+
+
+def _git_config_section_op(sargs):
+    """The whole-section or editor operation a `git config` argument list asks for, or None: the
+    options --rename-section, --remove-section and --edit in any position, `=value` form or
+    abbreviation (git accepts unique prefixes; ambiguous ones are denied too), -e in a short-option cluster,
+    and the subcommands rename-section, remove-section and edit (PILOT-62 fix 3). A section rename
+    turns keys the per-key checks allowed (submodule.x.url, y.path) into remote.origin or include."""
+    words, first, skip = [], None, False
+    for a in sargs:
+        al = a.lower()
+        if skip:
+            skip = False
+            words.append(al)
+            continue
+        if al in ("-f", "--file", "--blob", "--type", "--default", "--comment", "--value", "--url"):
+            skip = True
+        if al.startswith("--") and len(al) > 2:
+            name = al[2:].split("=", 1)[0]
+            hit = next((op for op in _CONFIG_SECTION_OPS if name and op.startswith(name)), None)
+            if hit and (len(name) >= 2 or name == "e"):
+                return "--" + hit
+        elif al.startswith("-") and len(al) > 1 and al[1:].isalpha():
+            for ch in al[1:]:
+                if ch == "e":
+                    return "-e"
+                if ch == "f":  # -f takes the rest as its value
+                    break
+        elif not al.startswith("-"):
+            words.append(al)
+            first = al if first is None else first
+    if any(w in ("rename-section", "remove-section") for w in words):  # even as an option's value
+        return next(w for w in words if w in ("rename-section", "remove-section"))
+    return "edit" if first == "edit" else None
 
 
 def _check_git(ctx, s, bodies=()):
@@ -623,6 +658,11 @@ def _check_git(ctx, s, bodies=()):
     if any(v and v.split("=", 1)[0].lower().startswith(("user.", "author.", "committer.")) for o, v in gopts if o == "-c"):
         return deny("identity", "`git -c user.*=…` changes your git identity; not available to an agent session.")
     if sub == "config":
+        op = _git_config_section_op(sargs)
+        if op:
+            return deny("git-config-section",
+                        f"`git config {op}` renames, removes or hand-edits whole config sections, which can turn keys "
+                        "the engine allowed one at a time into a remote, an include or a command. A human does this.")
         setting, skip = [], False
         for a in sargs:
             if skip:
@@ -910,7 +950,7 @@ def _check_gh(ctx, s):
                         "session is not allowed: a required check matched by name could be satisfied that way. CI posts "
                         "checks; reading them is fine.")
         if "graphql" in words and any(a == "--input" or a.startswith("--input=")
-                                      or re.search(r"^(?:-[Ff]|--field=|--raw-field=)?query=@", a) for a in args):
+                                      or re.search(r"^(?:-[Ff]=?|--field=|--raw-field=)?query=@", a) for a in args):
             return deny("check-forgery", "`gh api graphql` with the query read from a file or --input hides what it does "
                                          "(it could create a check run); pass the query inline.")
         if method in ("PUT", "POST", "PATCH", "DELETE") and re.search(r"/merge\b|/protection\b|/rulesets\b|/branches/[^/]+/rename|/git/refs", endpoint):
