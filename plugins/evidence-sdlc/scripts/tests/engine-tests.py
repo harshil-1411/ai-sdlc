@@ -2972,6 +2972,14 @@ def suite_pilot60():
                       ("mergetool.y.cmd", "[mergetool \"y\"]\n\tcmd = echo\n")):
         cfg_edit(f"REQ-USA-10 global {key} is not refused", text, "allow")
     cfg_edit("REQ-USA-10 global credential.helper is not refused (2.1.0)", "[credential]\n\thelper = osxkeychain\n", "allow")
+    dflt = json.load(open(st.DEFAULT_POLICY))
+    check("REQ-USA-10 the default git_config_engine_ignored is the spec's set, each key still in deny_git_config_keys, "
+          "and none always refused",
+          dflt.get("git_config_engine_ignored") == ["alias.*", "core.editor", "core.pager", "pager.*", "sequence.editor",
+                                                    "interactive.diffFilter", "*tool.*.cmd"]
+          and all(k in dflt["deny_git_config_keys"] for k in dflt["git_config_engine_ignored"])
+          and all(st._engine_ignored(k, dflt) for k in ("alias.st", "core.editor", "difftool.x.cmd")),
+          dflt.get("git_config_engine_ignored"))
 
     for key, text in (("core.fsmonitor", "[core]\n\tfsmonitor = /bin/false\n"),
                       ("core.hooksPath", "[core]\n\thooksPath = /tmp/h\n"),
