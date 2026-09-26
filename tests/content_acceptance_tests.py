@@ -295,16 +295,11 @@ hj = json.load(open(P("plugins", "evidence-sdlc", "hooks", "hooks.json")))
 pre = hj["hooks"]["PreToolUse"]
 check("REQ-V2G-11 no hook pre-filter: every Bash/Edit/Write/Agent call reaches the engine",
       all("if" not in h for entry in pre for h in entry["hooks"]) and any("Bash" in e.get("matcher", "") and "Edit" in e.get("matcher", "") for e in pre))
-g = subprocess.run([sys.executable, P("plugins", "evidence-sdlc", "bin", "evidence"), "gaps", "--strict"], cwd=ROOT,
-                   capture_output=True, text=True)
-blocking = []
-for cat in ("NO COVERAGE", "FAILED", "SELF-ASSERTED", "UNPROVEN", "UNVERIFIED-RESULT", "DUPLICATE-ID", "MISSING-CHILD"):
-    m = re.search(r"^" + re.escape(cat) + r" \(\d+\)[^\n]*\n((?:  - .*\n)*)", g.stdout, re.M)
-    if m:
-        blocking += [l.strip()[2:] for l in m.group(1).splitlines() if l.strip()]
-others = [b for b in blocking if not b.startswith("REQ-V2C-09")]
-check("REQ-V2C-09 this repository passes its own `evidence gaps --strict` (every blocking item other than this check itself is clear)",
-      not others, others[:8])
+# REQ-V2C-09 is proven by run-tests.sh's final step (self-check.xml, PILOT-60 REQ-USA-02), not by a run
+# from inside this suite, which could only read results older than itself. This check binds the ID.
+_rt = read("scripts", "ci", "run-tests.sh")
+check("REQ-V2C-09 this repository's own strict gate is run-tests.sh's final step, over that run's results only",
+      "gaps --strict --self-check --only-results" in _rt and "self-check.xml" in _rt)
 summaries = [f for f in glob.glob(P("plugins", "*", "evals", "SUMMARY.md"))]
 check("REQ-V2E-01 a committed eval SUMMARY.md exists for every plugin", len(summaries) == 5, summaries)
 check("REQ-V2E-02 summaries record with-vs-without deltas", summaries and all(re.search(r"Δ|delta|without", open(s).read(), re.I) for s in summaries))

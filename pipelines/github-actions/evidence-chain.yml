@@ -20,7 +20,7 @@ permissions:
 
 env:
   EVIDENCE: .evidence-chain/plugins/evidence-sdlc/bin/evidence
-  EVIDENCE_CHAIN_REF: v2.0.0                        # pin the framework version you run
+  EVIDENCE_CHAIN_REF: v2.3.0                        # pin the framework version you run (2.3.0+ for --only-results)
 
 jobs:
   commit-stage:
@@ -65,10 +65,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Download to the runner's temp directory, never into the checkout: a results file the
+      # pull request committed under test-results/ must never be signed or read (ADR-0002).
       - uses: actions/download-artifact@v4
         with:
           name: test-results
-          path: test-results/
+          path: ${{ runner.temp }}/test-results/
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -77,11 +79,11 @@ jobs:
       - name: Sign this run's results (the agent's sandbox never sees this key)
         env:
           EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
-        run: python3 "$EVIDENCE" results sign test-results/*.xml
-      - name: Traceability gaps (only signed results prove anything; --strict blocks SELF-ASSERTED)
+        run: python3 "$EVIDENCE" results sign "$RUNNER_TEMP"/test-results/*.xml
+      - name: Traceability gaps (only this run's signed results prove anything; --strict blocks SELF-ASSERTED)
         env:
           EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
-        run: python3 "$EVIDENCE" gaps --results test-results --strict
+        run: python3 "$EVIDENCE" gaps --strict --only-results --results "$RUNNER_TEMP/test-results"
       - name: Plan approval verified against GitHub, not the committed file
         if: github.event_name == 'pull_request'
         env:
