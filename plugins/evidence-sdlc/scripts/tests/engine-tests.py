@@ -2898,11 +2898,12 @@ def suite_pilot60():
     # ---------------- REQ-USA-07: temp paths given to data programs are judged as paths
     r = make_repo()
     start_change(r, claims=("src/app.py", "tests/**"))
+    # (review M1: sort, curl, wget and chmod are no longer data programs, and a cp/mv temp path is relaxed only as
+    # the destination, so the spec's `curl -o $TMPDIR/x.json` and `sort /tmp/a > /tmp/b` stay denied: see 2.3.0)
     for c in (f"mkdir -p {T}/p60probe", "tail -5 /tmp/build.log", f"ls {T}/p60probe", "cat /private/tmp/x.txt",
-              f"curl -o {T}/x.json https://example.com", f"cp src/app.py {T}/app.bak", "sort /tmp/a > /tmp/b",
-              "rg foo /tmp/x", f"grep -n x {T}/a.log", f"wc -l {T}/a.log", f"cp {T}/a.txt {T}/b.txt",
-              f"mv {T}/a.txt /tmp/b.txt", f"diff /tmp/a {T}/b", "mktemp", "d=$(mktemp -d)",
-              f"mktemp {T}/x.XXXXXX"):
+              f"cp src/app.py {T}/app.bak", "cp src/app.py /tmp/app.bak", "head -3 /tmp/a > /tmp/b",
+              "rg foo /tmp/x", f"grep -n x {T}/a.log", f"wc -l {T}/a.log", f"cat {T}/a.log | grep x",
+              f"diff /tmp/a {T}/b", "mktemp", "d=$(mktemp -d)", f"mktemp {T}/x.XXXXXX", f"rm -f {T}/a.log"):
         t, i = bash(c)
         case(f"REQ-USA-07 temp path is data: {c[:60]}", r, t, i, "allow")
 
@@ -2920,6 +2921,19 @@ def suite_pilot60():
                     ("ditto /tmp/evil src/other", None), ("(sleep 1; cp /tmp/x src/other.py) &", None)):
         t, i = bash(c)
         case(f"REQ-USA-08 temp execution still denied: {c[:60]}", r, t, i, "deny", rule_hint=hint)
+    # review M1: the bypasses the PILOT-60 review confirmed, each denied
+    for c in ("sort --compress-prog /tmp/x a", "sort /tmp/a > /tmp/b", "sort --compress-prog=/tmp/x a",  # (a) sort
+              "curl --conf=/tmp/cfg https://e.com",
+              "curl -sK /tmp/cfg https://e.com", "curl -qK/tmp/cfg https://e.com",               # (a) curl
+              f"curl -o {T}/x.json https://example.com", "wget -O /tmp/y https://e.com",         # (a) curl, wget
+              "cp -rt src /tmp/x", "cp -vt src /tmp/x", "cp -rvt src /tmp/x", "cp --target src /tmp/x",  # (b) -t
+              f"cp /tmp/x /tmp/../{r}/src/app.py", f"cp {T}/a.txt {T}/b.txt", f"mv {T}/a.txt /tmp/b.txt",  # (b) source
+              "cat <(sh /tmp/x)", "wc -l <(bash /tmp/x)", "diff <(sh /tmp/x) f",                   # (c)
+              "cat /tmp/x > src/app.py", "cat /tmp/x >> src/app.py", "cat /tmp/x | tee -a src/app.py",  # (d)
+              "head -n 100000 /tmp/x > src/app.py", "grep -h . /tmp/x | tee src/app.py",
+              "chmod +x /tmp/x", "chmod +x /tmp/x && /tmp/x"):                                     # (e)
+        t, i = bash(c)
+        case(f"REQ-USA-08 review M1 temp relaxation bypass denied: {c[:60]}", r, t, i, "deny", rule_hint="temporary")
     shutil.rmtree(r)
 
     # ---------------- REQ-USA-09: -k selects without changing outcomes; --suite; no match; unknown suite
@@ -2972,6 +2986,7 @@ def suite_pilot60():
                       ("mergetool.y.cmd", "[mergetool \"y\"]\n\tcmd = echo\n")):
         cfg_edit(f"REQ-USA-10 global {key} is not refused", text, "allow")
     cfg_edit("REQ-USA-10 global credential.helper is not refused (2.1.0)", "[credential]\n\thelper = osxkeychain\n", "allow")
+
     dflt = json.load(open(st.DEFAULT_POLICY))
     check("REQ-USA-10 the default git_config_engine_ignored is the spec's set, each key still in deny_git_config_keys, "
           "and none always refused",

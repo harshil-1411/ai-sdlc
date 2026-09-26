@@ -1203,18 +1203,25 @@ def _dir_problem(ctx, rel):
 
 
 _TMP_DIRS = ("/tmp/", "/private/tmp/", "/var/tmp/", "/var/folders/")
-# REQ-USA-07: programs that do not execute their file arguments. A temp-directory path given
-# to one of them is judged as a path (its writes still go through writes_of, the claims and the
-# control plane), except as the value of one of its code-running options (_TEMP_EXEC_OPTS).
+# REQ-USA-07: programs that neither execute their file arguments nor have an option that runs a
+# program or reads a code-running config. A temp-directory path given to one of them is judged as a
+# path (its writes still go through writes_of, the claims and the control plane). Review M1: sort
+# (--compress-program), curl (-K) and wget (-e) run code, so they are not data programs; chmod makes
+# a temp file executable, so it is not either.
 _TEMP_DATA_PROGS = frozenset({
-    "cat", "head", "tail", "wc", "ls", "stat", "file", "du", "mkdir", "rmdir", "rm", "touch", "chmod", "tee",
-    "mktemp", "grep", "egrep", "fgrep", "rg", "sort", "uniq", "cut", "tr", "diff", "cmp", "md5sum", "sha256sum",
-    "shasum", "jq", "basename", "dirname", "realpath", "readlink", "echo", "printf", "test", "[", "curl", "wget",
-    "cp", "mv"})
-# REQ-USA-08: the options through which a data program runs a program or reads a config that can
-# (`--opt value`, `--opt=value`, and a short option's glued `-Kvalue`).
+    "cat", "head", "tail", "wc", "ls", "stat", "file", "du", "mkdir", "rmdir", "rm", "touch", "tee",
+    "mktemp", "grep", "egrep", "fgrep", "rg", "uniq", "cut", "tr", "diff", "cmp", "md5sum", "sha256sum",
+    "shasum", "jq", "basename", "dirname", "realpath", "readlink", "echo", "printf", "test", "[", "cp", "mv"})
+# REQ-USA-08: options through which a program runs another program or reads a config that can.
+# rg stays a data program for `rg foo /tmp/x`; sort, curl and wget are not data programs (review M1),
+# so a bare temp path given to them is already judged as a script, and this table catches the forms
+# where the value is glued to the option: `--opt=value` (or an abbreviation of --opt) and a short
+# option inside a cluster (`-qK/tmp/cfg`).
 _TEMP_EXEC_OPTS = {"rg": ("--pre",), "sort": ("--compress-program",), "curl": ("-K", "--config"),
                    "wget": ("-e", "--execute", "--config")}
+# Review M1(b): programs whose temp-directory argument is relaxed only as the writes_of destination.
+# install and ln are not data programs at all, so their temp arguments are never relaxed.
+_TEMP_DEST_ONLY = ("cp", "mv")
 
 
 def _temp_prefixes():
@@ -1228,41 +1235,64 @@ def _temp_prefixes():
 
 
 def _temp_exec_value(prog, arg):
-    """The value `arg` hands to one of prog's code-running options in `--opt=value` or glued
-    `-Kvalue` form, or None."""
-    for o in _TEMP_EXEC_OPTS.get(prog, ()):
-        if arg.startswith(o + "="):
-            return arg[len(o) + 1:]
-        if not o.startswith("--") and arg.startswith(o) and arg != o:
-            return arg[len(o):]
+    """The value `arg` hands to one of prog's code-running options in `--opt=value` form (or an
+    abbreviation of --opt of at least three letters, as getopt_long accepts), or as a short option
+    with its value glued on, alone or at the end of a cluster (`-Kvalue`, `-qKvalue`); or None."""
+    opts = _TEMP_EXEC_OPTS.get(prog, ())
+    if arg.startswith("--") and "=" in arg:
+        name, _, val = arg.partition("=")
+        if len(name) >= 5 and any(o.startswith("--") and o.startswith(name) for o in opts):
+            return val
+        return None
+    if arg.startswith("-") and not arg.startswith("--"):
+        for j, c in enumerate(arg[1:], 1):
+            if "-" + c in opts and j + 1 < len(arg):
+                return arg[j + 1:]
     return None
+
+
+def _temp_relax_allowed(ctx, simples):
+    """Review M1(c, d): whether the REQ-USA-07 relaxation may apply to this command at all. It may
+    not when any word is a process substitution (`<(…)`, `>(…)`: code runs inside it), or when any
+    write of the whole command (redirects, a pipe into tee, cp's destination) is opaque, computed at
+    run time or inside the repository, so temp content cannot reach the repository through it."""
+    for s in simples:
+        words = list(s.argv) + [t for _op, t in s.redirects] + ([s.stdin_file] if s.stdin_file else [])
+        if any(str(w).startswith(("<(", ">(")) for w in words):
+            return False
+    cwd = ctx.cwd
+    for s in simples:
+        if s.prog in ("cd", "pushd") and len(s.argv) > 1 and not s.argv[1].startswith("-"):
+            nxt = os.path.expanduser(s.argv[1])
+            cwd = os.path.realpath(nxt if os.path.isabs(nxt) else os.path.join(cwd, nxt))
+            continue
+        for w in cmdparse.writes_of(s):
+            if w.path is None or not w.path or w.path.startswith(("$", "`", "~")) or "$(" in w.path:
+                return False
+            rel, _real = st.normalize(w.path, cwd, ctx.root)
+            if rel is not None:
+                return False
+    return True
 
 
 def _temp_arg_is_data(ctx, s, i, cwd):
     """REQ-USA-07: s.argv[i], a temp-directory path, is data rather than code: the program is in
-    _TEMP_DATA_PROGS, the argument is not the value of one of its _TEMP_EXEC_OPTS, and for cp/mv
-    no destination (including -t/--target-directory) is inside the repository."""
+    _TEMP_DATA_PROGS and the argument is not the value of one of its _TEMP_EXEC_OPTS. For cp/mv
+    (review M1(b)) the argument must be the destination: the last operand, with no -t /
+    --target-directory in any form (a bundled `-rt`, an abbreviated `--target`), so a temp source is
+    never relaxed. The caller has already required _temp_relax_allowed for the whole command."""
     if s.prog not in _TEMP_DATA_PROGS or i < 1:
         return False
     if s.argv[i - 1] in _TEMP_EXEC_OPTS.get(s.prog, ()):
         return False
-    if s.prog in ("cp", "mv"):
-        dests = [w.path for w in cmdparse.writes_of(s) if w.kind == "write"]
-        for k, a in enumerate(s.argv[1:], 1):
-            if a in ("-t", "--target-directory") and k + 1 < len(s.argv):
-                dests.append(s.argv[k + 1])
-            elif a.startswith("--target-directory="):
-                dests.append(a.split("=", 1)[1])
-            elif a.startswith("-t") and len(a) > 2:
-                dests.append(a[2:])
-        if not dests:
-            return False
-        for dest in dests:
-            if not dest or dest.startswith(("$", "`")) or "$(" in dest:
+    if s.prog in _TEMP_DEST_ONLY:
+        for a in s.argv[1:]:
+            if a == "--":
+                break
+            if a.startswith("--t") or (a.startswith("-") and not a.startswith("--") and "t" in a[1:]):
                 return False
-            rel, _real = st.normalize(dest, cwd, ctx.root)
-            if rel is not None:
-                return False
+        operands = [k for k, a in enumerate(s.argv) if k >= 1 and not a.startswith("-")]
+        return len(operands) >= 2 and operands[-1] == i
     return True
 
 
@@ -1329,6 +1359,7 @@ def check_bash(ctx, command):
                     f"`git {next(g for g in git_subs if g in _INDEX_CHANGING)}` it would commit an index the gates never "
                     "saw. Stage first, then commit in a separate call.")
     cwd = ctx.cwd
+    relax_ok = _temp_relax_allowed(ctx, simples)
     for s in simples:
         if pol.get("deny_persistence", True) and (set(s.wrappers) - {s.prog}) & cmdparse.PERSISTENCE or (
                 s.prog in cmdparse.PERSISTENCE and not (s.prog == "crontab" and "-l" in s.argv)):
@@ -1366,11 +1397,12 @@ def check_bash(ctx, command):
             for k, a in enumerate(s.argv[1:], 1):
                 # `make -f /tmp/x`, `xcrun swift /tmp/x`, `go run /tmp/x.go`: a program from a temp directory.
                 # A temp path given to a data program (cat, ls, cp out of the repository) is judged as a path,
-                # unless it is the value of one of that program's code-running options (REQ-USA-07, 08).
+                # unless it is the value of one of that program's code-running options (REQ-USA-07, 08), or the
+                # command as a whole could run code or carry temp content into the repository (review M1).
                 opt_val = _temp_exec_value(s.prog, a)
                 if opt_val is not None and opt_val.startswith(tmp):
                     d = _check_script(ctx, opt_val, cwd)
-                elif a.startswith(tmp) and not _temp_arg_is_data(ctx, s, k, cwd):
+                elif a.startswith(tmp) and not (relax_ok and _temp_arg_is_data(ctx, s, k, cwd)):
                     d = _check_script(ctx, a, cwd)
                 if d is not None:
                     break
