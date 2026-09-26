@@ -271,12 +271,25 @@ def run_integrity(ctx):
     try:
         notes, violations, changed = integrity.check(ctx, judge)
     except HookTimeout:  # the watchdog: record it in the time left, never lose it (the hook limit is 30 s)
-        notes = [f"the integrity check for that command did not finish within {HOOK_BUDGET_SECONDS} s, so its "
+        _watchdog(HOOK_BUDGET_SECONDS_RECORD)  # REQ-CON-14: a fresh, short alarm for writing the record
+        notes = [f"the integrity check for that command did not finish within {HOOK_BUDGET_SECONDS_POST} s, so its "
                  "effects were not checked."]
         violations, changed = [{"path": "(integrity check)", "rule": "integrity-timeout", "action": "recorded"}], []
     except Exception as e:  # a check the agent can make fail must not become a silent pass
         notes = [f"the integrity check for that command failed ({e}), so its effects were not checked."[:300]]
         violations, changed = [{"path": "(integrity check)", "rule": "integrity-check-error", "action": "recorded"}], []
+    try:
+        return _record_integrity(ctx, notes, violations, changed)
+    except HookTimeout:
+        # REQ-CON-14: recording ran out of time too. One more short alarm, for the audit entry alone.
+        _watchdog(HOOK_BUDGET_SECONDS_RECORD)
+        _audit(ctx, {"event": "integrity-violation", "violation_path": "(integrity check)", "rule": "integrity-timeout",
+                     "action": "recorded"})
+        _watchdog(HOOK_BUDGET_SECONDS_RECORD)  # and one for the post's own `tool` entry
+        return None, []
+
+
+def _record_integrity(ctx, notes, violations, changed):
     # A permission the human granted at Claude Code's prompt lands in settings.local.json while the call is
     # in flight (the hook runs before the prompt). It is kept and logged, not treated as tampering.
     for g in [v for v in violations if v.get("rule") == "permission-grant"]:
@@ -402,6 +415,10 @@ def run_prompt(payload):
 
 
 HOOK_BUDGET_SECONDS = 25  # hooks.json allows 30: answer (fail closed) before Claude Code gives up on the hook
+# PostToolUse: the check gets 16 s; after a timeout, recording gets 4 s, and if that times out too, 4 s for the
+# integrity-timeout audit entry and 4 s for the post's `tool` entry: 28 s at most (REQ-CON-14).
+HOOK_BUDGET_SECONDS_POST = 16
+HOOK_BUDGET_SECONDS_RECORD = 4
 
 
 class HookTimeout(BaseException):
@@ -434,7 +451,7 @@ def main():
         return 0
     try:
         if event in ("pre", "post"):
-            _watchdog(HOOK_BUDGET_SECONDS)
+            _watchdog(HOOK_BUDGET_SECONDS if event == "pre" else HOOK_BUDGET_SECONDS_POST)
         if event == "pre":
             emit(run_pre(payload))
         elif event == "post":
