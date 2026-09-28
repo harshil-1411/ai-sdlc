@@ -609,7 +609,7 @@ def verify_range_59_tests():
         os.makedirs(os.path.dirname(os.path.join(d, rel)) or d, exist_ok=True)
         open(os.path.join(d, rel), "w").write(text)
 
-    def expect(label, r, rule, word=None):
+    def case(label, r, rule, word=None):  # named `case` so evidence gaps binds these titles
         out = (r.stdout + r.stderr).lower()
         ok = r.returncode == 0 if rule is None else (r.returncode != 0 and f"rule {rule}" in out)
         ok = ok and "traceback" not in out and (word is None or word in out)
@@ -644,12 +644,12 @@ def verify_range_59_tests():
     nb = main_appends(d, "old", "old", n=2)
     theirs = lines_at(d, nb, rel)
     head = merge_with(d, rel, [theirs[0], theirs[2], theirs[1]], "ABC-7: merge main, log lines reordered")
-    expect("REQ-CON-17 a log whose lines are reordered by a merge fails rule 4", vr_run(d, nb, head), 4)
+    case("REQ-CON-17 a log whose lines are reordered by a merge fails rule 4", vr_run(d, nb, head), 4)
     shutil.rmtree(d)
     d, b, h = vr_fixture(base_extra=old_log)
     nb = main_appends(d, "old", "old", n=2)
     vr_git(d, "git merge -q --no-ff -m \"Merge branch 'main' into feature/ABC-7-login\" main")
-    expect("REQ-CON-17 an append-only range with an update merge passes", vr_run(d, nb, vr_git(d, "git rev-parse HEAD")),
+    case("REQ-CON-17 an append-only range with an update merge passes", vr_run(d, nb, vr_git(d, "git rev-parse HEAD")),
            None)
     shutil.rmtree(d)
 
@@ -665,7 +665,7 @@ def verify_range_59_tests():
         ours, theirs = lines_at(d, "HEAD", rel), lines_at(d, nb, rel)
         merged = theirs + [l for l in ours if l not in theirs] + (['{"event": "forged"}'] if forge else [])
         head = merge_with(d, rel, merged, "ABC-7: merge main (base's lines first)")
-        expect(f"REQ-CON-18 shared log merge: {label}", vr_run(d, nb, head), rule)
+        case(f"REQ-CON-18 shared log merge: {label}", vr_run(d, nb, head), rule)
         shutil.rmtree(d)
     # REQ-CON-18: one session's log appended on both sides fails, and the message says to rebase
     def s1_at_base(d):
@@ -676,7 +676,7 @@ def verify_range_59_tests():
     nb = main_appends(d, "s1", "s1")
     ours, theirs = lines_at(d, "HEAD", rel), lines_at(d, nb, rel)
     head = merge_with(d, rel, ours + [l for l in theirs if l not in ours], "ABC-7: merge main (s1 on both sides)")
-    expect("REQ-CON-18 one session's log appended on both sides of a merge fails rule 4 and says to rebase",
+    case("REQ-CON-18 one session's log appended on both sides of a merge fails rule 4 and says to rebase",
            vr_run(d, nb, head), 4, word="rebase")
     shutil.rmtree(d)
 
@@ -685,11 +685,11 @@ def verify_range_59_tests():
                 ".evidence/audit/sub/x.jsonl"):
         d, b, h = vr_fixture()
         w(d, rel, "x\n")
-        expect(f"REQ-CON-19 an unclaimed non-record file under .evidence fails rule 2: {rel}",
+        case(f"REQ-CON-19 an unclaimed non-record file under .evidence fails rule 2: {rel}",
                vr_run(d, b, vr_commit(d, "ABC-7: extra file")), 2)
         shutil.rmtree(d)
     d, b, h = vr_fixture()
-    expect("REQ-CON-19 state.json, approval.json and a session .jsonl stay exempt", vr_run(d, b, h), None)
+    case("REQ-CON-19 state.json, approval.json and a session .jsonl stay exempt", vr_run(d, b, h), None)
     shutil.rmtree(d)
 
     # REQ-CON-21: CODEOWNERS patterns without a slash match at any depth

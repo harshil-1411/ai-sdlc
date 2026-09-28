@@ -66,6 +66,8 @@ Before the pilot:
 
 Reopen a parked item only when a pilot team is hurt by it.
 
+Parked requirements are outside `evidence gaps --strict`: PILOT-59 part 2's rows (REQ-CON-01..13, 24) live in `intent/2026-09-25-concurrency-and-deferrals/parked.md`, and PILOT-61's folder is listed in `.evidenceignore`. Reviving either means putting it back, and its requirements then need tests.
+
 ## Next steps, in order
 
 1. **Close out the direct merge** (the three steps above).

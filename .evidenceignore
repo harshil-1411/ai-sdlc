@@ -8,3 +8,7 @@ cli/tests/fixtures/
 
 # claude plugin eval run output is results, not tests (ingested separately).
 plugins/*/evals/results/
+
+# PILOT-61 signer key isolation is parked (plan only) since 2.4.0; see HANDOFF.md.
+# Delete the next line to make its REQ-KEY requirements live again.
+intent/2026-09-25-signer-key-isolation/
