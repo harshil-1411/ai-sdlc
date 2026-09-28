@@ -41,13 +41,16 @@ jobs:
       - name: Python compiles
         run: python3 -m py_compile plugins/evidence-sdlc/scripts/engine/*.py plugins/evidence-quality/scripts/*.py plugins/evidence-sdlc/scripts/cli/*.py
 
-      - name: All suites (engine, lifecycle, sensor, CLI, content) -> fresh JUnit in validation/results
+      - name: All suites (engine, lifecycle, sensor, CLI, content) and the self-check -> fresh JUnit in runner.temp/results
+        env:
+          EVIDENCE_RESULTS_DIR: ${{ runner.temp }}/results
         run: bash scripts/ci/run-tests.sh
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: validation-results
-          path: validation/results/
+          path: ${{ runner.temp }}/results/
 
       - name: Version bump check
         if: github.event_name == 'pull_request'
@@ -82,7 +85,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: validation-results
-          path: validation/results/
+          path: ${{ runner.temp }}/results/
       - name: Trusted signer = the base branch's CLI, never the PR's own copy
         run: |
           base="${{ github.base_ref || github.event.repository.default_branch }}"
@@ -98,11 +101,16 @@ jobs:
         env:
           EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
         run: |
-          if [ -n "$EVIDENCE_SIGNING_KEY" ]; then python3 ../trusted/plugins/evidence-sdlc/bin/evidence results sign validation/results/*.xml; fi
-      - name: Traceability gaps (strict, trusted CLI)
+          if [ -n "$EVIDENCE_SIGNING_KEY" ]; then python3 ../trusted/plugins/evidence-sdlc/bin/evidence results sign "$RUNNER_TEMP"/results/*.xml; fi
+      - name: Traceability gaps (strict, trusted CLI, only this run's downloaded results)
         env:
           EVIDENCE_SIGNING_KEY: ${{ secrets.EVIDENCE_SIGNING_KEY }}
-        run: python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --strict
+        run: |
+          if python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --help | grep -q -- --only-results; then
+            python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --strict --only-results --results "$RUNNER_TEMP/results"
+          else
+            python3 ../trusted/plugins/evidence-sdlc/bin/evidence gaps --strict --results "$RUNNER_TEMP/results"
+          fi
 
   evals:
     if: github.event_name == 'workflow_dispatch' && inputs.run_evals
