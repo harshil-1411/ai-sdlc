@@ -1,7 +1,7 @@
 # Handoff — Evidence Chain
 
 For whoever picks this up next (engineer or agent session). Read this first, then
-`README.md`. Last updated 2026-09-26 by the maintainer's Claude Code session.
+`README.md`. Last updated 2026-09-28 by the maintainer's Claude Code session.
 
 ## The decision to know first
 
@@ -28,22 +28,43 @@ So, from 2.4.0:
 | --- | --- |
 | Repository | https://github.com/harshil-1411/ai-sdlc |
 | Branches | `main` and `develop` only. All feature branches were merged and deleted on 2026-09-26 |
-| Version | 2.4.0, all five plugins and the engine |
+| Version | 2.4.0, all five plugins and the engine. GitHub release and tag `v2.4.0` (at `0be3dcd`); `main` = `develop` = `edce499` adds the close-out (tests bound, parked requirements moved) |
 | Maintainer | suparn.bector@msbdocs.com; second reviewer Harshil (`harshil-1411`) |
 | Enterprise score | **3.3 / 5**, independently verified at `774bba8` on 2026-09-24 (v1 was 2.1). **Not re-scored since**; re-score once, after the pilot |
 | Reports | [v1 audit](https://claude.ai/artifact/2AC3mxyFdmkHKYgogwLFpG) · [v1 vs v2](https://claude.ai/artifact/7WPE6snzrdb6DFjjFRBKLC) (private; the owner shares them) |
-| Tests | Last full runs: engine 942 passed / 0 failed (PILOT-59 part 1). Content: one known failure, REQ-USA-04, until the owner applies the `ci.yml` diff under "PILOT-60 owner actions" |
+| Tests | **macOS: all green** (2026-09-28, `edce499`): engine 942/0, lifecycle 138/0, sensor 17/0, content 108/0, self-check passed. **CI (Ubuntu): red**, 22 engine failures, all one Linux bug; see "Open blocker" |
 | Backup | Every pre-cleanup branch is in `~/Desktop/evidence-chain-backups/evidence-chain-all-branches-20260926.bundle` on the maintainer's machine |
+
+### Open blocker: CI is red on Linux (one bug, 22 tests)
+
+The gate's `gh` calls run with `GH_CONFIG_DIR` set to a root-owned directory holding no gh
+configuration, chosen from `GATE_EMPTY_DIRS` in `evidence_policy.py`: `/var/empty`,
+`/usr/share/empty`, `/var/lib/empty`. macOS ships `/var/empty`; Ubuntu (GitHub's runners) ships
+none, so the gate is never confirmed there and 22 REQ-LLA-08/09 engine tests fail. For Linux
+users it fails closed: Tier 3 in `acceptEdits`/`auto` stays denied. Pick one:
+1. **Recommended, no engine change:** give the CI runner the directory macOS has. In
+   `.github/workflows/ci.yml`, directly before the step `All suites (engine, lifecycle, sensor,
+   CLI, content) ...`, at the same indentation:
+   ```yaml
+         - name: Root-owned /var/empty for the gate's gh calls (macOS ships it; Ubuntu does not)
+           run: sudo mkdir -p /var/empty && sudo chown root:root /var/empty && sudo chmod 755 /var/empty
+   ```
+   and add a CHANGELOG 2.4.0 known issue telling Linux users to run the same command once.
+2. **Engine change (2.4.1):** add `/` as the last entry of `GATE_EMPTY_DIRS` (root-owned, no gh
+   config, still checked at run time). It changes a security-relevant check, so a human reviews it.
+The agent session could not do either: the auto-mode safety checks block agent edits to CI
+workflows, pushes to protected `main`, test edits that affect traceability, and changes that widen
+a security check. A human makes these edits.
 
 ### How 2.2.0 to 2.4.0 reached `main` (needs after-the-fact checks)
 
 PILOT-62 (2.2.0), PILOT-60 (2.3.0), PILOT-59 part 1 (2.4.0) and the PILOT-61 plan were
-pushed straight to `main` on 2026-09-26 with branch protection **bypassed**: no pull
-request, no code-owner review, no CI run. They were built with the gates switched off,
+pushed straight to `main` on 2026-09-26, and the `ci.yml` change and the close-out on
+2026-09-28, each time with branch protection **bypassed**: no pull request and no code-owner
+review. CI ran on the last two pushes and is red only for the Linux blocker above. They were built with the gates switched off,
 so the commits carry no `Agent-Session` trailer and `verify-range` rejects the range.
 Before the pilot:
-1. Run CI on `main` (`gh workflow list`, then `gh workflow run <name> --ref main`) and fix
-   anything red.
+1. Fix the Linux blocker above; CI on `main` then goes green.
 2. Harshil reviews the range `7759c17..main` after the fact.
 3. From now on: feature branch off `develop` → PR into `develop` → PR `develop` → `main`.
    Protect `develop` like `main`.
@@ -70,9 +91,9 @@ Parked requirements are outside `evidence gaps --strict`: PILOT-59 part 2's rows
 
 ## Next steps, in order
 
-1. **Close out the direct merge** (the three steps above).
+1. **Fix the Linux blocker, then close out the direct merge** (the steps above).
 2. **Owner actions** (no code can do these):
-   - [ ] Apply the `ci.yml` diff under "PILOT-60 owner actions" (it makes REQ-USA-04 pass), then MAN-USA-01 and MAN-USA-02.
+   - [x] Apply the `ci.yml` diff under "PILOT-60 owner actions" (2026-09-28; REQ-USA-04 passes). Still to do: MAN-USA-01 and MAN-USA-02.
    - [ ] Apply the `verify-range.yml` hardening diff under "PILOT-62 owner actions".
    - [ ] Add `verify-range` as a required check on `main`; confirm "Require review from Code Owners" is on; run MAN-IMH-01 on the next PR.
    - [ ] Org policy: `approval.github_identities` (`suparn.bector@msbdocs.com` → `suparnbector`), `approval.mode: "github"`, `approval.github_repo`, `approval.github_allowed_approvers`, `approval.github_repo_roots`, and `ci_gate_gh_path` pointing at a root-owned `gh`.
